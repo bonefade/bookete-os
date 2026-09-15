@@ -1,0 +1,31 @@
+{
+  "name": "bookete-scraper",
+  "version": "1.0.0",
+  "description": "Standalone DACH restaurant lead generator and competitor widget scanner",
+  "type": "module",
+  "main": "src/cli.js",
+  "bin": {
+    "bookete-scraper": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "scrape": "node src/cli.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "lead-generation",
+    "overpass",
+    "openstreetmap",
+    "restaurant-scraper",
+    "quandoo",
+    "opentable",
+    "thefork",
+    "resmio",
+    "dach"
+  ],
+  "author": "Bookete Growth Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -1,0 +1,5 @@
+node_modules/
+leads*.csv
+test-output*.csv
+.DS_Store
+*.log
