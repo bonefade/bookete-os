@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# bookete-os pre-commit. Rendered by brain-ai-factory's /install-pre-commit
+# (plugin 0.3.0, 2026-10-15); edit it here, it is this repo's file now.
+#
+# BLOCKING: the gates in GATES below. Each one is a step that also blocks in
+# .github/workflows/ci.yml, under the same command and the same label, so the hook and CI
+# never disagree about what a check means (principle 6). The gates read the
+# working tree, not the staged snapshot: a partly staged file is checked as it
+# stands on disk, so a green hook is a strong signal, not proof.
+# # The same four checks as CI's test job, in both directions. Only the deploy job
+# runs in CI alone.
+#
+# THE DOCS-ONLY FAST PATH. A commit whose every staged path matches
+# DOCS_ONLY_PATTERNS skips the gates and runs DOCS_FORMAT_CHECK on the staged
+# files only: lint and type-check have nothing to check in prose and images,
+# and paying for them on every docs commit is how a hook gets bypassed.
+# Renames count as a deletion plus an addition (--no-renames), so a file moved
+# out of docs/ into the source tree takes the full path.
+#
+# Bypass: `git commit --no-verify`. CI still blocks.
+#
+# Bash 3.2 (macOS /bin/bash): no mapfile, and no "${arr[@]}" on an empty array
+# under `set -u`.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# "label|command", cheapest first. Keep every entry a blocking step in CI.
+GATES=(
+  "scraper tests|npm test"
+  "crm tests|npm --prefix crm test"
+  "crm build|npm --prefix crm run build"
+  "AGENTS.md current|python3 .claude/agents_md.py . --check"
+)
+
+# Shell glob patterns (`case` syntax, `*` crosses `/`). Empty disables the
+# fast path, and every commit takes the gates.
+DOCS_ONLY_PATTERNS=()
+
+# Run on the staged docs-only files, which are appended as arguments. Empty
+# runs nothing on that path.
+DOCS_FORMAT_CHECK=''
+
+refuse() {
+  echo "pre-commit: $1; refusing the commit" >&2
+  exit 1
+}
+
+# quotePath off, or a name with an umlaut arrives quoted and octal-escaped.
+staged_paths() { git -c core.quotePath=false diff --cached --name-only --no-renames "$@"; }
+
+# Prints docs-only or full. Nothing staged is "full": the gates are cheap
+# insurance against a commit that only touches the index in ways this missed.
+classify() {
+  local path pattern matched seen=0
+  if [ "${#DOCS_ONLY_PATTERNS[@]}" -eq 0 ]; then
+    echo full
+    return
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    seen=1
+    matched=0
+    for pattern in "${DOCS_ONLY_PATTERNS[@]}"; do
+      # shellcheck disable=SC2254
+      case $path in $pattern)
+        matched=1
+        break
+        ;;
+      esac
+    done
+    if [ "$matched" -eq 0 ]; then
+      echo full
+      return
+    fi
+  done <<EOF_PATHS
+$(staged_paths)
+EOF_PATHS
+  if [ "$seen" -eq 1 ]; then echo docs-only; else echo full; fi
+}
+
+[ "${#GATES[@]}" -gt 0 ] || refuse "GATES is empty, and a hook with no gates passes every commit"
+
+scope=$(classify)
+case "$scope" in
+  docs-only | full) ;;
+  *) refuse "the docs-only check printed '$scope', not docs-only or full" ;;
+esac
+
+if [ "$scope" = docs-only ]; then
+  if [ -n "$DOCS_FORMAT_CHECK" ]; then
+    echo "pre-commit: docs only, $DOCS_FORMAT_CHECK on the staged files"
+    to_check=()
+    while IFS= read -r staged_path; do
+      if [ -n "$staged_path" ]; then to_check+=("$staged_path"); fi
+    done <<EOF_PATHS
+$(staged_paths --diff-filter=d)
+EOF_PATHS
+    if [ "${#to_check[@]}" -gt 0 ]; then
+      bash -c "$DOCS_FORMAT_CHECK \"\$@\"" pre-commit "${to_check[@]}" ||
+        refuse "the docs format check failed"
+    fi
+  else
+    echo "pre-commit: docs only, no gates"
+  fi
+else
+  for gate in "${GATES[@]}"; do
+    label=${gate%%|*}
+    command=${gate#*|}
+    echo "pre-commit: $label"
+    bash -c "$command" || refuse "$label failed"
+  done
+fi
+
+echo "pre-commit: OK"

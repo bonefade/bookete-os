@@ -1,0 +1,119 @@
+import { OAuthProvider, AuthorizationError, CimdFetchError } from "@cloudflare/workers-oauth-provider";
+import { readConfig } from "./config.js";
+import { allowedUser, sessionUser, startLogin, finishLogin, logout } from "./auth.js";
+import { createStore } from "./store.js";
+import { createMailer } from "./gmail.js";
+import { COMMANDS } from "./commands.js";
+import { handleMcp } from "./mcp.js";
+import { createUseCases } from "../application/use-cases.js";
+import { systemClock, uuidIds } from "../adapters/system.js";
+import { ValidationError } from "../domain/errors.js";
+
+const SCOPE = "crm";
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const html = (body, headers = new Headers()) => {
+  headers.set("Content-Type", "text/html; charset=utf-8");
+  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>bookete CRM</title><body style="font:16px/1.5 system-ui;max-width:32rem;margin:3rem auto;padding:0 16px">${body}`, { headers });
+};
+
+async function context(env, config, user, via) {
+  const store = createStore(env.DB);
+  const mailer = await createMailer(config, user);
+  return { store, clock: systemClock, uc: createUseCases({ store, clock: systemClock, ids: uuidIds, actor: `${user.email} (${via})`, mailer }) };
+}
+
+async function rpc(request, env, config, user, name) {
+  const command = Object.hasOwn(COMMANDS, name) && COMMANDS[name];
+  if (!command) return Response.json({ error: "Unbekannter Befehl" }, { status: 404 });
+  // JSON only: a cross-site form cannot send it without a CORS preflight, which we never answer.
+  if (!request.headers.get("Content-Type")?.startsWith("application/json")) return new Response(null, { status: 415 });
+  const args = command[0].safeParse(await request.json().catch(() => null));
+  if (!args.success) return Response.json({ error: "Ungültige Eingabe", issues: args.error.issues }, { status: 400 });
+  try {
+    const { uc } = await context(env, config, user, "web");
+    return Response.json({ result: (await command[1](uc, args.data)) ?? null });
+  } catch (e) {
+    if (e instanceof ValidationError) return Response.json({ error: e.message, field: e.field }, { status: 400 });
+    throw e;
+  }
+}
+
+/** MCP consent: an agent may act as this user only after they say so here, once per client. */
+async function authorize(request, env, config, user) {
+  const oauth = env.OAUTH_PROVIDER;
+  const remember = { secret: config.CONSENT_SECRET, subject: user.email };
+  const complete = async (authRequest, headers) => {
+    const { redirectTo } = await oauth.completeAuthorization({ request: authRequest, userId: user.email, metadata: {}, scope: [SCOPE], props: { email: user.email } });
+    headers.set("Location", redirectTo);
+    return new Response(null, { status: 302, headers });
+  };
+  try {
+    if (request.method === "POST") {
+      const form = await request.formData();
+      const handle = String(form.get("handle"));
+      if (form.get("decision") !== "approve") {
+        const denied = await oauth.denyConsent(request, handle);
+        return new Response(null, { status: 302, headers: denied.headers });
+      }
+      const approved = await oauth.approveConsent(request, handle, { scope: [SCOPE], remember });
+      return complete(approved.request, approved.headers);
+    }
+    const authRequest = await oauth.parseAuthRequest(request);
+    if (await oauth.isConsentRemembered(request, authRequest, remember)) return complete(authRequest, new Headers());
+    const details = await oauth.describeConsent(authRequest);
+    const consent = await oauth.beginConsent(authRequest);
+    return html(`<h1>${esc(details.clientName)} Zugriff erlauben?</h1>
+<p>Die App darf als <b>${esc(user.email)}</b> Betriebe lesen und bearbeiten und Gmail-Entwürfe anlegen. Senden kann sie nicht.</p>
+<p>${details.clientDomain ? `Herausgeber: <b>${esc(details.clientDomain)}</b>.` : "Die App hat sich selbst registriert; ihr Name ist nicht geprüft."}
+Der Zugang geht an <b>${esc(details.redirectHost)}</b>.</p>
+${details.redirectIsLoopback ? "<p><b>Der Zugang geht an ein Programm auf deinem Computer.</b> Nur erlauben, wenn du die Anmeldung gerade selbst gestartet hast.</p>" : ""}
+<form method="post"><input type="hidden" name="handle" value="${esc(consent.handle)}">
+<button name="decision" value="approve">Erlauben</button> <button name="decision" value="deny">Ablehnen</button></form>`, consent.headers);
+  } catch (e) {
+    if (e instanceof AuthorizationError && e.redirectTo) return Response.redirect(e.redirectTo, 302);
+    if (e instanceof AuthorizationError || e instanceof CimdFetchError) return html(`<p>${esc(e instanceof AuthorizationError ? e.description : "Diese App konnte nicht geprüft werden.")}</p>`);
+    throw e;
+  }
+}
+
+async function app(request, env, config) {
+  const url = new URL(request.url);
+  const route = `${request.method} ${url.pathname}`;
+  if (route === "GET /auth/login") return startLogin(request, config);
+  if (route === "GET /auth/callback") return finishLogin(request, env, config);
+  if (route === "POST /auth/logout") return logout(request, env);
+
+  const user = await sessionUser(request, env, config);
+  if (url.pathname === "/authorize") return user ? authorize(request, env, config, user) : Response.redirect(`${config.PUBLIC_URL}/auth/login?next=${encodeURIComponent(url.pathname + url.search)}`, 302);
+  if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
+  if (!user) return Response.json({ error: "Nicht angemeldet" }, { status: 401 });
+  if (route === "GET /api/me") return Response.json({ email: user.email, name: user.name, gmail: !!user.refreshToken });
+  if (route === "GET /api/sync") return Response.json(await createStore(env.DB).changes(Math.max(0, parseInt(url.searchParams.get("since"), 10) || 0)));
+  if (request.method === "POST" && url.pathname.startsWith("/api/rpc/")) return rpc(request, env, config, user, url.pathname.slice(9));
+  return new Response("Not found", { status: 404 });
+}
+
+async function mcp(request, env, ctx, config) {
+  const user = await allowedUser(env, config, ctx.props?.email);
+  if (!user) return Response.json({ error: "Kein Zugang" }, { status: 403 });
+  return handleMcp(request, await context(env, config, user, "mcp"));
+}
+
+let config, provider;
+export default {
+  fetch(request, env, ctx) {
+    config ??= readConfig(env);
+    provider ??= new OAuthProvider({
+      apiRoute: "/mcp",
+      apiHandler: { fetch: (req, e, c) => mcp(req, e, c, config) },
+      defaultHandler: { fetch: (req, e) => app(req, e, config) },
+      authorizeEndpoint: "/authorize",
+      tokenEndpoint: "/oauth/token",
+      clientRegistrationEndpoint: "/oauth/register",
+      clientIdMetadataDocumentEnabled: true,
+      scopesSupported: [SCOPE],
+      resourceMetadata: { resource: `${config.PUBLIC_URL}/mcp`, authorization_servers: [config.PUBLIC_URL] },
+    });
+    return provider.fetch(request, env, ctx);
+  },
+};
