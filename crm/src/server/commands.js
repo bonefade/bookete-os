@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { LEAD_FIELDS } from "../domain/lead.js";
+import { IMPORT_CHUNK } from "../domain/backup.js";
 
 const id = z.string().min(1).max(100);
 const text = z.string().max(20000);
@@ -29,6 +30,6 @@ export const COMMANDS = {
   deleteTemplate: [z.object({ id }), (uc, a) => uc.deleteTemplate(a.id)],
   saveIcp: [z.object({ icp: z.object({ fit: z.array(z.string().max(500)).max(50), noFit: z.array(z.string().max(500)).max(50), note: z.string().max(2000).optional() }) }), (uc, a) => uc.saveIcp(a.icp)],
   sendEmail: [Email, (uc, a) => uc.sendEmail(a.id, a)],
-  // Records are checked loosely on purpose: the domain normalizes them on the next edit.
-  importBackup: [z.object({ backup: z.object({ format: z.string(), data: z.record(z.string(), z.array(z.looseObject({ id }))) }).loose() }), (uc, a) => uc.importBackup(a.backup)],
+  // Records are normalized by the use case; the client sends at most IMPORT_CHUNK per call.
+  importBackup: [z.object({ backup: z.object({ format: z.string(), data: z.record(z.string(), z.array(z.looseObject({ id })).max(IMPORT_CHUNK)) }).loose() }), (uc, a) => uc.importBackup(a.backup)],
 };

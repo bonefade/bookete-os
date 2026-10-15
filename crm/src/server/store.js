@@ -1,14 +1,15 @@
 import { LEAD_FIELDS } from "../domain/lead.js";
 
 const DEFAULTS = { leads: LEAD_FIELDS, activities: { templateId: null } };
-const NEXT_SEQ = "(SELECT seq FROM counter WHERE id = 1)";
+const SEQ = "(SELECT seq FROM counter WHERE id = 1)";
 
 const toRecord = (collection, row) => ({ ...DEFAULTS[collection], ...JSON.parse(row.data), id: row.id });
 
 /** Document store on D1. `commit` applies a list of writes in one transaction. */
 export function createStore(db) {
-  const bump = () => db.prepare("UPDATE counter SET seq = seq + 1 WHERE id = 1");
-  const statement = (op, actor) => {
+  // One counter bump per commit; op i of n gets seq - (n - 1 - i), so seqs stay unique and ordered.
+  const statement = (op, actor, back) => {
+    const NEXT_SEQ = `(${SEQ} - ${back})`;
     const { id: _id, ...data } = op.data || {};
     switch (op.type) {
       case "put":
@@ -35,12 +36,18 @@ export function createStore(db) {
       const { results } = await db.prepare("SELECT id, data FROM docs WHERE collection = ? AND deleted = 0").bind(collection).all();
       return results.map((row) => toRecord(collection, row));
     },
+    /** Every id the collection has held, deleted ones included. */
+    async ids(collection) {
+      const { results } = await db.prepare("SELECT id FROM docs WHERE collection = ?").bind(collection).all();
+      return new Set(results.map((row) => row.id));
+    },
     async activitiesOf(leadId) {
       const { results } = await db.prepare("SELECT id, data FROM docs WHERE collection = 'activities' AND deleted = 0 AND json_extract(data, '$.leadId') = ?").bind(leadId).all();
       return results.map((row) => toRecord("activities", row));
     },
     async commit(ops, actor) {
-      if (ops.length) await db.batch(ops.flatMap((op) => [bump(), statement(op, actor)]));
+      if (!ops.length) return;
+      await db.batch([db.prepare("UPDATE counter SET seq = seq + ? WHERE id = 1").bind(ops.length), ...ops.map((op, i) => statement(op, actor, ops.length - 1 - i))]);
     },
     /** Everything written after `since`. A first load (since 0) skips deleted records. */
     async changes(since) {

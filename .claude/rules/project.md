@@ -21,8 +21,9 @@ working them as leads. Two parts, each with its own `package.json`:
 
 - `crm/src/domain/`: pure business rules (lead fields, statuses, follow-up
   cadence, opt-out). Shared by server and browser.
-- `crm/src/application/use-cases.js`: the only write path. The web app and
-  MCP both call it, so every rule holds whoever writes.
+- `crm/src/application/use-cases.js`: the only write path. The web app,
+  MCP and backup import all call it, so every rule holds whoever writes.
+  Import adds only records the CRM never held, through the same normalization.
 - `crm/src/server/`: Worker entry (`index.js`), D1 document store, Google
   sign-in and sessions (`auth.js`), Gmail, RPC commands, MCP.
 - `crm/src/web/`: the browser UI, bundled by esbuild to `crm/public/app.js`.

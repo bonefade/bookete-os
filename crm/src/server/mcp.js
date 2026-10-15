@@ -49,8 +49,7 @@ const TOOLS = {
   change_status: [`Move a lead to another status. For kein-interesse give a lostReason: ${LOST_REASONS.join(" | ")}.`,
     z.object({ id, status: z.enum(STAGES.map(([k]) => k)), lostReason: z.enum(LOST_REASONS).optional() }),
     async ({ id: leadId, status, lostReason }, { uc }) => {
-      await uc.changeStatus(leadId, status);
-      if (lostReason) await uc.setLostReason(leadId, lostReason);
+      await uc.changeStatus(leadId, status, lostReason);
       return { ok: true };
     }],
   log_activity: ["Record a contact: direction out (we wrote) or in (they answered). Updates status and follow-up date.",
@@ -106,7 +105,7 @@ export async function handleMcp(request, context) {
     case "tools/list":
       return reply(msg.id, { tools: Object.entries(TOOLS).map(([name, [description, schema]]) => ({ name, description, inputSchema: z.toJSONSchema(schema, { io: "input" }) })) });
     case "tools/call": {
-      const tool = TOOLS[msg.params?.name];
+      const tool = Object.hasOwn(TOOLS, msg.params?.name) && TOOLS[msg.params.name];
       if (!tool) return fail(msg.id, -32602, "Unknown tool");
       const args = tool[1].safeParse(msg.params.arguments ?? {});
       const text = (value, isError = false) => reply(msg.id, { content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }], isError });

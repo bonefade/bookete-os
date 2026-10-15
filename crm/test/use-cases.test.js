@@ -99,24 +99,65 @@ test("deleting a lead removes its history in the same transaction, and sync repo
   assert.equal((await store.changes(0)).changes.length, 0);
 });
 
-test("importing a Claude-artifact backup upserts every record", async () => {
+test("importing a backup adds new records, normalized, and is safe to repeat", async () => {
   const { store, uc } = setup();
   const backup = {
     format: "bookete-crm-backup",
     schemaVersion: 2,
     data: {
-      leads: [{ id: "L1", name: "Alt", status: "kontaktiert", fit: 3 }],
+      leads: [{ id: "L1", name: "Alt", status: "kontaktiert", fit: '"><img src=x onerror=alert(1)>' }],
       activities: [{ id: "A1", leadId: "L1", date: "2026-10-01", channel: "Instagram", direction: "out", text: "Hi" }],
       templates: [],
       settings: [{ id: "icp", fit: ["Gasthaus"], noFit: [] }],
     },
   };
   assert.equal(await uc.importBackup(backup), 3);
-  assert.equal(await uc.importBackup(backup), 3);
-  assert.equal((await store.list("leads")).length, 1);
-  assert.equal((await store.get("leads", "L1")).followUp, null);
+  assert.equal(await uc.importBackup(backup), 0);
+  const lead = await store.get("leads", "L1");
+  assert.equal(lead.fit, 2);
+  assert.equal(lead.followUp, null);
   assert.deepEqual((await store.get("settings", "icp")).fit, ["Gasthaus"]);
   await rejects(uc.importBackup({ format: "other" }), "backup");
+});
+
+test("an import can neither clear an opt-out nor bring back a deleted lead", async () => {
+  const { store, uc } = setup();
+  const kept = await uc.addLead({ name: "Opt" });
+  await uc.optOut(kept);
+  const gone = await uc.addLead({ name: "Weg" });
+  await uc.deleteLead(gone);
+  const backup = { format: "bookete-crm-backup", data: { leads: [{ id: kept, name: "Opt", status: "kontaktiert" }, { id: gone, name: "Weg" }] } };
+  assert.equal(await uc.importBackup(backup), 0);
+  assert.equal((await store.get("leads", kept)).optOutAt, "2026-10-15");
+  assert.equal(await store.get("leads", gone), null);
+});
+
+test("a failing write rolls back the whole commit", async () => {
+  const { store } = setup();
+  await assert.rejects(store.commit([
+    { type: "put", collection: "leads", id: "ok", data: { name: "Ok" } },
+    { type: "put", collection: "not-a-collection", id: "bad", data: {} },
+  ], "test"));
+  assert.equal(await store.get("leads", "ok"), null);
+  assert.equal((await store.changes(0)).seq, 0);
+});
+
+test("when Gmail fails, nothing is logged", async () => {
+  const mailer = { send: async () => { throw new ValidationError("gmail", "Gmail-Fehler 500"); } };
+  const { store, uc } = setup({ mailer });
+  const id = await uc.addLead({ name: "Fail", email: "f@example.at" });
+  await rejects(uc.sendEmail(id, { subject: "S", text: "T" }), "gmail");
+  assert.equal((await store.activitiesOf(id)).length, 0);
+  assert.equal((await store.get("leads", id)).status, "recherchiert");
+});
+
+test("a status with an invalid reason changes nothing", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Halb" });
+  await rejects(uc.changeStatus(id, "kunde", "Sonstiges"), "lostReason");
+  assert.equal((await store.get("leads", id)).status, "recherchiert");
+  await uc.changeStatus(id, "kein-interesse", "Sonstiges");
+  assert.equal((await store.get("leads", id)).lostReason, "Sonstiges");
 });
 
 test("every write records who made it", async () => {

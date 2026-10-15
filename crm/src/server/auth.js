@@ -9,7 +9,11 @@ const SCOPES = "openid email profile https://www.googleapis.com/auth/gmail.compo
 const cookie = (name, value, maxAge) => `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
 const readCookie = (request, name) => request.headers.get("Cookie")?.match(new RegExp(`(?:^|; )${name}=([^;]*)`))?.[1] ?? null;
 const redirect = (location, headers = {}) => new Response(null, { status: 302, headers: { Location: location, ...headers } });
-const safeNext = (next) => (next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
+/** A path on this site only: anything that resolves to another origin (`//x`, `/\\x`) becomes "/". */
+export function safeNext(next, base) {
+  const url = new URL(next || "/", base);
+  return url.origin === new URL(base).origin ? url.pathname + url.search : "/";
+}
 
 /**
  * The one access check. Web sessions and MCP tokens both resolve to an email and end here,
@@ -33,7 +37,7 @@ export async function sessionUser(request, env, config) {
 export async function startLogin(request, config) {
   const state = randomToken();
   const verifier = randomToken();
-  const next = safeNext(new URL(request.url).searchParams.get("next"));
+  const next = safeNext(new URL(request.url).searchParams.get("next"), config.PUBLIC_URL);
   const challenge = base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({
@@ -53,7 +57,9 @@ export async function startLogin(request, config) {
 /** GET /auth/callback: code → tokens → profile → allowlist → session. */
 export async function finishLogin(request, env, config) {
   const params = new URL(request.url).searchParams;
-  const [state, verifier, next] = (readCookie(request, LOGIN_COOKIE) || "").split(".");
+  // state and verifier are base64url (no dots); next may contain dots, so it is everything after the second.
+  const [state, verifier, ...rest] = (readCookie(request, LOGIN_COOKIE) || "").split(".");
+  const next = rest.join(".");
   if (!state || params.get("state") !== state) return new Response("Anmeldung abgelaufen. Bitte neu starten.", { status: 400 });
   if (!params.get("code")) return new Response("Anmeldung abgebrochen.", { status: 400 });
 
@@ -86,7 +92,7 @@ export async function finishLogin(request, env, config) {
     env.DB.prepare("INSERT INTO sessions (token_hash, email, expires_at) VALUES (?, ?, ?)").bind(await sha256(session), email, Date.now() + SESSION_DAYS * 864e5),
     env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(Date.now()),
   ]);
-  const headers = new Headers({ Location: safeNext(decodeURIComponent(next || "")) });
+  const headers = new Headers({ Location: safeNext(decodeURIComponent(next), config.PUBLIC_URL) });
   headers.append("Set-Cookie", cookie(SESSION_COOKIE, session, SESSION_DAYS * 86400));
   headers.append("Set-Cookie", cookie(LOGIN_COOKIE, "", 0));
   return new Response(null, { status: 302, headers });

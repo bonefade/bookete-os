@@ -25,3 +25,4 @@ _None._
 
 - Root `package.json` is still named `bookete-scraper`; README and layout describe one tool.
 - CRM: favicon.
+- CRM: `server/mcp.js` reuses `web/search.js`; move the search core to `domain/` so the server does not import the web layer.

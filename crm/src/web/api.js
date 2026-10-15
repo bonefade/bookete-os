@@ -1,4 +1,5 @@
 import { ValidationError } from '../domain/errors.js';
+import { chunkBackup } from '../domain/backup.js';
 
 const toLogin = () => location.assign("/auth/login?next=" + encodeURIComponent(location.pathname));
 
@@ -37,6 +38,10 @@ export function createApi(onWrite) {
     deleteTemplate: (id) => rpc("deleteTemplate", { id }),
     saveIcp: (icp) => rpc("saveIcp", { icp: { fit: icp.fit, noFit: icp.noFit, note: icp.note } }),
     sendEmail: (lead, msg) => rpc("sendEmail", { id: lead.id, ...msg }),
-    importBackup: (backup) => rpc("importBackup", { backup }),
+    async importBackup(backup) {
+      let added = 0;
+      for (const chunk of chunkBackup(backup)) added += await rpc("importBackup", { backup: chunk });
+      return added;
+    },
   };
 }

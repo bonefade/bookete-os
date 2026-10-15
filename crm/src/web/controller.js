@@ -421,7 +421,7 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
         return toast("Keine g\xFCltige JSON-Datei");
       }
       t.value = "";
-      if (confirm("Sicherung einspielen? Eintr\xE4ge mit gleicher ID werden \xFCberschrieben.")) await run(() => uc.importBackup(backup), (n) => `${n} Eintr\xE4ge eingespielt`);
+      if (confirm("Sicherung einspielen? Eintr\xE4ge mit gleicher ID werden \xFCberschrieben.")) await run(() => uc.importBackup(backup), (n) => `${n} neue Eintr\xE4ge eingespielt`);
     }
   });
   render();

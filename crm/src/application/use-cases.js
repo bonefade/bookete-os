@@ -1,6 +1,7 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, planAfterActivity } from "../domain/activity.js";
+import { SCHEMA_VERSION } from "../domain/constants.js";
 import { normalizeLead, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { ValidationError } from "../domain/errors.js";
@@ -9,6 +10,9 @@ import { ValidationError } from "../domain/errors.js";
  * The only write path. The web app (RPC) and agents (MCP) both call these,
  * so every business rule holds whoever writes. `actor` is recorded on each write.
  */
+const lines = (a) => (a || []).map((s) => String(s).trim()).filter(Boolean);
+const normalizeIcp = (icp) => ({ fit: lines(icp.fit), noFit: lines(icp.noFit), note: String(icp.note || "") });
+
 export function createUseCases({ store, clock, ids, actor, mailer = null }) {
   const touch = (patch) => ({ ...patch, updatedAt: clock.now() });
   const commit = (ops) => store.commit(ops, actor);
@@ -57,7 +61,12 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
       const acts = await store.activitiesOf(id);
       await commit([...acts.map((a) => ({ type: "remove", collection: "activities", id: a.id })), { type: "remove", collection: "leads", id }]);
     },
-    changeStatus: async (id, status) => patchLead(id, transition(await lead(id), status)),
+    /** Status and, for kein-interesse, the reason, validated together and written in one patch. */
+    async changeStatus(id, status, reason) {
+      const l = await lead(id);
+      const patch = transition(l, status);
+      await patchLead(id, reason ? { ...patch, ...lostReasonPatch({ ...l, ...patch }, reason) } : patch);
+    },
     setLostReason: async (id, reason) => patchLead(id, lostReasonPatch(await lead(id), reason)),
     closeWithoutReply: async (id) => patchLead(id, { ...transition(await lead(id), "kein-interesse"), lostReason: "Keine Antwort" }),
     setFollowUp: async (id, date) => (await lead(id), patchLead(id, followUpPatch(date))),
@@ -91,10 +100,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
       return newId;
     },
     deleteTemplate: (id) => commit([{ type: "remove", collection: "templates", id }]),
-    saveIcp(icp) {
-      const lines = (a) => (a || []).map((s) => String(s).trim()).filter(Boolean);
-      return commit([{ type: "put", collection: "settings", id: "icp", data: { fit: lines(icp.fit), noFit: lines(icp.noFit), note: icp.note || "", updatedAt: clock.now() } }]);
-    },
+    saveIcp: (icp) => commit([{ type: "put", collection: "settings", id: "icp", data: { ...normalizeIcp(icp), updatedAt: clock.now() } }]),
     /** Sends from the signed-in user's Gmail, then logs the activity. */
     async sendEmail(id, { subject, text, templateId }) {
       const l = await mailable(id);
@@ -111,13 +117,33 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
       const l = await mailable(id);
       return mailer.draft({ to: l.email, subject, text });
     },
-    /** Restores a backup from the Claude artifact or this app. Records are upserted by id. */
+    /**
+     * Restores records from a backup (the Claude artifact's or this app's). Only records the CRM has never
+     * held are added, each through the same normalization as a normal write: an import can neither clear an
+     * opt-out nor bring back something deleted. Re-running an import is safe; the client sends it in chunks.
+     */
     async importBackup(backup) {
       if (backup?.format !== BACKUP_FORMAT) throw new ValidationError("backup", "Keine bookete-CRM-Sicherung");
-      const ops = COLLECTIONS.flatMap((collection) => (backup.data?.[collection] || []).map((record) => {
-        if (typeof record?.id !== "string" || !record.id) throw new ValidationError("backup", `Eintrag ohne id in ${collection}`);
-        return { type: "put", collection, id: record.id, data: record };
-      }));
+      const now = clock.now();
+      const normalize = {
+        leads: (r) => ({ ...normalizeLead(r), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),
+        activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
+        templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),
+        settings: (r) => ({ ...normalizeIcp(r), updatedAt: r.updatedAt || now }),
+      };
+      const ops = [];
+      for (const collection of COLLECTIONS) {
+        const known = await store.ids(collection);
+        for (const record of backup.data?.[collection] || []) {
+          if (known.has(record.id) || (collection === "settings" && record.id !== "icp")) continue;
+          try {
+            const { id: _id, ...data } = normalize[collection](record);
+            ops.push({ type: "put", collection, id: record.id, data });
+          } catch (e) {
+            throw new ValidationError("backup", `${collection} ${record.id}: ${e.message}`);
+          }
+        }
+      }
       await commit(ops);
       return ops.length;
     }
