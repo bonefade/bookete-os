@@ -1,0 +1,7 @@
+PUBLIC_URL=http://localhost:8787
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+# openssl rand -base64 32
+TOKEN_KEY=
+CONSENT_SECRET=
+ALLOWED_EMAILS=you@bookete.com

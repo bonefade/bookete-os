@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crm/package-lock.json
+      - run: npm ci --prefix crm
+      # All four steps are blocking; .githooks/pre-commit runs the same commands.
+      - name: scraper tests
+        run: npm test
+      - name: crm tests
+        run: npm --prefix crm test
+      - name: crm build
+        run: npm --prefix crm run build
+      - name: AGENTS.md current
+        run: python3 .claude/agents_md.py . --check
+
+  # Deploys main to crm.bookete.com after the tests pass. Off until the repo
+  # variable CRM_DEPLOY is "true" (set it once Cloudflare is set up, see crm/README.md).
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CRM_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    concurrency: deploy-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix crm
+      - run: npm --prefix crm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

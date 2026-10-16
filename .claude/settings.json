@@ -1,0 +1,17 @@
+{
+  "$comment": "Shared config — personal overrides go to settings.local.json (gitignored).",
+  "statusLine": {
+    "type": "command",
+    "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/statusline.py\"",
+    "refreshInterval": 30
+  },
+  "extraKnownMarketplaces": {
+    "brain-os": {
+      "source": { "source": "github", "repo": "bonefade/brain-os-internal" }
+    }
+  },
+  "enabledPlugins": {
+    "brain-core@brain-os": true,
+    "brain-ai-factory@brain-os": true
+  }
+}

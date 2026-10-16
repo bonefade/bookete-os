@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bookete-crm",
+  "main": "src/server/index.js",
+  "compatibility_date": "2026-10-01",
+  // The OAuth library fetches MCP clients' metadata documents; this blocks fetches to private addresses.
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "assets": { "directory": "public" },
+  "routes": [{ "pattern": "crm.bookete.com", "custom_domain": true }],
+  // IDs come from `wrangler d1 create crm` and `wrangler kv namespace create OAUTH_KV` (see README).
+  "d1_databases": [{ "binding": "DB", "database_name": "crm", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "00000000000000000000000000000000" }],
+  "vars": { "PUBLIC_URL": "https://crm.bookete.com" }
+  // Secrets (wrangler secret put): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_KEY, CONSENT_SECRET, ALLOWED_EMAILS.
+}

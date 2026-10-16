@@ -1,5 +1,7 @@
 # Bookete Lead Generation Scraper (DACH)
 
+> This repo also holds the bookete CRM in [`crm/`](crm/README.md). The rest of this README covers the scraper.
+
 Standalone, high-precision lead generation scraper for discovering DACH restaurants and detecting competitor reservation widgets (Quandoo, OpenTable, TheFork, Resmio).
 
 Built with 100% free open data: zero Google Places billing accounts, zero paid API keys, and zero heavy dependencies.
