@@ -8,8 +8,8 @@
   "assets": { "directory": "public" },
   "routes": [{ "pattern": "crm.bookete.com", "custom_domain": true }],
   // IDs come from `wrangler d1 create crm` and `wrangler kv namespace create OAUTH_KV` (see README).
-  "d1_databases": [{ "binding": "DB", "database_name": "crm", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
-  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "00000000000000000000000000000000" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "crm", "database_id": "1de53b4f-5e3b-46b6-a9a3-e99e91c2b218", "migrations_dir": "migrations" }],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "afa2330ca33c4d7db8042cf8d0070550" }],
   "vars": { "PUBLIC_URL": "https://crm.bookete.com" }
   // Secrets (wrangler secret put): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_KEY, CONSENT_SECRET, ALLOWED_EMAILS.
 }

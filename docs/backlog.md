@@ -4,7 +4,7 @@ Open work for bookete-os, by priority. Done items leave this file; git keeps the
 
 ## Now (in flight)
 
-- CRM go-live: Google OAuth client, Cloudflare D1/KV, secrets, DNS (`crm/README.md` § Setup).
+_None._
 
 ## P0
 
