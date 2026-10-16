@@ -7,6 +7,7 @@ import { COMMANDS } from "../src/server/commands.js";
 import { handleMcp } from "../src/server/mcp.js";
 import { mimeMessage } from "../src/server/gmail.js";
 import { readConfig } from "../src/server/config.js";
+import { ConflictError } from "../src/domain/errors.js";
 
 const clock = { today: () => "2026-10-15", now: () => "2026-10-15T10:00:00.000Z" };
 
@@ -41,6 +42,15 @@ test("MCP writes go through the use cases and their rules", async () => {
   assert.match(blocked.result.content[0].text, /Opt-out/);
   const bad = await call(context, "tools/call", { name: "create_lead", arguments: {} });
   assert.equal(bad.result.isError, true);
+});
+
+test("an agent whose write keeps losing races gets the conflict as a tool error, not a crash", async () => {
+  const context = mcpContext();
+  const id = await context.uc.addLead({ name: "Agent Wirt" });
+  const busy = { ...context.store, commit: async () => { throw new ConflictError(); } };
+  const res = await call({ ...context, uc: createUseCases({ store: busy, clock, ids: { newId: () => "x" }, actor: "agent" }) }, "tools/call", { name: "update_lead", arguments: { id, fields: { notes: "Neu" } } });
+  assert.equal(res.result.isError, true);
+  assert.equal(res.result.content[0].text, new ConflictError().message);
 });
 
 test("MCP answers notifications with 202 and unknown methods with a JSON-RPC error", async () => {

@@ -1,9 +1,9 @@
-import { STAGES, STAGE_LABEL, LOST_REASONS, BUSINESS_TYPES, RESERVATION_TOOLS, CHANNELS, TEMPLATE_PURPOSES, PURPOSE_LABEL, SEQUENCE_POLICY } from '../domain/constants.js';
+import { STAGES, STAGE_LABEL, LOST_REASONS, BUSINESS_TYPES, RESERVATION_TOOLS, CHANNELS, TEMPLATE_PURPOSES, PURPOSE_LABEL, SEQUENCE_POLICY, TRASH_SHOWN } from '../domain/constants.js';
 import { actsOf, currentLead, icpOf, isReady, scoped, regionCounts, toolCounts } from './selectors.js';
 import { addDays } from '../domain/dates.js';
 import { channelLink, instagramProfile } from './platform.js';
 import { countTouches, hasReply, sequenceExhausted, nextActionHint } from '../domain/activity.js';
-import { esc, fmtDate, relDate, options } from './format.js';
+import { esc, fmtDate, relDate, options, describeChange, actorName, fmtTime, FIELD_LABEL } from './format.js';
 import { fold, searchTokens, searchLeads, markRanges, markHtml, snippetHtml } from './search.js';
 import { isOpen, isDue } from '../domain/lead.js';
 import { outreachStats, lostBreakdown, templateUsage } from '../domain/stats.js';
@@ -193,30 +193,42 @@ export function moreView(state) {
   <div class="sec"><h3>Warum verloren</h3><div class="card">${lost.length ? `<dl class="facts" style="padding:0">${lost.map(([k, v]) => `<div class="fact"><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join("")}</dl>` : `<p class="note" style="margin:0">Noch keine verlorenen Betriebe.</p>`}</div></div>
   <div class="sec"><h3>Nachfass-Rhythmus</h3><div class="card"><p style="margin:0">Nach dem Erstkontakt: Follow-up nach ${cadence[0]} Tagen, dann nach weiteren ${cadence[1]} Tagen. Nach ${maxTouches} Kontakten ohne Antwort schl\xE4gt die App vor, abzuschlie\xDFen.</p></div></div>
   <div class="sec"><h3>Backup</h3><div class="card"><p style="margin:0 0 10px">Alle Betriebe, Kontakte, Vorlagen und das ICP als versionierte JSON-Datei sichern.</p><button class="primary full" data-act="export"${state.caps.db ? "" : " disabled"}>Backup herunterladen</button><button class="full" style="margin-top:8px" data-act="importPick"${state.caps.db ? "" : " disabled"}>Sicherung einspielen</button><input type="file" id="importFile" accept="application/json,.json" hidden></div></div>
+  <div class="sec"><h3>Papierkorb</h3><div class="card">${trashHtml(state.ui.trash)}</div></div>
   <div class="sec"><h3>Konto</h3><div class="card"><p style="margin:0 0 10px">${esc(state.me?.email || "")} \xB7 Gmail ${state.caps.gmail ? "verbunden" : `nicht verbunden \u2013 <a href="/auth/login">neu anmelden</a>`}</p><form method="post" action="/auth/logout" style="margin:0"><button class="full">Abmelden</button></form></div></div>
 </div>`;
 }
+/** Deleted leads, loaded on demand; each can come back or be erased for good. */
+function trashHtml(trash) {
+  if (!trash) return `<button class="full" data-act="showTrash">Papierkorb \xF6ffnen</button>`;
+  if (!trash.length) return `<p class="note" style="margin:0">Der Papierkorb ist leer.</p>`;
+  return (trash.length >= TRASH_SHOWN ? `<p class="note" style="margin:0 0 8px">Die neuesten ${TRASH_SHOWN}; \xE4ltere erscheinen, wenn diese weg sind.</p>` : "") + trash.map(({ lead, actor, at }) => `<div class="entry"><div class="h"><span>${esc(fmtTime(at))} \xB7 ${esc(actorName(actor))}</span></div><p style="margin:2px 0 8px;font-weight:600">${esc([lead.name, lead.city].filter(Boolean).join(" \xB7 "))}</p><div class="two"><button data-restore="${esc(lead.id)}">Wiederherstellen</button><button class="danger" data-purge="${esc(lead.id)}">Endg\xFCltig l\xF6schen</button></div></div>`).join("");
+}
+/** Who changed what on this lead, loaded on demand. */
+function changesHtml(changes) {
+  const shown = changes.rows.map((e) => [e, describeChange(e)]).filter(([, lines]) => lines.length);
+  return shown.length ? shown.map(([e, lines]) => `<div class="entry"><div class="h"><span>${esc(fmtTime(e.at))} \xB7 ${esc(actorName(e.actor))}</span></div><div class="t">${lines.map(esc).join("<br>")}</div></div>`).join("") : `<p class="note">Noch keine \xC4nderungen aufgezeichnet.</p>`;
+}
 export const QUICK_FIELDS = [
-  { key: "person", label: "Ansprechperson" },
-  { key: "email", label: "E-Mail", type: "email" },
-  { key: "phone", label: "Telefon", type: "tel" },
-  { key: "currentTool", label: "Reserviert aktuell \xFCber", options: () => RESERVATION_TOOLS },
-  { key: "hook", label: "Aufh\xE4nger" },
-  { key: "fit", label: "ICP-Fit", options: () => [[3, "\u2605\u2605\u2605 sehr gut"], [2, "\u2605\u2605 passt"], [1, "\u2605 fraglich"]], show: (l) => "\u2605".repeat(l.fit || 2) },
-  { key: "website", label: "Website", type: "url" },
-  { key: "instagram", label: "Instagram" },
-  { key: "city", label: "Ort" },
-  { key: "region", label: "Region", options: () => [["", "automatisch"], ...REGIONS], show: (l) => regionOf(l) + (l.region ? "" : " (automatisch)") },
-  { key: "type", label: "Art", options: () => BUSINESS_TYPES }
+  { key: "person" },
+  { key: "email", type: "email" },
+  { key: "phone", type: "tel" },
+  { key: "currentTool", options: () => RESERVATION_TOOLS },
+  { key: "hook" },
+  { key: "fit", options: () => [[3, "\u2605\u2605\u2605 sehr gut"], [2, "\u2605\u2605 passt"], [1, "\u2605 fraglich"]], show: (l) => "\u2605".repeat(l.fit || 2) },
+  { key: "website", type: "url" },
+  { key: "instagram" },
+  { key: "city" },
+  { key: "region", options: () => [["", "automatisch"], ...REGIONS], show: (l) => regionOf(l) + (l.region ? "" : " (automatisch)") },
+  { key: "type", options: () => BUSINESS_TYPES }
 ];
 export function quickField(l, f, editing) {
   const raw = l[f.key] ?? "";
   if (editing === f.key) {
     const input = f.options ? `<select id="qe" data-field="${f.key}">${options(f.options(), raw)}</select>` : `<input id="qe" data-field="${f.key}" type="${f.type || "text"}" value="${esc(raw)}" autocomplete="off">`;
-    return `<div class="fact editing"><dt>${f.label}</dt><dd>${input}<div class="qe-actions"><button data-act="qeCancel">Abbrechen</button><button class="primary" data-act="qeSave">Speichern</button></div></dd></div>`;
+    return `<div class="fact editing"><dt>${FIELD_LABEL[f.key]}</dt><dd>${input}<div class="qe-actions"><button data-act="qeCancel">Abbrechen</button><button class="primary" data-act="qeSave">Speichern</button></div></dd></div>`;
   }
   const shown = f.show ? f.show(l) : raw;
-  return `<div class="fact qe-click" data-edit="${f.key}" role="button" tabindex="0"><dt>${f.label}</dt><dd>${shown ? esc(shown) : `<span class="qe-empty">+ hinzuf\xFCgen</span>`}</dd></div>`;
+  return `<div class="fact qe-click" data-edit="${f.key}" role="button" tabindex="0"><dt>${FIELD_LABEL[f.key]}</dt><dd>${shown ? esc(shown) : `<span class="qe-empty">+ hinzuf\xFCgen</span>`}</dd></div>`;
 }
 export function detailView(state, today) {
   const l = currentLead(state);
@@ -270,6 +282,7 @@ export function detailView(state, today) {
   <div class="sec"><h3>Infos <small>zum Bearbeiten antippen</small></h3><dl class="card facts qe">${factsHtml}</dl></div>
   <div class="sec"><h3>Notizen</h3>${ui.editField === "notes" ? `<div class="card"><textarea id="qe" data-field="notes" rows="10">${esc(l.notes || "")}</textarea><div class="qe-actions"><button data-act="qeCancel">Abbrechen</button><button class="primary" data-act="qeSave">Speichern</button></div></div>` : `<div class="card qe-click" data-edit="notes" role="button" tabindex="0">${l.notes ? clamp("notes", l.notes) : `<span class="qe-empty">+ Notiz hinzuf\xFCgen</span>`}</div>`}</div>
   <div class="sec"><h3>Verlauf</h3>${acts.length ? [...acts].reverse().map((e) => `<div class="entry ${e.direction}"><div class="h"><span>${fmtDate(e.date)} \xB7 ${esc(e.channel)} \xB7 ${e.direction === "out" ? "wir \u2192 Betrieb" : "Betrieb \u2192 wir"}${e.templateId && tplName[e.templateId] ? " \xB7 " + esc(tplName[e.templateId]) : ""}</span><button data-copy="${esc(e.id)}">Kopieren</button></div>${clamp("a:" + e.id, e.text)}</div>`).join("") : `<p class="note">Noch keine Eintr\xE4ge.</p>`}</div>
+  <div class="sec"><h3>\xC4nderungen</h3>${ui.changes?.leadId === l.id ? changesHtml(ui.changes) : `<button class="more" data-act="showChanges">Wer hat was ge\xE4ndert?</button>`}</div>
 </div>`;
 }
 export function leadEditView(state) {

@@ -10,6 +10,28 @@ import { relDate } from './format.js';
 import { tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView } from './views.js';
 
 export const UI_ONLY_ACTIONS = new Set(["qeCancel", "toggleEmail", "back", "edit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick"]);
+/**
+ * A form's fields by name. With `onlyChanged`, only those whose value differs from what the form showed when
+ * it opened, so saving cannot undo someone else's edit to a field this user never touched.
+ */
+export function formInput(elements, onlyChanged) {
+  const input = {};
+  for (const el of elements) {
+    if (!el.name) continue;
+    const shown = el.options ? ([...el.options].find((o) => o.defaultSelected) ?? el.options[0])?.value : el.defaultValue;
+    if (!onlyChanged || el.value !== shown) input[el.name] = el.value;
+  }
+  return input;
+}
+/**
+ * Saves the lead form: an update of the lead it was opened for, by id, even if that lead is gone from this
+ * browser's state by now (the server then answers "Betrieb nicht gefunden"); a new lead only from the empty form.
+ */
+export async function saveLeadForm(uc, leadId, elements) {
+  if (!leadId) return uc.addLead(formInput(elements, false));
+  await uc.updateLead({ id: leadId }, formInput(elements, true));
+  return leadId;
+}
 export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
   let uc = null;
   const S = () => store2.get();
@@ -20,13 +42,13 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     clearTimeout(toastEl._h);
     toastEl._h = setTimeout(() => toastEl.classList.remove("on"), 2e3);
   }
-  async function run(fn, okMsg) {
+  async function run(fn, okMsg, failMsg = "Speichern fehlgeschlagen") {
     try {
       const r = await fn();
       if (okMsg) toast(typeof okMsg === "function" ? okMsg(r) : okMsg);
       return r;
     } catch (e) {
-      toast(e instanceof ValidationError ? e.message : "Speichern fehlgeschlagen");
+      toast(e instanceof ValidationError ? e.message : failMsg);
       if (!(e instanceof ValidationError)) console.error(e);
       return void 0;
     }
@@ -74,7 +96,8 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
   };
   const goTab = (tab) => {
     saveScroll();
-    show({ tab, view: null, quick: false }, S().ui.scroll[tab] || 0);
+    // The Papierkorb is loaded on demand; coming back to Mehr starts closed, so it is never shown stale.
+    show({ tab, view: null, quick: false, ...(tab === "mehr" && { trash: null }) }, S().ui.scroll[tab] || 0);
   };
   const focusSearch = () => {
     const n = root.querySelector("#gq");
@@ -119,7 +142,11 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     if (u.view === "editLead" && u.leadId && currentLead(S())) return openView("detail");
     show({ view: null }, u.scroll[u.tab] || 0);
   };
-  const openLead = (id) => openView("detail", { leadId: id, compose: null, lostPick: false, editField: null, expanded: new Set() });
+  const openLead = (id) => openView("detail", { leadId: id, compose: null, lostPick: false, editField: null, changes: null, expanded: new Set() });
+  const loadTrash = () => run(async () => {
+    ui({ trash: await uc.trash() });
+    render();
+  }, null, "Laden fehlgeschlagen");
   function startCompose(direction) {
     const st = S();
     const lead = currentLead(st);
@@ -252,19 +279,14 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
       await run(() => uc.clearOptOut(lead), "Opt-out aufgehoben");
     },
     async saveLead() {
-      const form = root.querySelector("#form");
-      const input = {};
-      for (const el of form.elements) if (el.name) input[el.name] = el.value;
-      const st = S();
-      const lead = st.ui.leadId ? currentLead(st) : null;
-      const id = await run(async () => lead ? (await uc.updateLead(lead, input), lead.id) : uc.addLead(input), "Gespeichert");
+      const id = await run(() => saveLeadForm(uc, S().ui.leadId, root.querySelector("#form").elements), "Gespeichert");
       if (id) openLead(id);
     },
     async deleteLead() {
-      const st = S();
-      const lead = currentLead(st);
-      if (!confirm(`\u201E${lead.name}\u201C wirklich l\xF6schen? Das l\xE4sst sich nicht r\xFCckg\xE4ngig machen.`)) return;
-      if (await run(() => uc.deleteLead(lead, actsOf(st, lead.id)).then(() => true), "Gel\xF6scht")) show({ view: null });
+      const lead = currentLead(S());
+      if (!lead) return toast("Betrieb nicht gefunden");
+      if (!confirm(`\u201E${lead.name}\u201C l\xF6schen? Er kommt in den Papierkorb (unter Mehr) und l\xE4sst sich von dort wiederherstellen.`)) return;
+      if (await run(() => uc.deleteLead(lead).then(() => true), "Im Papierkorb")) show({ view: null, trash: null });
     },
     tplNew: () => openView("editTemplate", { templateId: null }),
     async tplSave() {
@@ -305,7 +327,16 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
         render();
       }
     },
-    importPick: () => root.querySelector("#importFile")?.click()
+    importPick: () => root.querySelector("#importFile")?.click(),
+    async showChanges() {
+      const lead = currentLead(S());
+      const rows = await run(() => uc.history(lead), null, "Laden fehlgeschlagen");
+      if (rows) {
+        ui({ changes: { leadId: lead.id, rows } });
+        render();
+      }
+    },
+    showTrash: loadTrash
   };
   document.addEventListener("click", async (ev) => {
     const el = ev.target.closest("button,a[data-act],[data-open],[data-edit]");
@@ -349,8 +380,13 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
       const a = st.data.activities.find((x) => x.id === d.copy);
       return toast(a && copyText(a.text) ? "Kopiert" : "Kopieren nicht m\xF6glich");
     }
-    const writes = d.status || d.lost || d.fu || d.act && !UI_ONLY_ACTIONS.has(d.act);
+    const writes = d.status || d.lost || d.fu || d.restore || d.purge || d.act && !UI_ONLY_ACTIONS.has(d.act);
     if (writes && !uc) return toast("Keine Verbindung zur Datenbank");
+    if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash();
+    if (d.purge) {
+      if (!confirm("Endg\xFCltig l\xF6schen? Der Betrieb, seine Kontakte und alle \xC4nderungen sind dann weg. Das l\xE4sst sich nicht r\xFCckg\xE4ngig machen.")) return;
+      return await run(() => uc.purgeLead(d.purge).then(() => true), "Endg\xFCltig gel\xF6scht") && loadTrash();
+    }
     const lead = currentLead(st);
     if (d.status) {
       if (lead.status === d.status) return;
@@ -421,7 +457,7 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
         return toast("Keine g\xFCltige JSON-Datei");
       }
       t.value = "";
-      if (confirm("Sicherung einspielen? Eintr\xE4ge mit gleicher ID werden \xFCberschrieben.")) await run(() => uc.importBackup(backup), (n) => `${n} neue Eintr\xE4ge eingespielt`);
+      if (confirm("Sicherung einspielen? Nur Eintr\xE4ge, die das CRM noch nie hatte, kommen dazu; bestehende bleiben unver\xE4ndert.")) await run(() => uc.importBackup(backup), (n) => `${n} neue Eintr\xE4ge eingespielt`);
     }
   });
   render();
@@ -432,7 +468,7 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
     onDataChanged: safeRender,
     fail(msg) {
       store2.set((s) => ({ ...s, status: { ...s.status, failed: msg } }));
-      render();
+      safeRender();
     }
   };
 }

@@ -26,5 +26,5 @@ export const initialState = () => ({
   status: { leads: false, activities: false, templates: false, settings: false, failed: "" },
   caps: { db: false, gmail: false },
   me: null,
-  ui: { tab: "heute", view: null, leadId: null, templateId: null, seg: "offen", q: "", gq: "", sIdx: 0, region: "alle", tool: "alle", onlyEmail: false, sort: "prio", quick: false, compose: null, expanded: new Set(), icpEdit: false, lostPick: false, editField: null, scroll: {} }
+  ui: { tab: "heute", view: null, leadId: null, templateId: null, seg: "offen", q: "", gq: "", sIdx: 0, region: "alle", tool: "alle", onlyEmail: false, sort: "prio", quick: false, compose: null, expanded: new Set(), icpEdit: false, lostPick: false, editField: null, changes: null, trash: null, scroll: {} }
 });

@@ -1,4 +1,5 @@
 import { OAuthProvider, AuthorizationError, CimdFetchError } from "@cloudflare/workers-oauth-provider";
+import { z } from "zod";
 import { readConfig } from "./config.js";
 import { allowedUser, sessionUser, startLogin, finishLogin, logout } from "./auth.js";
 import { createStore } from "./store.js";
@@ -7,7 +8,7 @@ import { COMMANDS } from "./commands.js";
 import { handleMcp } from "./mcp.js";
 import { createUseCases } from "../application/use-cases.js";
 import { systemClock, uuidIds } from "../adapters/system.js";
-import { ValidationError } from "../domain/errors.js";
+import { ValidationError, ConflictError } from "../domain/errors.js";
 
 const SCOPE = "crm";
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -34,6 +35,7 @@ async function rpc(request, env, config, user, name) {
     return Response.json({ result: (await command[1](uc, args.data)) ?? null });
   } catch (e) {
     if (e instanceof ValidationError) return Response.json({ error: e.message, field: e.field }, { status: 400 });
+    if (e instanceof ConflictError) return Response.json({ error: e.message, field: "conflict" }, { status: 409 });
     throw e;
   }
 }
@@ -76,6 +78,8 @@ ${details.redirectIsLoopback ? "<p><b>Der Zugang geht an ein Programm auf deinem
   }
 }
 
+const LeadQuery = z.object({ id: z.string().min(1).max(100) });
+
 async function app(request, env, config) {
   const url = new URL(request.url);
   const route = `${request.method} ${url.pathname}`;
@@ -89,6 +93,11 @@ async function app(request, env, config) {
   if (!user) return Response.json({ error: "Nicht angemeldet" }, { status: 401 });
   if (route === "GET /api/me") return Response.json({ email: user.email, name: user.name, gmail: !!user.refreshToken });
   if (route === "GET /api/sync") return Response.json(await createStore(env.DB).changes(Math.max(0, parseInt(url.searchParams.get("since"), 10) || 0)));
+  if (route === "GET /api/history") {
+    const query = LeadQuery.safeParse(Object.fromEntries(url.searchParams));
+    return query.success ? Response.json(await createStore(env.DB).history(query.data.id)) : Response.json({ error: "Ung\xFCltige Eingabe" }, { status: 400 });
+  }
+  if (route === "GET /api/trash") return Response.json(await createStore(env.DB).trash());
   if (request.method === "POST" && url.pathname.startsWith("/api/rpc/")) return rpc(request, env, config, user, url.pathname.slice(9));
   return new Response("Not found", { status: 404 });
 }

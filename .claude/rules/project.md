@@ -24,6 +24,12 @@ working them as leads. Two parts, each with its own `package.json`:
 - `crm/src/application/use-cases.js`: the only write path. The web app,
   MCP and backup import all call it, so every rule holds whoever writes.
   Import adds only records the CRM never held, through the same normalization.
+- Concurrent writes: a write computed from a read names that read as `base`;
+  the store commits it only if the record is unchanged (`write_guard`,
+  migration 0002), else the use case runs again on fresh data (`retrying`).
+  The store refuses a patch, remove or restore without a `base`; only a put
+  (a new record, or the ICP) goes without.
+  History rows come from triggers on `docs`, so no write path can skip them.
 - `crm/src/server/`: Worker entry (`index.js`), D1 document store, Google
   sign-in and sessions (`auth.js`), Gmail, RPC commands, MCP.
 - `crm/src/web/`: the browser UI, bundled by esbuild to `crm/public/app.js`.
@@ -36,6 +42,9 @@ working them as leads. Two parts, each with its own `package.json`:
 - Schema library (principle 2): Zod 4, at every request and env boundary
   (`crm/src/server/commands.js`, `mcp.js`, `config.js`).
 - Migrations: `crm/migrations/`, applied by `wrangler d1 migrations apply`.
+- D1 test double: `crm/test/d1.js` runs on node:sqlite and refuses more than
+  100 bound parameters per query, as D1 does. D1's cap on queries per Worker
+  invocation (50 on Free) is not modelled (unenforced; backlog).
 - Backlog: `docs/backlog.md`, groomed with `/groom-backlog` at each CRM release.
 - Release: each production deploy bumps `version` in `crm/package.json` and adds a `crm/CHANGELOG.md` entry.
 - Access walk: `crm/test/access.test.js` calls every API route and RPC command without a valid session. A new command goes into its exact list.

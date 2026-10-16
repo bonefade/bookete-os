@@ -86,7 +86,7 @@ test("without Gmail, sending fails before anything happens", async () => {
   await rejects(uc.sendEmail(id, { subject: "S", text: "T" }), "gmail");
 });
 
-test("deleting a lead removes its history in the same transaction, and sync reports both", async () => {
+test("deleting a lead moves it and its activities to the trash in one transaction, and sync reports both", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Weg" });
   await uc.logActivity(id, { direction: "out", channel: "Telefon", text: "Angerufen" });
@@ -166,4 +166,93 @@ test("every write records who made it", async () => {
   const uc = createUseCases({ store, clock, ids: { newId: () => "x1" }, actor: "partner@bookete.com (mcp)" });
   await uc.addLead({ name: "Wer" });
   assert.equal((await db.prepare("SELECT updated_by FROM docs").first()).updated_by, "partner@bookete.com (mcp)");
+});
+
+test("every version of a lead is kept with who wrote it, old and new", async () => {
+  const db = createD1();
+  const store = createStore(db);
+  const as = (actor) => createUseCases({ store, clock, ids: { newId: () => "L1" }, actor });
+  const id = await as("jo@bookete.com (web)").addLead({ name: "Krone", phone: "0664 1" });
+  await as("michael@bookete.com (mcp)").updateLead(id, { phone: "0664 2" });
+  const [changed, created] = await store.history(id);
+  assert.equal(created.before, null);
+  assert.equal(created.actor, "jo@bookete.com (web)");
+  assert.deepEqual([changed.actor, changed.before.phone, changed.after.phone], ["michael@bookete.com (mcp)", "0664 1", "0664 2"]);
+  assert.equal(changed.after.name, "Krone");
+});
+
+test("a save that changes nothing writes nothing", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Krone", instagram: "@krone" });
+  await uc.updateLead(id, { name: "Krone", instagram: "krone" });
+  assert.equal((await store.history(id)).length, 1);
+});
+
+test("a deleted lead waits in the trash and comes back with its activities", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Weg" });
+  await uc.logActivity(id, { direction: "out", channel: "Telefon", text: "Angerufen" });
+  await uc.deleteLead(id);
+  await uc.deleteLead(id);
+  assert.deepEqual((await store.trash()).map((t) => [t.lead.name, t.actor]), [["Weg", "jo@bookete.com (test)"]]);
+  const { seq } = await store.changes(0);
+  await uc.restoreLead(id);
+  await uc.restoreLead(id);
+  assert.equal((await store.get("leads", id)).status, "kontaktiert");
+  assert.deepEqual((await store.activitiesOf(id)).map((a) => a.text), ["Angerufen"]);
+  assert.deepEqual((await store.trash()), []);
+  assert.deepEqual((await store.changes(seq)).changes.map((c) => [c.collection, !!c.record]), [["leads", true], ["activities", true]]);
+});
+
+test("erasing a lead from the trash leaves no data and no history, and its id stays used", async () => {
+  const db = createD1();
+  const store = createStore(db);
+  const uc = createUseCases({ store, clock, ids: { newId: () => "L" + Math.random() }, actor: "jo@bookete.com (test)" });
+  const id = await uc.addLead({ name: "Gasthaus Geheim", email: "geheim@example.at" });
+  await uc.logActivity(id, { direction: "out", channel: "E-Mail", text: "Hallo Geheim" });
+  await rejects(uc.purgeLead(id), "id");
+  await uc.deleteLead(id);
+  // A backup can still hold an activity of this lead the CRM never had; the erase covers it too.
+  assert.equal(await uc.importBackup({ format: "bookete-crm-backup", data: { activities: [{ id: "A-old", leadId: id, direction: "in", channel: "E-Mail", date: "2026-10-01", text: "Geheim antwortet" }] } }), 1);
+  await uc.purgeLead(id);
+  await uc.purgeLead(id);
+  const leftover = await db.prepare("SELECT (SELECT group_concat(data) FROM docs) AS docs, (SELECT group_concat(coalesce(before, '') || after) FROM history) AS history").first();
+  assert.doesNotMatch(String(leftover.docs) + String(leftover.history), /Geheim/);
+  assert.deepEqual(await store.trash(), []);
+  await rejects(uc.restoreLead(id), "id");
+  assert.deepEqual((await store.changes(0)).changes, []);
+  assert.equal(await uc.importBackup({ format: "bookete-crm-backup", data: { leads: [{ id, name: "Gasthaus Geheim" }] } }), 0);
+});
+
+test("deleting a template twice is fine, and a deleted template is not saved back", async () => {
+  const { store, uc } = setup();
+  const id = await uc.saveTemplate(null, { name: "Erst", purpose: "erstkontakt", body: "Hallo" });
+  await uc.deleteTemplate(id);
+  await uc.deleteTemplate(id);
+  await rejects(uc.saveTemplate(id, { name: "Erst", purpose: "erstkontakt", body: "Hallo 2" }), "id");
+  assert.equal(await store.get("templates", id), null);
+});
+
+test("a lead's history says which entries deleted and restored it, also at the end of a page", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Gasthaus Krone" });
+  await uc.deleteLead(id);
+  await uc.restoreLead(id);
+  for (let i = 0; i < 99; i++) await uc.setNextStep(id, `Schritt ${i}`);
+  const rows = await store.history(id);
+  assert.equal(rows.length, 100);
+  assert.deepEqual([rows[99].deleted, rows[99].wasDeleted], [false, true]);
+});
+
+test("a lead with many contacts can be deleted, restored and erased within D1's limits", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Gasthaus Krone" });
+  for (let i = 0; i < 30; i++) await uc.logActivity(id, { direction: "in", channel: "E-Mail", text: `Antwort ${i}` });
+  await uc.deleteLead(id);
+  assert.equal((await store.activitiesOf(id, { deleted: true })).length, 30);
+  await uc.restoreLead(id);
+  assert.equal((await store.activitiesOf(id)).length, 30);
+  await uc.deleteLead(id);
+  await uc.purgeLead(id);
+  assert.equal(await store.getDeleted("leads", id), null);
 });

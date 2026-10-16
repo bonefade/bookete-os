@@ -5,7 +5,7 @@ import { isDue, isOpen } from "../domain/lead.js";
 import { nextActionHint, byTimeline } from "../domain/activity.js";
 import { fillTemplate } from "../domain/template.js";
 import { regionOf } from "../domain/region.js";
-import { ValidationError } from "../domain/errors.js";
+import { ValidationError, ConflictError } from "../domain/errors.js";
 import { searchLeads } from "../web/search.js";
 
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
@@ -113,7 +113,7 @@ export async function handleMcp(request, context) {
       try {
         return text(await tool[2](args.data, context));
       } catch (e) {
-        if (e instanceof ValidationError) return text(e.message, true);
+        if (e instanceof ValidationError || e instanceof ConflictError) return text(e.message, true);
         throw e;
       }
     }

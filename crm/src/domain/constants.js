@@ -28,3 +28,5 @@ export const PURPOSE_LABEL = Object.fromEntries(TEMPLATE_PURPOSES);
 export const PLACEHOLDERS = ["Betrieb", "Ort", "Aufh\xE4nger", "Person"];
 export const SEQUENCE_POLICY = { cadence: [3, 7], maxTouches: 3, defaultFollowUpDays: 4 };
 export const COLLECTIONS = ["leads", "activities", "templates", "settings"];
+/** How many deleted leads the Papierkorb lists, newest first. */
+export const TRASH_SHOWN = 50;
