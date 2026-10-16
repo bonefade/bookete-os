@@ -172,7 +172,7 @@ export function templateEditView(state) {
   const id = state.ui.templateId;
   const t = state.data.templates.find((x) => x.id === id) || { name: "", purpose: "followup1", body: "" };
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>${id ? "Vorlage" : "Neue Vorlage"}</h2><button class="link" data-act="tplSave">Sichern</button></div>
-<form class="wrap sub" id="tform" onsubmit="return false">
+<form class="wrap sub" id="tform">
   <label>Name<input name="name" value="${esc(t.name)}"></label>
   <label>Wof\xFCr<select name="purpose">${options(TEMPLATE_PURPOSES, t.purpose)}</select></label>
   <label>Text<textarea name="body" rows="12">${esc(t.body)}</textarea></label>
@@ -194,7 +194,7 @@ export function moreView(state) {
   <div class="sec"><h3>Nachfass-Rhythmus</h3><div class="card"><p style="margin:0">Nach dem Erstkontakt: Follow-up nach ${cadence[0]} Tagen, dann nach weiteren ${cadence[1]} Tagen. Nach ${maxTouches} Kontakten ohne Antwort schl\xE4gt die App vor, abzuschlie\xDFen.</p></div></div>
   <div class="sec"><h3>Backup</h3><div class="card"><p style="margin:0 0 10px">Alle Betriebe, Kontakte, Vorlagen und das ICP als versionierte JSON-Datei sichern.</p><button class="primary full" data-act="export"${state.caps.db ? "" : " disabled"}>Backup herunterladen</button><button class="full" style="margin-top:8px" data-act="importPick"${state.caps.db ? "" : " disabled"}>Sicherung einspielen</button><input type="file" id="importFile" accept="application/json,.json" hidden></div></div>
   <div class="sec"><h3>Papierkorb</h3><div class="card">${trashHtml(state.ui.trash)}</div></div>
-  <div class="sec"><h3>Konto</h3><div class="card"><p style="margin:0 0 10px">${esc(state.me?.email || "")} \xB7 Gmail ${state.caps.gmail ? "verbunden" : `nicht verbunden \u2013 <a href="/auth/login">neu anmelden</a>`}</p><form method="post" action="/auth/logout" style="margin:0"><button class="full">Abmelden</button></form></div></div>
+  <div class="sec"><h3>Konto</h3><div class="card"><p style="margin:0 0 10px">${esc(state.me?.email || "")} \xB7 Gmail ${state.caps.gmail ? "verbunden" : `nicht verbunden \u2013 <a href="/auth/login">neu anmelden</a>`}</p><form method="post" action="/auth/logout" style="margin:0"><button class="full">Abmelden</button></form><form method="post" action="/auth/logout-all" style="margin:8px 0 0"><button class="full" data-act="logoutAll">\xDCberall abmelden</button></form><p class="note" style="margin:6px 0 0">Meldet dich auf allen Ger\xE4ten ab und trennt alle verbundenen Agenten.</p></div></div>
 </div>`;
 }
 /** Deleted leads, loaded on demand; each can come back or be erased for good. */
@@ -290,7 +290,7 @@ export function leadEditView(state) {
   const d = l || { status: "recherchiert", fit: 2, currentTool: "unbekannt", type: "Restaurant" };
   const f = (n, lab, ph = "", type = "text") => `<label>${lab}<input name="${n}" type="${type}" value="${esc(d[n] || "")}" placeholder="${esc(ph)}"></label>`;
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>${l ? "Bearbeiten" : "Neuer Betrieb"}</h2><button class="link" data-act="saveLead">Sichern</button></div>
-<form class="wrap sub" id="form" onsubmit="return false">
+<form class="wrap sub" id="form">
   ${f("name", "Name *")}
   <div class="two">${f("city", "Ort")}<label>Art<select name="type">${options(BUSINESS_TYPES, d.type)}</select></label></div>
   <label>Region<select name="region">${options([["", "automatisch aus Ort" + (d.city ? " (" + regionOf(d) + ")" : "")], ...REGIONS], d.region || "")}</select></label>

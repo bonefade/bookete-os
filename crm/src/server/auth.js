@@ -2,6 +2,8 @@ import { randomToken, sha256, encrypt, base64url } from "./crypto.js";
 
 const SESSION_COOKIE = "__Host-crm-session";
 const LOGIN_COOKIE = "__Host-crm-login";
+// Where the OAuth library remembers approved agents (its default cookie prefix, "__Host-oauth-").
+const APPROVALS_COOKIE = "__Host-oauth-approvals";
 const SESSION_DAYS = 30;
 // gmail.compose covers both sending and drafts.
 const SCOPES = "openid email profile https://www.googleapis.com/auth/gmail.compose";
@@ -103,4 +105,24 @@ export async function logout(request, env) {
   const token = readCookie(request, SESSION_COOKIE);
   if (token) await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256(token)).run();
   return redirect("/", { "Set-Cookie": cookie(SESSION_COOKIE, "", 0) });
+}
+
+/**
+ * POST /auth/logout-all: revokes every agent grant of this user, then ends all their sessions and forgets the agents
+ * this browser approved. Grants first, so a failure leaves the user signed in to try again. Only from this site's own
+ * pages: SameSite=Lax still lets another bookete.com subdomain post here.
+ */
+export async function logoutEverywhere(request, env, config, user) {
+  if (request.headers.get("Origin") !== new URL(config.PUBLIC_URL).origin) return new Response(null, { status: 403 });
+  let cursor;
+  do {
+    const page = await env.OAUTH_PROVIDER.listUserGrants(user.email, { cursor });
+    for (const grant of page.items) await env.OAUTH_PROVIDER.revokeGrant(grant.id, user.email);
+    cursor = page.cursor;
+  } while (cursor);
+  await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(user.email).run();
+  const headers = new Headers({ Location: "/" });
+  headers.append("Set-Cookie", cookie(SESSION_COOKIE, "", 0));
+  headers.append("Set-Cookie", cookie(APPROVALS_COOKIE, "", 0));
+  return new Response(null, { status: 302, headers });
 }

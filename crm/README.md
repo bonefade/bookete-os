@@ -90,6 +90,6 @@ Three layers, from the smallest mistake to the biggest:
 ```sh
 cp .dev.vars.example .dev.vars   # fill in the Google client for localhost
 npx wrangler d1 migrations apply crm --local
-npm run dev                      # http://localhost:8787
+npm run dev                      # http://localhost:8787; the auth rate limit (20 a minute per IP) applies here too
 npm test
 ```

@@ -7,12 +7,16 @@ Each production deploy bumps `version` in `crm/package.json` and adds an entry h
 ### Added
 - **Änderungen:** at the bottom of each business, who changed what and when, with the old and the new value. Logged contacts stay in the contact history and are not repeated there.
 - **Papierkorb** under Mehr: a deleted business can be restored with its contacts, or erased for good with all its contacts and changes when it asks to be deleted. It lists the newest 50.
+- **Überall abmelden** under Mehr: signs you out on every device and disconnects every agent. In this browser, an agent then has to be allowed again.
 
 ### Changed
 - **Saving no longer overwrites the other person's edits.** The form sends only the fields you changed. If someone changed the business at the same moment, the CRM redoes your step on the fresh data, or tells you to try again.
 - An action on a business deleted in the meantime now fails with "Betrieb nicht gefunden" instead of seeming to work.
 - Deleting a business moves it to the Papierkorb instead of erasing it.
 - Importing a backup says what it does: only entries the CRM never had are added.
+
+### Security
+- Content-Security-Policy and related headers on every page; sign-in and agent registration are rate limited.
 
 ## 1.1.0 (2026-10-16)
 

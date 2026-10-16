@@ -32,9 +32,6 @@ or overwriting data by mistake, not about outside access.
 ## P2
 
 - Move the repo to stage `live` (`profiles/ai-factory/patterns/deploy-safety.md` §0): a `staging` branch, a staging Worker with its own D1, and branch protection. Owner decided 2026-10-16 to skip it for now; revisit when a third person or a second write path joins.
-- CRM: security headers on every response (CSP, `frame-ancestors 'none'`, `X-Content-Type-Options`).
-- CRM: rate-limit `/oauth/register` and `/auth/login` (open endpoints; low risk with two users).
-- CRM: "sign out everywhere" (sessions last 30 days and are never rotated).
 - CRM: trash retention. Deleted leads stay in the Papierkorb until someone erases them; decide whether they should be erased on their own after a set time.
 - CRM: `search_leads` over MCP answers about 50 KB; page it and return a compact field set.
 - CRM: Papierkorb paging. It lists the newest 50 deleted leads; older ones show once those are restored or erased.
@@ -55,6 +52,7 @@ or overwriting data by mistake, not about outside access.
 ### 2026-10-16
 
 - CRM 1.2.0, data safety: a save writes only changed fields; every lead write is guarded against a concurrent change and retried, or refused with a message (409); change history from database triggers, shown as "Änderungen"; deletes go to a Papierkorb with restore and an erase for good; backups and recovery in `crm/README.md` (migration `0002_history.sql`).
+- CRM 1.2.0, hardening: Content-Security-Policy and related headers (`crm/public/_headers`), inline handlers removed; rate limit on sign-in and the open OAuth endpoints; "Überall abmelden" revokes agent grants and ends all sessions.
 - CRM: bookete logo (Connected Circles mark and wordmark) in the header, favicon and home-screen icon, taken from the bookete app's `public/brand/` (`crm/public/index.html`).
 - CRM: due leads as todos in their own tab, overdue and today (d6f962e; `crm/src/web/views.js` `todosView`).
 - ai-factory profile applied to the CRM: authorization walk over every API route and RPC command (`crm/test/access.test.js`), CI least privilege, timeouts and a migration dry-run before deploy (`.github/workflows/ci.yml`), CRM version and changelog (`crm/CHANGELOG.md`), this backlog format and `/groom-backlog`.

@@ -10,6 +10,8 @@
   // IDs come from `wrangler d1 create crm` and `wrangler kv namespace create OAUTH_KV` (see README).
   "d1_databases": [{ "binding": "DB", "database_name": "crm", "database_id": "1de53b4f-5e3b-46b6-a9a3-e99e91c2b218", "migrations_dir": "migrations" }],
   "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "afa2330ca33c4d7db8042cf8d0070550" }],
+  // Per IP (IPv6: per /64) on sign-in and the open OAuth endpoints; see RATE_LIMITED in src/server/index.js.
+  "ratelimits": [{ "name": "AUTH_LIMIT", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } }],
   "vars": { "PUBLIC_URL": "https://crm.bookete.com" }
   // Secrets (wrangler secret put): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_KEY, CONSENT_SECRET, ALLOWED_EMAILS.
 }

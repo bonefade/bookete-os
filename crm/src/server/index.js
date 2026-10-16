@@ -1,7 +1,7 @@
 import { OAuthProvider, AuthorizationError, CimdFetchError } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 import { readConfig } from "./config.js";
-import { allowedUser, sessionUser, startLogin, finishLogin, logout } from "./auth.js";
+import { allowedUser, sessionUser, startLogin, finishLogin, logout, logoutEverywhere } from "./auth.js";
 import { createStore } from "./store.js";
 import { createMailer } from "./gmail.js";
 import { COMMANDS } from "./commands.js";
@@ -11,9 +11,16 @@ import { systemClock, uuidIds } from "../adapters/system.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
 
 const SCOPE = "crm";
+// Open endpoints anyone can call; each costs an OAuth round trip or a KV write.
+const RATE_LIMITED = new Set(["GET /auth/login", "GET /auth/callback", "POST /oauth/register", "POST /oauth/token"]);
+// The consent form posts here and is then redirected to the agent's own address, so no form-action.
+const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'";
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const html = (body, headers = new Headers()) => {
   headers.set("Content-Type", "text/html; charset=utf-8");
+  headers.set("Content-Security-Policy", PAGE_CSP);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "same-origin");
   return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>bookete CRM</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><body style="font:16px/1.5 system-ui;max-width:32rem;margin:3rem auto;padding:0 16px">${body}`, { headers });
 };
 
@@ -80,6 +87,31 @@ ${details.redirectIsLoopback ? "<p><b>Der Zugang geht an ein Programm auf deinem
 
 const LeadQuery = z.object({ id: z.string().min(1).max(100) });
 
+/** The rate-limit key: an IPv4 address, or the /64 of an IPv6 one, since one connection usually owns a whole /64. */
+export function rateKey(ip) {
+  const v4 = ip.match(/(\d{1,3}\.){3}\d{1,3}$/);
+  if (v4) return v4[0];
+  const [head, tail] = ip.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = tail === undefined ? left : [...left, ...Array(8 - left.length - right.length).fill("0"), ...right];
+  return groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(":") + "::/64";
+}
+
+/**
+ * Fails open: if the limiter itself errors, the request goes on. It only slows guessing and flooding;
+ * the Google sign-in and the allowlist are the gate, and a limiter outage must not lock both users out.
+ */
+async function overLimit(request, env) {
+  try {
+    const { success } = await env.AUTH_LIMIT.limit({ key: rateKey(request.headers.get("CF-Connecting-IP") || "") });
+    return !success;
+  } catch (e) {
+    console.error("rate limiter failed", e);
+    return false;
+  }
+}
+
 async function app(request, env, config) {
   const url = new URL(request.url);
   const route = `${request.method} ${url.pathname}`;
@@ -88,6 +120,7 @@ async function app(request, env, config) {
   if (route === "POST /auth/logout") return logout(request, env);
 
   const user = await sessionUser(request, env, config);
+  if (route === "POST /auth/logout-all") return user ? logoutEverywhere(request, env, config, user) : new Response(null, { status: 401 });
   if (url.pathname === "/authorize") return user ? authorize(request, env, config, user) : Response.redirect(`${config.PUBLIC_URL}/auth/login?next=${encodeURIComponent(url.pathname + url.search)}`, 302);
   if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
   if (!user) return Response.json({ error: "Nicht angemeldet" }, { status: 401 });
@@ -110,7 +143,7 @@ async function mcp(request, env, ctx, config) {
 
 let config, provider;
 export default {
-  fetch(request, env, ctx) {
+  async fetch(request, env, ctx) {
     config ??= readConfig(env);
     provider ??= new OAuthProvider({
       apiRoute: "/mcp",
@@ -123,6 +156,10 @@ export default {
       scopesSupported: [SCOPE],
       resourceMetadata: { resource: `${config.PUBLIC_URL}/mcp`, authorization_servers: [config.PUBLIC_URL] },
     });
+    // Before the OAuth provider, so a flood never reaches its KV writes.
+    if (RATE_LIMITED.has(`${request.method} ${new URL(request.url).pathname}`) && await overLimit(request, env)) {
+      return new Response("Zu viele Anfragen. Bitte kurz warten.", { status: 429, headers: { "Retry-After": "60" } });
+    }
     return provider.fetch(request, env, ctx);
   },
 };

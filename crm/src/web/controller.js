@@ -9,7 +9,7 @@ import { lastChannel } from '../domain/activity.js';
 import { relDate } from './format.js';
 import { tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "toggleEmail", "back", "edit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "toggleEmail", "back", "edit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
 /**
  * A form's fields by name. With `onlyChanged`, only those whose value differs from what the form showed when
  * it opened, so saving cannot undo someone else's edit to a field this user never touched.
@@ -79,6 +79,11 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     render();
     window.scrollTo(0, y);
   }
+  // App forms are saved by their buttons' actions; only forms with an action (sign-out) really submit.
+  // No inline onsubmit: the Content-Security-Policy blocks inline handlers.
+  root.addEventListener("submit", (ev) => {
+    if (!ev.target.hasAttribute("action")) ev.preventDefault();
+  });
   root.addEventListener("focusout", () => {
     if (pending) {
       pending = false;
@@ -336,7 +341,10 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
         render();
       }
     },
-    showTrash: loadTrash
+    showTrash: loadTrash,
+    logoutAll: (el, ev) => {
+      if (!confirm("Auf allen Ger\xE4ten abmelden und alle verbundenen Agenten trennen?")) ev.preventDefault();
+    }
   };
   document.addEventListener("click", async (ev) => {
     const el = ev.target.closest("button,a[data-act],[data-open],[data-edit]");

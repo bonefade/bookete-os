@@ -5,6 +5,7 @@ import { tabBar, todayView, todosView, leadsView, searchView, templatesView, tem
 import { LEAD_FIELDS } from "../src/domain/lead.js";
 import { formInput, saveLeadForm } from "../src/web/controller.js";
 import { describeChange } from "../src/web/format.js";
+import { readFileSync } from "node:fs";
 
 // Renders every view once: catches missing imports and broken templates, which no bundler step reports.
 test("every view renders with data", () => {
@@ -28,6 +29,11 @@ test("every view renders with data", () => {
   assert.match(html, /Per Gmail senden/);
   assert.match(html, /Telefon: \u2013 \u2192 0664 2/);
   assert.match(html, /data-restore="L9"/);
+  // The Content-Security-Policy (public/_headers) blocks inline handlers and inline scripts.
+  for (const [where, text] of [["views", html], ["index.html", readFileSync(new URL("../public/index.html", import.meta.url), "utf8")]]) {
+    assert.doesNotMatch(text, /\son[a-z]+\s*=/i, where);
+    assert.doesNotMatch(text, /<script(?![^>]*\bsrc=)/i, where);
+  }
   assert.doesNotMatch(html, /undefined/);
 });
 

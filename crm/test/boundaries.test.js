@@ -67,9 +67,10 @@ test("mail headers refuse line breaks", () => {
 });
 
 test("configuration fails closed", () => {
-  const ok = { PUBLIC_URL: "https://crm.bookete.com", GOOGLE_CLIENT_ID: "a", GOOGLE_CLIENT_SECRET: "b", TOKEN_KEY: btoa("x".repeat(32)), CONSENT_SECRET: "c".repeat(32), ALLOWED_EMAILS: "Jo@bookete.com, partner@bookete.com" };
+  const ok = { PUBLIC_URL: "https://crm.bookete.com", GOOGLE_CLIENT_ID: "a", GOOGLE_CLIENT_SECRET: "b", TOKEN_KEY: btoa("x".repeat(32)), CONSENT_SECRET: "c".repeat(32), ALLOWED_EMAILS: "Jo@bookete.com, partner@bookete.com", AUTH_LIMIT: { limit: async () => ({ success: true }) } };
   assert.deepEqual(readConfig(ok).ALLOWED_EMAILS, ["jo@bookete.com", "partner@bookete.com"]);
   assert.throws(() => readConfig({ ...ok, TOKEN_KEY: btoa("short") }));
   assert.throws(() => readConfig({ ...ok, ALLOWED_EMAILS: "" }));
   assert.throws(() => readConfig({ ...ok, GOOGLE_CLIENT_SECRET: undefined }));
+  assert.throws(() => readConfig({ ...ok, AUTH_LIMIT: undefined }));
 });
