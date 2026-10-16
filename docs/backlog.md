@@ -51,6 +51,7 @@ or overwriting data by mistake, not about outside access.
 
 ### 2026-10-16
 
+- CRM 1.3.0: the deployed version shows under Mehr → Konto (from `crm/package.json`, through `/api/me`).
 - CRM 1.2.0, data safety: a save writes only changed fields; every lead write is guarded against a concurrent change and retried, or refused with a message (409); change history from database triggers, shown as "Änderungen"; deletes go to a Papierkorb with restore and an erase for good; backups and recovery in `crm/README.md` (migration `0002_history.sql`).
 - CRM 1.2.0, hardening: Content-Security-Policy and related headers (`crm/public/_headers`), inline handlers removed; rate limit on sign-in and the open OAuth endpoints; "Überall abmelden" revokes agent grants and ends all sessions.
 - CRM: bookete logo (Connected Circles mark and wordmark) in the header, favicon and home-screen icon, taken from the bookete app's `public/brand/` (`crm/public/index.html`).

@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.3.0 (2026-10-16)
+
+### Added
+- **Version** under Mehr → Konto: the version running on crm.bookete.com, so you can check what is live.
+
 ## 1.2.0 (2026-10-16)
 
 ### Added

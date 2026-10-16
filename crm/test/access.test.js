@@ -4,6 +4,7 @@ import { createD1 } from "./d1.js";
 import worker, { rateKey } from "../src/server/index.js";
 import { COMMANDS } from "../src/server/commands.js";
 import { sha256 } from "../src/server/crypto.js";
+import { readFileSync } from "node:fs";
 
 // The authorization walk: every command and API route, called without a valid session, is refused
 // before its input is read. The exact list makes each new command a conscious addition to this walk.
@@ -94,4 +95,14 @@ test("a write that keeps losing races answers 409 with a message, not 500", asyn
   const res = await fetchAs(e, "__Host-crm-session=jo", "POST", "/api/rpc/setNextStep", JSON.stringify({ id: "L1", text: "Anrufen" }));
   assert.equal(res.status, 409);
   assert.match((await res.json()).error, /gerade von jemand anderem/);
+});
+
+test("a signed-in user can see which version is deployed", async () => {
+  const e = await env();
+  await e.DB.batch([
+    e.DB.prepare("INSERT INTO users (email, name, updated_at) VALUES ('jo@bookete.com', 'Jo', 'now')"),
+    e.DB.prepare("INSERT INTO sessions VALUES (?, 'jo@bookete.com', ?)").bind(await sha256("jo-tok"), Date.now() + 1e6),
+  ]);
+  const me = await (await fetchAs(e, "__Host-crm-session=jo-tok", "GET", "/api/me")).json();
+  assert.equal(me.version, JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
 });

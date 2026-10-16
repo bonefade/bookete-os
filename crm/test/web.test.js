@@ -20,7 +20,7 @@ test("every view renders with data", () => {
   };
   state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
   state.caps = { db: true, gmail: true };
-  state.me = { email: "jo@bookete.com" };
+  state.me = { email: "jo@bookete.com", version: "9.8.7" };
   const v1 = { ...lead, phone: "" };
   state.ui = { ...state.ui, leadId: "L1", gq: "kron", trash: [{ lead: { ...lead, id: "L9" }, actor: "jo@bookete.com (web)", at: "2026-10-15T10:00:00.000Z" }],
     changes: { leadId: "L1", rows: [{ seq: 2, at: "2026-10-15T10:00:00.000Z", actor: "jo@bookete.com (mcp)", deleted: false, before: v1, after: { ...v1, phone: "0664 2" } }, { seq: 1, at: "2026-10-15T09:00:00.000Z", actor: "jo@bookete.com (web)", deleted: false, before: null, after: v1 }] }, compose: { direction: "out", channel: "E-Mail", templateId: "T1", date: today, subject: "S", text: "Hallo", missing: [] } };
@@ -28,6 +28,7 @@ test("every view renders with data", () => {
   assert.match(html, /Gasthaus &lt;Krone&gt;/);
   assert.match(html, /Per Gmail senden/);
   assert.match(html, /Telefon: \u2013 \u2192 0664 2/);
+  assert.match(moreView(state, today), /Version 9\.8\.7/);
   assert.match(html, /data-restore="L9"/);
   // The Content-Security-Policy (public/_headers) blocks inline handlers and inline scripts.
   for (const [where, text] of [["views", html], ["index.html", readFileSync(new URL("../public/index.html", import.meta.url), "utf8")]]) {

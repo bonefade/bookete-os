@@ -9,6 +9,8 @@ import { handleMcp } from "./mcp.js";
 import { createUseCases } from "../application/use-cases.js";
 import { systemClock, uuidIds } from "../adapters/system.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
+// The version each production deploy bumps; shown in the app, so anyone can see what is live.
+import pkg from "../../package.json" with { type: "json" };
 
 const SCOPE = "crm";
 // Open endpoints anyone can call; each costs an OAuth round trip or a KV write.
@@ -124,7 +126,7 @@ async function app(request, env, config) {
   if (url.pathname === "/authorize") return user ? authorize(request, env, config, user) : Response.redirect(`${config.PUBLIC_URL}/auth/login?next=${encodeURIComponent(url.pathname + url.search)}`, 302);
   if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
   if (!user) return Response.json({ error: "Nicht angemeldet" }, { status: 401 });
-  if (route === "GET /api/me") return Response.json({ email: user.email, name: user.name, gmail: !!user.refreshToken });
+  if (route === "GET /api/me") return Response.json({ email: user.email, name: user.name, gmail: !!user.refreshToken, version: pkg.version });
   if (route === "GET /api/sync") return Response.json(await createStore(env.DB).changes(Math.max(0, parseInt(url.searchParams.get("since"), 10) || 0)));
   if (route === "GET /api/history") {
     const query = LeadQuery.safeParse(Object.fromEntries(url.searchParams));
