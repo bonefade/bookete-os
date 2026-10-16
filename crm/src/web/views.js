@@ -11,15 +11,16 @@ import { REGIONS, regionOf } from '../domain/region.js';
 
 export const ICONS = {
   suche: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>',
+  todos: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
   heute: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
   betriebe: '<svg viewBox="0 0 24 24"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/></svg>',
   vorlagen: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>',
   mehr: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>'
 };
-export const TABS = [["heute", "Heute"], ["betriebe", "Betriebe"], ["suche", "Suche"], ["vorlagen", "Vorlagen"], ["mehr", "Mehr"]];
+export const TABS = [["heute", "Heute"], ["todos", "Todos"], ["betriebe", "Betriebe"], ["suche", "Suche"], ["vorlagen", "Vorlagen"], ["mehr", "Mehr"]];
 export function tabBar(state, today) {
   const due = state.data.leads.filter((l) => isDue(l, today)).length;
-  return `<div class="in">${TABS.map(([k, v]) => `<button class="tab" data-tab="${k}" ${state.ui.tab === k ? 'aria-current="page"' : ""}>${ICONS[k]}<span>${v}</span>${k === "heute" && due ? `<span class="badge">${due}</span>` : ""}</button>`).join("")}</div>`;
+  return `<div class="in">${TABS.map(([k, v]) => `<button class="tab" data-tab="${k}" ${state.ui.tab === k ? 'aria-current="page"' : ""}>${ICONS[k]}<span>${v}</span>${k === "todos" && due ? `<span class="badge">${due}</span>` : ""}</button>`).join("")}</div>`;
 }
 export function leadRow(state, l, today) {
   const acts = actsOf(state, l.id);
@@ -53,7 +54,6 @@ export const loadingOr = (state, html) => isReady(state) ? html : `<div class="e
 export function todayView(state, today) {
   const leads = scoped(state), open = leads.filter(isOpen), wk = addDays(today, 7);
   const byDate = (a, b) => a.followUp < b.followUp ? -1 : 1;
-  const due = open.filter((l) => isDue(l, today)).sort(byDate);
   const soon = open.filter((l) => l.followUp && l.followUp > today && l.followUp <= wk).sort(byDate);
   const fresh = leads.filter((l) => l.status === "recherchiert" && !l.followUp && !l.optOutAt).sort((a, b) => b.fit - a.fit || (b.email ? 1 : 0) - (a.email ? 1 : 0));
   const s = outreachStats(leads, new Map(leads.map((l) => [l.id, actsOf(state, l.id)])));
@@ -65,9 +65,23 @@ export function todayView(state, today) {
   ${filterBar(state)}
   <div class="stats"><div class="stat"><b>${s.contacted}</b><span>kontaktiert</span></div><div class="stat"><b>${s.replied}</b><span>Antworten</span></div><div class="stat"><b>${s.replyRate == null ? "\u2013" : Math.round(s.replyRate * 100) + " %"}</b><span>Antwortquote</span></div><div class="stat"><b>${withMail}</b><span>bereit per Mail</span></div></div>
   ${loadingOr(state, `
-  <div class="sec"><h3>F\xE4llig <small>${due.length}</small></h3>${list(due, "Nichts f\xE4llig.")}</div>
   <div class="sec"><h3>N\xE4chste 7 Tage <small>${soon.length}</small></h3>${list(soon, "Keine Termine diese Woche.")}</div>
   <div class="sec"><h3>Bereit zum Anschreiben <small>${fresh.length}</small></h3>${list(fresh, "Keine recherchierten Betriebe in dieser Auswahl.")}</div>`)}
+</div>`;
+}
+/** Due leads as a to-do list: what to do first, then for whom and since when. */
+export function todosView(state, today) {
+  const due = scoped(state).filter((l) => isDue(l, today)).sort((a, b) => a.followUp < b.followUp ? -1 : a.followUp > b.followUp ? 1 : b.fit - a.fit);
+  const row = (l) => `<li><button class="todo" data-open="${esc(l.id)}">
+  <span class="t-what">${esc(nextActionHint(l, actsOf(state, l.id)) || "Nachfassen")}</span>
+  <span class="t-who">${esc([l.name, l.city, STAGE_LABEL[l.status]].filter(Boolean).join(" \xB7 "))}</span>
+  <span class="t-when">${esc(relDate(l.followUp, today))}</span>
+</button></li>`;
+  const sec = (title, arr, empty) => `<div class="sec"><h3>${title} <small>${arr.length}</small></h3>${arr.length ? `<ul class="ltable">${arr.map(row).join("")}</ul>` : `<div class="empty">${empty}</div>`}</div>`;
+  return `<div class="wrap wide">
+  <div class="head"><div><h1>Todos</h1><p>${due.length ? `${due.length} f\xE4llig` : "Alles erledigt"}${state.ui.region !== "alle" ? " \xB7 " + esc(state.ui.region) : ""}</p></div></div>
+  ${filterBar(state)}
+  ${loadingOr(state, sec("\xDCberf\xE4llig", due.filter((l) => l.followUp < today), "Nichts \xFCberf\xE4llig.") + sec("Heute", due.filter((l) => l.followUp === today), "F\xFCr heute nichts offen."))}
 </div>`;
 }
 export const SEGMENTS = { offen: (l) => isOpen(l), kunden: (l) => l.status === "kunde", verloren: (l) => l.status === "kein-interesse", alle: () => true };

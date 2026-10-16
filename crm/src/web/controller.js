@@ -7,7 +7,7 @@ import { createBackup } from '../domain/backup.js';
 import { fillTemplate, defaultTemplate } from '../domain/template.js';
 import { lastChannel } from '../domain/activity.js';
 import { relDate } from './format.js';
-import { tabBar, todayView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView } from './views.js';
+import { tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView } from './views.js';
 
 export const UI_ONLY_ACTIONS = new Set(["qeCancel", "toggleEmail", "back", "edit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick"]);
 export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
@@ -41,7 +41,7 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
       return;
     }
     tabsEl.hidden = !!view;
-    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : { heute: todayView, betriebe: leadsView, suche: searchView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
+    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, suche: searchView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     if (!view) tabsEl.innerHTML = tabBar(st, today);
     if (st.ui.quick && !view && st.ui.tab === "betriebe") setTimeout(() => root.querySelector("#qaName")?.focus(), 30);
   }

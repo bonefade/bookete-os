@@ -186,13 +186,19 @@ ul.ltable{list-style:none;margin:0;padding:0;border:1px solid var(--line);border
 .fbar.tools{margin-top:-4px;flex-wrap:nowrap}
 .flabel{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;flex:0 0 auto;margin-right:2px}
 .fbar.tools .chips.region{flex:1 1 auto;min-width:0}
+.todo{display:grid;width:100%;text-align:left;border:none;border-radius:0;background:transparent;padding:10px 14px 10px 12px;min-height:52px;column-gap:10px;row-gap:2px;
+  grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"what when" "who who";box-shadow:inset 4px 0 0 var(--due)}
+.todo:hover{background:var(--pine-soft)}
+.t-what{grid-area:what;font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.t-who{grid-area:who;font-size:.85rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-when{grid-area:when;font-size:.82rem;color:var(--due);font-weight:600;white-space:nowrap}
 .chip.q:not([aria-pressed="true"]){border-color:var(--brass);color:var(--brass)}
 
 /* ---- v5: global search ---- */
 :root{--mark:#F3DFA2}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--mark:#5B4A1C}}
 :root[data-theme="dark"]{--mark:#5B4A1C}
-.tabs .in{grid-template-columns:repeat(5,1fr)}
+.tabs .in{grid-template-columns:repeat(6,1fr)}
 .sbox{position:sticky;top:env(safe-area-inset-top,0px);z-index:4;background:var(--bg);padding:4px 0 8px}
 .sfield{position:relative}
 .sfield svg{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:20px;height:20px;stroke:var(--muted);fill:none;stroke-width:2;stroke-linecap:round;pointer-events:none}
