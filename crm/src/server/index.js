@@ -13,7 +13,7 @@ const SCOPE = "crm";
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const html = (body, headers = new Headers()) => {
   headers.set("Content-Type", "text/html; charset=utf-8");
-  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>bookete CRM</title><body style="font:16px/1.5 system-ui;max-width:32rem;margin:3rem auto;padding:0 16px">${body}`, { headers });
+  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>bookete CRM</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><body style="font:16px/1.5 system-ui;max-width:32rem;margin:3rem auto;padding:0 16px">${body}`, { headers });
 };
 
 async function context(env, config, user, via) {

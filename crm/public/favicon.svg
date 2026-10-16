@@ -1,0 +1,15 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="16" fill="#FFF8E1"/>
+  <defs>
+    <mask id="leftCut">
+      <rect width="64" height="64" fill="white"/>
+      <circle cx="40" cy="32" r="18" fill="black"/>
+    </mask>
+    <mask id="rightCut">
+      <rect width="64" height="64" fill="white"/>
+      <circle cx="24" cy="32" r="18" fill="black"/>
+    </mask>
+  </defs>
+  <circle cx="24" cy="32" r="18" fill="#FFEEB3" mask="url(#leftCut)"/>
+  <circle cx="40" cy="32" r="18" fill="#013E37" mask="url(#rightCut)"/>
+</svg>

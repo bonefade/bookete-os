@@ -52,13 +52,13 @@ Other:
 ## P3
 
 - Root `package.json` is still named `bookete-scraper`; README and layout describe one tool.
-- CRM: favicon.
 - CRM: `server/mcp.js` reuses `web/search.js`; move the search core to `domain/` so the server does not import the web layer.
 
 ## Recently shipped (traceability)
 
 ### 2026-10-16
 
+- CRM: bookete logo (Connected Circles mark and wordmark) in the header, favicon and home-screen icon, taken from the bookete app's `public/brand/` (`crm/public/index.html`).
 - CRM: due leads as todos in their own tab, overdue and today (d6f962e; `crm/src/web/views.js` `todosView`).
 - ai-factory profile applied to the CRM: authorization walk over every API route and RPC command (`crm/test/access.test.js`), CI least privilege, timeouts and a migration dry-run before deploy (`.github/workflows/ci.yml`), CRM version and changelog (`crm/CHANGELOG.md`), this backlog format and `/groom-backlog`.
 - CRM live at crm.bookete.com: D1 in the EU, Google sign-in for two allowlisted users, Gmail, remote MCP; backup of 585 leads imported (42ada2a, c4708fc).

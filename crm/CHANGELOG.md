@@ -6,6 +6,7 @@ Each production deploy bumps `version` in `crm/package.json` and adds an entry h
 
 ### Added
 - **Todos tab:** due leads in their own tab, overdue first, then today. Each row shows what to do, for which business, and since when. The red badge moved there.
+- **bookete logo** in the header, as browser icon and as home-screen icon.
 
 ### Changed
 - **Heute** keeps the next 7 days and the businesses ready for first contact; due leads moved to Todos.
