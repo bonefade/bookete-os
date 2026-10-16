@@ -1,15 +1,16 @@
 {
   "name": "bookete-crm",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "esbuild src/web/main.js --bundle --format=esm --minify --outfile=public/app.js",
     "dev": "npm run build && wrangler dev",
-    "test": "node --test --no-warnings=ExperimentalWarning test/*.test.js",
+    "test": "node --import ./test/workers-stub.js --test --no-warnings=ExperimentalWarning test/*.test.js",
     "deploy": "npm run build && wrangler d1 migrations apply crm --remote && wrangler deploy"
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.15.0"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^1.2.3",

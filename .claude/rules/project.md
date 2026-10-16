@@ -36,6 +36,8 @@ working them as leads. Two parts, each with its own `package.json`:
 - Schema library (principle 2): Zod 4, at every request and env boundary
   (`crm/src/server/commands.js`, `mcp.js`, `config.js`).
 - Migrations: `crm/migrations/`, applied by `wrangler d1 migrations apply`.
-- Backlog: `docs/backlog.md`.
+- Backlog: `docs/backlog.md`, groomed with `/groom-backlog` at each CRM release.
+- Release: each production deploy bumps `version` in `crm/package.json` and adds a `crm/CHANGELOG.md` entry.
+- Access walk: `crm/test/access.test.js` calls every API route and RPC command without a valid session. A new command goes into its exact list.
 - CI: `.github/workflows/ci.yml`. Deploy runs only after tests pass on `main`.
 - Branch model: stage `early`. Feature branch → `main`, one squash commit per feature.

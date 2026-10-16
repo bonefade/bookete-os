@@ -10,6 +10,7 @@ Start `claude` in the checkout itself. Project settings, plugins, the status lin
 
 - `statusLine` runs `.claude/statusline.py`. It shows after a restart, once the workspace is trusted.
 - `enabledPlugins` turns on `brain-core` and `brain-ai-factory` from the `brain-os` marketplace (`/sync-core`, `/conformance`, `/defect-review`, `/second-review`; `.brain-manifest.md`).
+- Project skill: `/groom-backlog` (`.claude/skills/`), at each CRM release.
 - No project hooks. The gates run in `.githooks/pre-commit`; each clone switches it on once with `git config core.hooksPath .githooks`.
 
 ## Review
