@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 leads*.csv
 test-output*.csv
 .DS_Store
