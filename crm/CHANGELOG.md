@@ -2,6 +2,20 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.4.1 (2026-10-17)
+
+### Changed
+- Every stored business is rewritten once to the five statuses (migration 0003), with an entry in its Änderungen. Most look as they did in 1.4.0. But until a business was first changed, 1.4.0 dated its first contact without its logged contacts; now the earliest logged contact, in or out, is the first contact:
+  - A business shown as Neu that has a logged contact becomes Kontaktiert.
+  - "Kontaktiert seit" shows the day of the earliest logged contact instead of the day the business was created.
+  - A disqualified business with a logged contact shows "Kontaktiert seit" that day instead of "Nie kontaktiert".
+  - A business from an old import whose dates the CRM can't read, with no logged contact, gets the day of the migration as its first contact (or opt-out date), as its first change in 1.4.0 would.
+
+### Deploying
+- Only once 1.4.0 is live (Mehr shows 1.4.0): while 1.3 still runs, it can write an old status onto a rewritten business. Soon after 1.4.0: until 0003 has run, lists show some contacted businesses as Neu.
+- Before: a Time Travel bookmark (`wrangler d1 time-travel info crm`), and the count of old rows by status (`SELECT json_extract(data, '$.status'), COUNT(*) FROM docs WHERE collection = 'leads' AND COALESCE(json_extract(data, '$.schemaVersion'), 0) < 3 GROUP BY 1`).
+- After: the same count is empty. If 0003 fails with `stale_write`, a business breaks a 1.4.0 rule; find it with the self-check at the end of 0003. It rolled back whole on local D1; on production, check the count, restore the bookmark if rows changed, then fix and deploy again.
+
 ## 1.4.0 (2026-10-17)
 
 ### Changed
