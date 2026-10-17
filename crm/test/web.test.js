@@ -412,10 +412,11 @@ function fakeBrowser(hash, store, uc) {
     document: { activeElement: null, addEventListener: (type, f) => (on[type] = f) },
     confirm: () => true,
   });
-  const app = mountApp({ root, tabsEl: {}, toastEl: { classList: { add() {}, remove() {} } }, store, clock: { today: () => "2026-10-15" } });
+  const toastEl = { classList: { add() {}, remove() {} } };
+  const app = mountApp({ root, tabsEl: {}, toastEl, store, clock: { today: () => "2026-10-15" } });
   app.connect(uc);
   const click = (dataset) => on.click({ target: { closest: () => ({ dataset }) } });
-  return { h, root, app, click, typed };
+  return { h, root, app, click, typed, toastEl };
 }
 /** A drawn form's fields as form.elements holds them, by position and by name, with what the test typed over them. */
 function formElements(html, typed = {}) {
@@ -554,4 +555,108 @@ test("the Kundenakte form saves through the server what it showed, reopens at on
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }
+});
+
+test("the call list: due calls first by date then fit, then new businesses by fit; no phone, opt-out or appointment, no call", async () => {
+  const { callList } = await import("../src/web/selectors.js");
+  const today = "2026-10-15";
+  const state = initialState();
+  const l = (id, extra) => ({ ...LEAD_FIELDS, id, name: id, phone: "+43 1", status: "kontaktiert", contactedAt: "2026-10-01", ...extra });
+  state.data.leads = [
+    l("neu2", { status: "neu", contactedAt: null, fit: 2 }), l("neu3", { status: "neu", contactedAt: null, fit: 3 }),
+    l("due14", { followUp: "2026-10-14", fit: 1 }), l("due13", { followUp: "2026-10-13" }), l("due14fit3", { followUp: "2026-10-14", fit: 3 }),
+    l("later", { followUp: "2026-10-20" }), l("nophone", { followUp: today, phone: "" }), l("kunde", { status: "kunde", followUp: today }),
+    l("termin", { status: "qualifiziert", followUp: today, nextStep: "Termin um 10:00" }), l("rueckruf", { status: "qualifiziert", followUp: today, nextStep: "R\xFCckruf" }),
+  ];
+  assert.deepEqual(callList(state, today).map((x) => x.id), ["due13", "due14fit3", "due14", "rueckruf", "neu3", "neu2"]);
+  state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
+  assert.match(todosView(state, today), /Anrufliste <small>6<\/small>[\s\S]*data-act="callStart"/);
+});
+
+test("the lead page asks how a call ended, and on the appointment's day how the appointment went", () => {
+  const today = "2026-10-15";
+  const state = initialState();
+  const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", phone: "+43 1 234", status: "kontaktiert", contactedAt: "2026-10-01" };
+  state.data.leads = [lead];
+  state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
+  state.ui = { ...state.ui, view: "detail", leadId: "L1" };
+  let html = detailView(state, today);
+  // One dial button: the Anruf card's, right above the outcomes.
+  assert.match(html, /href="tel:\+431234">\+43 1 234 anrufen/);
+  assert.equal(html.match(/href="tel:/g).length, 1);
+  assert.deepEqual([...html.matchAll(/data-call="([^"]+)"/g)].map((m) => m[1]), ["nicht-erreicht", "rueckruf", "termin", "kein-interesse"]);
+  assert.doesNotMatch(html, /callNext|agDate|Wie war der Termin/);
+  state.ui = { ...state.ui, call: { outcome: "termin" }, calling: { seen: [] } };
+  html = detailView(state, today);
+  assert.match(html, /id="agDate" min="2026-10-15"/);
+  assert.match(html, /data-act="callNext"/);
+  state.ui = { ...state.ui, call: { outcome: "kein-interesse" } };
+  html = detailView(state, today);
+  assert.match(html, /id="agReason"/);
+  assert.doesNotMatch(html, /<option value="Nicht erreicht">/);
+  state.data.leads = [{ ...lead, status: "qualifiziert", followUp: today, nextStep: "Termin" }];
+  html = detailView(state, today);
+  assert.match(html, /Wie war der Termin\?/);
+  assert.doesNotMatch(html, /data-call=/);
+  // Without the Anruf card the quick bar dials, and the round goes on with Nächster.
+  assert.equal(html.match(/href="tel:/g).length, 1);
+  assert.match(html, /data-act="callNext"/);
+  state.data.leads = [{ ...lead, status: "disqualifiziert", lostReason: "Zu klein" }];
+  html = detailView(state, today);
+  assert.doesNotMatch(html, /data-call=|Wie war der Termin/);
+  assert.match(html, /data-act="callNext"/);
+});
+
+test("Nächster opens the next on the call list in place of this page, past this lead and those seen; then the round ends", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  const l = (id, fit) => ({ ...LEAD_FIELDS, id, name: id, phone: "+43 1", status: "neu", fit });
+  try {
+    const store = createStore(initialState());
+    store.data("leads", [l("A", 3), l("B", 2), l("C", 1)]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const { h, click, toastEl } = fakeBrowser("#/todos", store, {});
+    await click({ act: "callStart" });
+    const at = () => [store.get().ui.leadId, h.seen()];
+    const page = (id) => ({ at: 1, entries: [["#/todos", null], [`#/betrieb/${id}`, 1]] });
+    assert.deepEqual(at(), ["A", page("A")]);
+    await click({ act: "callNext" });
+    assert.deepEqual(at(), ["B", page("B")]);
+    await click({ act: "callNext" });
+    assert.deepEqual(at(), ["C", page("C")]);
+    await click({ act: "callNext" });
+    h.land();
+    assert.deepEqual([toastEl.textContent, store.get().ui.view, store.get().ui.tab, store.get().ui.calling], ["Anrufliste erledigt", null, "todos", null]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("a write asked for again while it is on its way is sent once; a different one goes out at once", async () => {
+  const realFetch = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = (url, init) => new Promise((answer) => sent.push({ url, body: init.body, answer }));
+  try {
+    const api = createApi(() => {});
+    const lead = { id: "L1" };
+    const first = api.logCall(lead, { outcome: "nicht-erreicht" });
+    const again = api.logCall(lead, { outcome: "nicht-erreicht" });
+    const other = api.setNextStep(lead, "Vor 15 Uhr");
+    assert.deepEqual(sent.map((x) => x.url), ["/api/rpc/logCall", "/api/rpc/setNextStep"]);
+    for (const x of sent) x.answer(new Response(JSON.stringify({ result: x.url })));
+    assert.deepEqual(await Promise.all([first, again, other]), ["/api/rpc/logCall", "/api/rpc/logCall", "/api/rpc/setNextStep"]);
+    // Once answered, the next tap is a new call.
+    api.logCall(lead, { outcome: "nicht-erreicht" });
+    assert.equal(sent.length, 3);
+    sent[2].answer(new Response("{}"));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("a call session lasts while moving between leads and ends on a tab; an open outcome form belongs to its lead", () => {
+  const ui = { ...initialState().ui, view: "detail", leadId: "L1", call: { outcome: "termin" }, meeting: { result: "kunde" }, calling: { seen: ["L0"] } };
+  const next = enterRoute(ui, parseRoute("#/betrieb/L2"));
+  assert.deepEqual([next.call, next.meeting, next.calling], [null, null, { seen: ["L0"] }]);
+  assert.deepEqual(enterRoute(ui, parseRoute("#/betrieb/L1/bearbeiten")).call, { outcome: "termin" });
+  assert.equal(enterRoute(next, parseRoute("#/todos")).calling, null);
 });

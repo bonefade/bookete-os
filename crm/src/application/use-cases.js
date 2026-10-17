@@ -1,6 +1,6 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
-import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, firstContactUntil } from "../domain/activity.js";
+import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, firstContactUntil, callActivity, planAfterCall, meetingPatch } from "../domain/activity.js";
 import { normalizeLead, LEAD_FIELDS, STORED, upgradeLead, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
@@ -61,18 +61,19 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     return found;
   }
   // The lead is always written (at least updatedAt), so a concurrent opt-out, status change or delete is never missed.
-  const logActivity = (id, input) => retrying(async () => {
+  const logContact = (id, input, planOf) => retrying(async () => {
     const l = await lead(id);
     assertMayContact(l, input.direction);
     const activity = newActivityRecord({ ...input, leadId: id }, { id: ids.newId(), now: clock.now(), today: clock.today() });
     assertHappened(activity, clock.today());
-    const plan = planAfterActivity(l, await store.activitiesOf(id), activity);
+    const plan = planOf(l, await store.activitiesOf(id), activity);
     await commit([
       { type: "put", collection: "activities", id: activity.id, data: activity },
       patchOp(l, leadDiff(l, plan)),
     ]);
     return { activity, plan };
   });
+  const logActivity = (id, input) => logContact(id, input, planAfterActivity);
   async function mailable(id) {
     if (!mailer) throw new ValidationError("gmail", "Gmail ist nicht verbunden. Bitte neu anmelden.");
     const l = await lead(id);
@@ -140,6 +141,10 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
       return true;
     }),
     logActivity,
+    /** How an appointment went, on a Qualifiziert lead. */
+    meetingOutcome: (id, meeting) => changeLead(id, (l) => meetingPatch(l, meeting, clock.today())),
+    /** A phone call and how it ended: logged, and the lead moved on by the outcome, in one write. */
+    logCall: async (id, call) => logContact(id, callActivity(call, clock.today()), (l, acts, activity) => planAfterCall(l, acts, activity, call)),
     /** The business asked not to be contacted again: record it (dated) and close the lead. */
     optOut: (id, note) => retrying(async () => {
       const l = await lead(id);

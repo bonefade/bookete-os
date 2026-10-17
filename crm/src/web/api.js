@@ -25,12 +25,20 @@ export function coalesced(run) {
 /**
  * Same calls as the old in-browser use cases; the server now runs them. After each successful write the call awaits
  * `onWrite` (the sync), so the screen drawn next shows the write: a form reopened at once holds what was just saved.
+ * A write asked for again while the same one is on its way (a double tap) is not sent twice: both get its answer.
  */
 export function createApi(onWrite) {
-  const rpc = async (name, args) => {
-    const { result } = await call("/api/rpc/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(args) });
+  const inFlight = new Map();
+  const send = async (name, body) => {
+    const { result } = await call("/api/rpc/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body });
     await onWrite();
     return result;
+  };
+  const rpc = (name, args) => {
+    const body = JSON.stringify(args);
+    const key = name + " " + body;
+    if (!inFlight.has(key)) inFlight.set(key, send(name, body).finally(() => inFlight.delete(key)));
+    return inFlight.get(key);
   };
   return {
     me: () => call("/api/me"),
@@ -49,6 +57,8 @@ export function createApi(onWrite) {
     setFollowUp: (lead, date) => rpc("setFollowUp", { id: lead.id, date }),
     setNextStep: (lead, text) => rpc("setNextStep", { id: lead.id, text }),
     logActivity: (lead, _acts, input) => rpc("logActivity", { id: lead.id, input }),
+    logCall: (lead, call) => rpc("logCall", { id: lead.id, ...call }),
+    meetingOutcome: (lead, meeting) => rpc("meetingOutcome", { id: lead.id, ...meeting }),
     optOut: (lead, note) => rpc("optOut", { id: lead.id, note }),
     clearOptOut: (lead) => rpc("clearOptOut", { id: lead.id }),
     saveTemplate: (id, input) => rpc("saveTemplate", { id, input }),

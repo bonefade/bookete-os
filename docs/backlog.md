@@ -23,11 +23,10 @@ or overwriting data by mistake, not about outside access.
 ## P1
 
 - CRM: drop the read-time `upgradeLead` in `crm/src/server/store.js` once migration 0003 has run in production (1.4.1). Keep it in `chunkBackup` for old backups. First count leads with a status outside the five, at any schemaVersion: the read-time upgrade is what covers a 1.3 write after 0003.
-- CRM: call outcomes and a call list with "Nächster" (release 2); call script and weekly numbers (release 3).
+- CRM: a call script on the lead page and weekly numbers (calls, reached, appointments, customers, top reasons for no) (release 3).
 - CRM: email tracking like HubSpot, and an unsubscribe link for recipients (owner, 2026-10-17). Open tracking needs consent (TKG §165, GDPR); the unsubscribe link is a public endpoint and gets `/second-review`.
 
 - CRM: tasks as their own records (due date, optional time, done), replacing the overloaded `nextStep` and the single `followUp`. Owner decided 2026-10-16: one owner per lead, so a lead gets an `owner` and Todos shows "mine" first.
-- CRM: meeting outcome. After an appointment passes, ask how it went and set status and next task from the answer (9 leads sat in "Demo", now Qualifiziert, with past dates on 2026-10-16).
 - CRM: detect replies. A cron reads the Gmail threads of sent mails and logs incoming replies, so a reply is logged and due on its own. Needs the `gmail.readonly` scope.
 - Scraper → CRM: import scraped leads (CSV or MCP `create_lead`), skipping businesses already in the CRM. Needs duplicate detection first.
 - Legal check before scaling email outreach: §107 TKG generally requires prior consent for marketing email, B2B included.
@@ -46,6 +45,9 @@ or overwriting data by mistake, not about outside access.
 - CRM: a check of the store against real D1 in CI. The unit tests run on node:sqlite; the write guard, the history triggers and the purge were checked once by hand against local D1 (workerd) on 2026-10-16. Migration 0003 was run on local D1 by the 1.4.1 reviewer on 2026-10-17: rows equal to node:sqlite's, and the whole file rolled back when the self-check failed; its today fallback for undatable rows was checked there the same day.
 - CRM: a pipeline board, one column per status, with counts.
 - CRM: deploy 1.4.1 (migration 0003) only once 1.4.0 is live (Mehr shows 1.4.0): while 1.3 still runs, it can write an old status onto a rewritten lead. Nothing stops both from reaching `main` in one push, and the deploy applies migrations before the new Worker is live (unenforced).
+- CRM: undo a wrongly tapped call outcome. Today the status and follow-up are set back by hand; the call stays in the Verlauf.
+- CRM: a calling-time hint on the call list (best 14:30–17:00, not Monday or Tuesday).
+- CRM: the appointment answer (Kunde, Kein Abschluss, Neuer Termin) is web only; agents use `change_status` and `set_follow_up`. Add an MCP tool if agents need it.
 - Migration safety (principle 5): no migration linter exists for D1/SQLite here (unenforced — needs tooling). Until then, every migration gets `/second-review`.
 - Rule gap: an agent-facing write that replaces a stored list takes a base or merges by id. `update_account` has a test for it (`crm/test/account.test.js`); a new tool gets none by itself (unenforced; found in the 1.6.0 review).
 - CRM: the Kundenakte's free-text fields (`access`, notes, a system's `what`) may still hold a password; nothing detects one, only the form and the MCP description say not to (unenforced; found in the 1.6.0 review).

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { LeadInput, Status, Reason, AccountInput } from "./commands.js";
+import { LeadInput, Status, Reason, AccountInput, CallInput } from "./commands.js";
 import { STAGES, CHANNELS, LOST_REASONS, OPT_OUT_REASON } from "../domain/constants.js";
 import { isDue, takesFollowUp } from "../domain/lead.js";
 import { nextActionHint, byTimeline } from "../domain/activity.js";
@@ -13,6 +13,7 @@ const INSTRUCTIONS = `bookete CRM: restaurants (leads) in Austria that bookete a
 Statuses: ${STAGES.map(([k, label]) => `${k} (${label})`).join(", ")}. Every write is recorded under the signed-in user.
 Rules the server enforces: disqualifiziert needs a reason (${LOST_REASONS.join(" | ")}) and has no follow-up; the reason "${OPT_OUT_REASON}" records an opt-out. Opted-out businesses (optOutAt) must not be contacted. contactedAt is the date of first contact: null on neu, set on kontaktiert, qualifiziert and kunde, either on disqualifiziert. Setting it on a neu lead moves the lead to kontaktiert. Logging any contact moves neu, or disqualifiziert without an opt-out, to kontaktiert; an outgoing message moves the follow-up date by the sequence policy.
 A customer's Kundenakte (lead.account: services we deliver, their systems such as domain and DNS and who runs them, contacts including agencies) is read with get_lead and written with update_account, which takes the Kundenakte as read and refuses the write if it changed since. It never holds passwords, only where logins are kept.
+A phone call is logged with log_call, which records its outcome and moves the lead on by it; a call never moves a kunde out of kunde.
 Agents cannot send email: create_gmail_draft puts a draft into the user's Gmail for a person to review and send.`;
 
 const id = z.string().describe("Lead id");
@@ -59,6 +60,9 @@ const TOOLS = {
   log_activity: ["Record a contact: direction out (we wrote) or in (they answered). Updates status and follow-up date.",
     z.object({ id, direction: z.enum(["out", "in"]), channel: z.enum(CHANNELS), text: z.string().min(1), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }),
     async ({ id: leadId, ...input }, { uc }) => uc.logActivity(leadId, input)],
+  log_call: [`Record a phone call made today and how it ended. nicht-erreicht: no answer, call again in 2 days, unless a follow-up date ahead was not set by the sequence (status other than kontaktiert, or a next step); the 5th attempt without ever getting through closes the lead (Nicht erreicht). rueckruf: they asked to be called back, date (YYYY-MM-DD, from today) required, time (HH:MM) optional. termin: an appointment, date required, time optional; the lead becomes qualifiziert. kein-interesse: reason required; the lead becomes disqualifiziert. A kunde stays kunde whatever the outcome; the reason "${OPT_OUT_REASON}" still records an opt-out. Optional note.`,
+    CallInput.extend({ id }),
+    async ({ id: leadId, ...call }, { uc }) => uc.logCall(leadId, call)],
   set_follow_up: ["Set or clear the follow-up date (YYYY-MM-DD or null) and optionally the next step.",
     z.object({ id, date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), nextStep: z.string().max(500).optional() }),
     async ({ id: leadId, date, nextStep }, { uc }) => {

@@ -2,6 +2,20 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.7.0 (2026-10-17)
+
+### Added
+- **Anruf on each open business:** dial from its card (it takes the place of Anrufen in the row below), then one tap for how the call ended:
+  - **Nicht erreicht:** call again in two days. The fifth attempt without ever getting through closes the business as Disqualifiziert · Nicht erreicht. A missed call keeps a date the follow-up sequence did not set: a callback, an appointment, or a date with a next step.
+  - **Rückruf:** they asked to be called back; a date (from today) is needed, a time is optional.
+  - **Termin vereinbart:** Qualifiziert, with the appointment's date and an optional time as the next step.
+  - **Kein Interesse:** Disqualifiziert, with the reason why.
+  The call goes into the Verlauf with its outcome and an optional note. A call in which we spoke to them counts as an answer, so the business leaves the follow-up sequence. A call never moves a customer out of Kunde, and a missed one keeps their next step; "Keine Kontaktaufnahme gewünscht" still records their opt-out.
+- **Wie war der Termin?** On the appointment's day the business asks how it went: Kunde, Kein Abschluss (with the reason), or a new appointment.
+- **Anrufliste in Todos:** open businesses with a phone number, due calls first, then new ones by fit. "Anrufen starten" opens the first; "Nächster" on each business opens the next, also once a call has closed it or set an appointment for today. Zurück ends the round.
+- Agents log calls through MCP (`log_call`) with the same outcomes and rules.
+- A second tap on a button while its save is on its way no longer saves twice.
+
 ## 1.6.0 (2026-10-17)
 
 ### Added

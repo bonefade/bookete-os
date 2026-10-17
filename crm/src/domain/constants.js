@@ -13,6 +13,8 @@ export const PIPELINE_STATUSES = new Set(["neu", "kontaktiert", "qualifiziert"])
 export const OPT_OUT_REASON = "Keine Kontaktaufnahme gew\xFCnscht";
 /** Why a lead is disqualifiziert; one is required. Which system they use is a fact (currentTool), not a reason. */
 export const LOST_REASONS = ["Zufrieden mit aktueller L\xF6sung", "Kein Bedarf", "Zu klein", "Nicht unsere Zielgruppe", "Geschlossen / existiert nicht", "Nicht erreicht", OPT_OUT_REASON];
+// After a conversation with them, "Nicht erreicht" is no reason.
+export const SPOKEN_REASONS = LOST_REASONS.filter((r) => r !== "Nicht erreicht");
 export const BUSINESS_TYPES = ["Gasthaus", "Restaurant", "Caf\xE9", "Bar", "Heuriger / Buschenschank", "Hotel-Restaurant", "Sonstiges"];
 export const RESERVATION_TOOLS = ["unbekannt", "nur Telefon", "Telefon + E-Mail", "Quandoo", "OpenTable", "TheFork", "resmio", "Teburio", "Molzait", "aleno", "Zenchef", "DISH", "anderes Tool", "keine Reservierungen"];
 export const CHANNELS = ["Instagram", "E-Mail", "WhatsApp", "Telefon", "Vor Ort", "LinkedIn"];
@@ -26,7 +28,10 @@ export const TEMPLATE_PURPOSES = [
 ];
 export const PURPOSE_LABEL = Object.fromEntries(TEMPLATE_PURPOSES);
 export const PLACEHOLDERS = ["Betrieb", "Ort", "Aufh\xE4nger", "Person"];
-export const SEQUENCE_POLICY = { cadence: [3, 7], maxTouches: 5, defaultFollowUpDays: 4 };
+export const SEQUENCE_POLICY = { cadence: [3, 7], maxTouches: 5, defaultFollowUpDays: 4, callRetryDays: 2 };
+/** How a phone call ended. Every outcome but nicht-erreicht means we spoke to them. */
+export const CALL_OUTCOMES = [["nicht-erreicht", "Nicht erreicht"], ["rueckruf", "R\xFCckruf"], ["termin", "Termin vereinbart"], ["kein-interesse", "Kein Interesse"]];
+export const OUTCOME_LABEL = Object.fromEntries(CALL_OUTCOMES);
 export const COLLECTIONS = ["leads", "activities", "templates", "settings"];
 /** How many deleted leads the Papierkorb lists, newest first. */
 export const TRASH_SHOWN = 50;

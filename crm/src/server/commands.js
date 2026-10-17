@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { LEAD_FIELDS } from "../domain/lead.js";
 import { IMPORT_CHUNK } from "../domain/backup.js";
-import { STAGES, LOST_REASONS } from "../domain/constants.js";
+import { STAGES, LOST_REASONS, SPOKEN_REASONS, CALL_OUTCOMES } from "../domain/constants.js";
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
 
 const id = z.string().min(1).max(100);
@@ -26,6 +26,11 @@ export const AccountInput = z.object({
   contacts: z.array(z.object({ id: str(100), name: z.string().max(200), company: str(200), role: str(200), handles: str(500), email: str(200), phone: str(100), note: str(2000) }).strict()).max(ACCOUNT_LIMIT),
 }).partial().strict();
 const ActivityInput = z.object({ direction: z.enum(["out", "in"]), channel: z.string().max(40), date: z.union([date, z.literal("")]).optional(), text, templateId: z.string().max(100).nullish() });
+// One call, or one appointment, and how it ended; callActivity and meetingPatch refuse a field the outcome does not take.
+const time = z.string().regex(/^\d{2}:\d{2}$/);
+const SpokenReason = z.enum(SPOKEN_REASONS);
+export const CallInput = z.object({ outcome: z.enum(CALL_OUTCOMES.map(([k]) => k)), date: date.optional(), time: time.optional(), reason: SpokenReason.optional(), note: z.string().max(2000).optional() }).strict();
+const MeetingInput = z.object({ id, result: z.enum(["kunde", "kein-abschluss", "neuer-termin"]), reason: SpokenReason.optional(), date: date.optional(), time: time.optional() }).strict();
 const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish() });
 
 /** Web-app commands: name → input schema and the use case it runs. */
@@ -39,6 +44,8 @@ export const COMMANDS = {
   changeStatus: [z.object({ id, status: Status, reason: Reason.optional() }), (uc, a) => uc.changeStatus(a.id, a.status, a.reason)],
   setLostReason: [z.object({ id, reason: Reason }), (uc, a) => uc.setLostReason(a.id, a.reason)],
   saveAccount: [z.object({ id, account: AccountInput, before: AccountInput }), (uc, a) => uc.saveAccount(a.id, a.account, a.before)],
+  logCall: [CallInput.extend({ id }), (uc, { id: leadId, ...call }) => uc.logCall(leadId, call)],
+  meetingOutcome: [MeetingInput, (uc, { id: leadId, ...meeting }) => uc.meetingOutcome(leadId, meeting)],
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],
   setFollowUp: [z.object({ id, date: z.union([date, z.literal("")]).nullable() }), (uc, a) => uc.setFollowUp(a.id, a.date)],
   setNextStep: [z.object({ id, text: z.string().max(500) }), (uc, a) => uc.setNextStep(a.id, a.text)],

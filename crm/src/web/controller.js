@@ -1,6 +1,6 @@
 import { STAGE_LABEL } from '../domain/constants.js';
 import { ValidationError } from '../domain/errors.js';
-import { actsOf, currentLead, icpOf, isReady } from './selectors.js';
+import { actsOf, currentLead, icpOf, isReady, callList } from './selectors.js';
 import { addDays } from '../domain/dates.js';
 import { copyText, channelLink, mailSubject, saveFile } from './platform.js';
 import { createBackup } from '../domain/backup.js';
@@ -9,7 +9,7 @@ import { lastChannel } from '../domain/activity.js';
 import { relDate } from './format.js';
 import { TABS, tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "callCancel", "meetingCancel", "callStart", "callNext", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -42,10 +42,10 @@ const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 export function enterRoute(ui, route) {
   if (LEAD_VIEWS.has(route.view)) {
     const sameLead = LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
-    return { ...ui, ...route, ...(!sameLead && { compose: null, lostPick: false, editField: null, changes: null, expanded: new Set() }) };
+    return { ...ui, ...route, ...(!sameLead && { compose: null, lostPick: false, call: null, meeting: null, editField: null, changes: null, expanded: new Set() }) };
   }
   if (route.view) return { ...ui, ...route };
-  return { ...ui, ...route, quick: false, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
+  return { ...ui, ...route, quick: false, calling: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
 }
 /** A screen whose record is not there once the data has loaded: a deleted lead or template, or a wrong address. */
 export function recordMissing(st) {
@@ -256,14 +256,27 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     render();
     root.querySelector("#cText")?.scrollIntoView({ block: "center" });
   }
-  let qeSaving = false, accountSaving = false;
+  // What the open outcome form holds; an empty field is left out.
+  const agreed = () => Object.fromEntries(["date:agDate", "time:agTime", "reason:agReason", "note:agNote"].map((x) => x.split(":")).map(([k, id]) => [k, root.querySelector("#" + id)?.value.trim() || undefined]));
+  async function logCall(lead, call) {
+    const today = clock.today();
+    const r = await run(() => uc.logCall(lead, call), ({ plan }) => plan.status === "disqualifiziert" ? "Eingetragen \xB7 Disqualifiziert" : plan.followUp ? "Eingetragen \xB7 wieder " + relDate(plan.followUp, today) : "Eingetragen");
+    if (r) {
+      ui({ call: null });
+      render();
+    }
+  }
+  async function saveMeeting(lead, meeting) {
+    if (await run(() => uc.meetingOutcome(lead, meeting), meeting.result === "kunde" ? "Status: Kunde" : "Eingetragen") !== undefined) {
+      ui({ meeting: null });
+      render();
+    }
+  }
   async function saveQuickEdit() {
     const x = root.querySelector("#qe");
     const lead = currentLead(S());
-    if (!x || !lead || qeSaving) return;
-    qeSaving = true;
+    if (!x || !lead) return;
     const changed = await run(() => uc.updateField(lead, x.dataset.field, x.value));
-    qeSaving = false;
     if (changed === void 0) {
       x.focus();
       return;
@@ -311,14 +324,10 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     back,
     edit: () => go(routeOf({ view: "editLead", leadId: S().ui.leadId })),
     accountEdit: () => go(routeOf({ view: "editAccount", leadId: S().ui.leadId })),
-    // A second tap while the first save runs is ignored: it would be refused as a save over a changed Kundenakte.
     async accountSave() {
-      if (accountSaving) return;
-      accountSaving = true;
       const f = root.querySelector("#aform");
       const lead = { id: S().ui.leadId };
       const saved = await run(() => uc.saveAccount(lead, accountInput(f.elements), JSON.parse(f.elements.before.value)), "Kundenakte gespeichert");
-      accountSaving = false;
       if (saved !== undefined) back();
     },
     quick: () => {
@@ -359,6 +368,35 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
         ui({ compose: null });
         render();
       }
+    },
+    callSave: () => logCall(currentLead(S()), { outcome: S().ui.call.outcome, ...agreed() }),
+    callCancel: () => {
+      ui({ call: null });
+      render();
+    },
+    meetingSave: () => {
+      const { note: _note, ...fields } = agreed();
+      return saveMeeting(currentLead(S()), { result: S().ui.meeting.result, ...fields });
+    },
+    meetingCancel: () => {
+      ui({ meeting: null });
+      render();
+    },
+    /** Starts a call session at the top of the call list; Zurück or a tab ends it. */
+    callStart: () => {
+      const [first] = callList(S(), clock.today());
+      if (!first) return toast("Niemand zum Anrufen");
+      ui({ calling: { seen: [] } });
+      openLead(first.id);
+    },
+    /** The next on the call list, freshly computed: a lead called in this session is skipped, as is one whose follow-up moved on. In place of this page, so Zurück ends the session. */
+    callNext: () => {
+      const st = S();
+      const seen = [...st.ui.calling.seen, st.ui.leadId];
+      const next = callList(st, clock.today()).find((l) => !seen.includes(l.id));
+      if (!next) return toast("Anrufliste erledigt"), back();
+      ui({ calling: { seen } });
+      go(routeOf({ view: "detail", leadId: next.id }), { replace: true });
     },
     closeWithoutReply: () => run(() => uc.closeWithoutReply(currentLead(S())), "Abgeschlossen"),
     lostPick: () => {
@@ -487,7 +525,7 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
       const a = st.data.activities.find((x) => x.id === d.copy);
       return toast(a && copyText(a.text) ? "Kopiert" : "Kopieren nicht m\xF6glich");
     }
-    const writes = d.status || d.lost || d.fu || d.restore || d.purge || d.act && !UI_ONLY_ACTIONS.has(d.act);
+    const writes = d.status || d.lost || d.fu || d.call || d.meeting || d.restore || d.purge || d.act && !UI_ONLY_ACTIONS.has(d.act);
     if (writes && !uc) return toast("Keine Verbindung zur Datenbank");
     if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash();
     if (d.purge) {
@@ -505,6 +543,16 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
     if (d.lost) {
       ui({ lostPick: false });
       return run(() => pickLostReason(uc, lead, d.lost), lead.status === "disqualifiziert" ? "Grund gespeichert" : "Status: " + STAGE_LABEL.disqualifiziert);
+    }
+    if (d.call) {
+      if (d.call === "nicht-erreicht") return logCall(lead, { outcome: d.call });
+      ui({ call: { outcome: d.call } });
+      return render();
+    }
+    if (d.meeting) {
+      if (d.meeting === "kunde") return saveMeeting(lead, { result: "kunde" });
+      ui({ meeting: { result: d.meeting } });
+      return render();
     }
     if (d.fu) {
       const v = d.fu === "clear" ? "" : addDays(clock.today(), +d.fu);

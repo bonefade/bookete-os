@@ -11,3 +11,5 @@ export function daysBetween(a, b) {
   return Math.round((parse(b) - parse(a)) / 864e5);
 }
 export const isDate = (s) => typeof s === "string" && DATE_RE.test(s);
+/** 2026-10-20 as 20.10.2026, for text that is stored. */
+export const dayLabel = (s) => s.split("-").reverse().join(".");

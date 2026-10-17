@@ -1,6 +1,7 @@
 import { REGIONS, OTHER_REGION, regionOf } from '../domain/region.js';
 import { RESERVATION_TOOLS } from '../domain/constants.js';
-import { byTimeline } from '../domain/activity.js';
+import { byTimeline, meetingDue } from '../domain/activity.js';
+import { isPipeline, isDue } from '../domain/lead.js';
 import { groupByLead } from '../domain/stats.js';
 
 let cacheKey = null;
@@ -43,4 +44,14 @@ export function regionCounts(state) {
 export function contactCounts(state) {
   const leads = scoped(state, state.data.leads, "contact");
   return [["telefon", "mit Telefon"], ["email", "mit E-Mail"]].map(([k, label]) => [k, label, leads.filter((l) => FILTERS.contact(l, k)).length]);
+}
+/**
+ * Who to call, in order: open businesses with a phone number that are due (by date, then fit), then new ones not
+ * yet planned (by fit). An appointment that has come is no call, and an opted-out business is never on it.
+ */
+export function callList(state, today) {
+  const callable = scoped(state).filter((l) => isPipeline(l) && l.phone && !meetingDue(l, today));
+  const due = callable.filter((l) => isDue(l, today)).sort((a, b) => a.followUp < b.followUp ? -1 : a.followUp > b.followUp ? 1 : b.fit - a.fit);
+  const fresh = callable.filter((l) => l.status === "neu" && !l.followUp).sort((a, b) => b.fit - a.fit || a.name.localeCompare(b.name, "de"));
+  return [...due, ...fresh];
 }

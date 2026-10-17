@@ -6,7 +6,7 @@ Two people sign in with their `@bookete.com` Google accounts. Agents (Claude, Cl
 - **Web app:** leads, contact history, follow-ups, templates. Changes from the other person show up within seconds.
 - **Gmail:** "Per Gmail senden" in the compose sheet sends from your own mailbox and logs the message.
 - **Kundenakte:** on each Qualifiziert or Kunde business, what we deliver (bookete, website, integration), its systems (domain and who owns it, DNS, hosting, e-mail, website, POS, each with the contact who runs it) and the people to reach, agencies included. Never passwords, only where the logins are kept.
-- **MCP:** `https://crm.bookete.com/mcp`. Agents can search, create and update leads, fill in the Kundenakte, log contacts and create Gmail drafts. They cannot send or delete.
+- **MCP:** `https://crm.bookete.com/mcp`. Agents can search, create and update leads, fill in the Kundenakte, log contacts and calls and create Gmail drafts. They cannot send or delete.
 - **Rules on the server:** opt-outs, status changes and the follow-up cadence are enforced on every write, whoever writes.
 - **No lost edits:** a save changes only the fields you changed. A write based on data someone else changed in the meantime is redone on the fresh data, or refused with a message.
 
@@ -21,6 +21,8 @@ Architecture and commands: `../.claude/rules/project.md`.
 - **Disqualifiziert:** closed, always with one of these reasons: Zufrieden mit aktueller Lösung, Kein Bedarf, Zu klein, Nicht unsere Zielgruppe, Geschlossen / existiert nicht, Nicht erreicht, Keine Kontaktaufnahme gewünscht. Which system a business uses is a fact (`currentTool`), not a reason.
 
 A disqualified lead has no follow-up. Any new contact reopens it as Kontaktiert. "Keine Kontaktaufnahme gewünscht" is an opt-out, whether it comes from the Opt-out button or the reason picker: no outgoing contact until the opt-out is lifted. After five unanswered contacts the CRM offers to close a lead as "Nicht erreicht".
+
+Every call ends with one outcome, tapped on the lead page: Nicht erreicht (call again in two days, unless a date not set by the follow-up sequence is ahead, such as an appointment or a date with a next step; the fifth attempt without getting through closes the lead as "Nicht erreicht"), Rückruf (date required), Termin vereinbart (Qualifiziert, date required) or Kein Interesse (Disqualifiziert, reason required). A call in which we spoke to them counts as an answer. A call never moves a Kunde out of Kunde, and a missed one keeps their next step. On the appointment's day the lead asks how it went: Kunde, Kein Abschluss with a reason, or a new appointment. Todos has the call list (due calls first, then new leads by fit) with "Nächster" to work through it.
 
 ## Setup
 
