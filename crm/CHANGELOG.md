@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.9.3 (2026-10-17)
+
+### Changed
+- The search behind the Suche screen and the agents' `search_leads` now sits with the business rules, not in the web app. What is found, and in what order, does not change.
+
 ## 1.9.2 (2026-10-17)
 
 ### Changed

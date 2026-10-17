@@ -12,7 +12,7 @@ _Last groomed: 2026-10-17_
 
 ## Now (in flight)
 
-Nothing in flight. Next up: the backup import that adds to a trashed or erased lead (P1, first item).
+CRM 1.9.3 to 1.14.0: the clear items of the 1.9.2 groom and the top-bar search, one release each (owner, 2026-10-17).
 
 ## P0
 
@@ -41,7 +41,7 @@ or overwriting data by mistake, not about outside access.
 - CRM: Papierkorb paging. It lists the newest 50 deleted leads; older ones show once those are restored or erased.
 - CRM: deleting or restoring a lead writes one statement per activity; D1 allows 50 queries per Worker invocation on the Free plan, so a lead with about 45 activities could not be deleted (production on 2026-10-16: at most 3). Write a lead's activities in one statement, and model the cap in `crm/test/d1.js`. (unenforced)
 - CRM: a short random wait between write retries. 30 parallel agent writes to one lead: 8 commit, 22 get "try again" (all-or-nothing, nothing lost).
-- CRM: field labels are written out again in the edit form (`leadEditView`), quick add and search (`web/search.js`); take them from `FIELD_LABEL` in `web/format.js`.
+- CRM: field labels are written out again in the edit form (`leadEditView`), quick add and search (`domain/search.js`); take them from `FIELD_LABEL` in `web/format.js`.
 - CRM: a check of the store against real D1 in CI. The unit tests run on node:sqlite; the write guard, the history triggers and the purge were checked once by hand against local D1 (workerd) on 2026-10-16. Migration 0003 was run on local D1 by the 1.4.1 reviewer on 2026-10-17: rows equal to node:sqlite's, and the whole file rolled back when the self-check failed; its today fallback for undatable rows was checked there the same day.
 - CRM: a pipeline board, one column per status, with counts.
 - Rule gap: a migration that removes what the running Worker still writes (a contract step) reaches production only after the Worker that no longer writes it is live. The deploy applies migrations before the new Worker, and nothing stops both steps from reaching `main` in one push; 1.4.0 and 1.4.1 were pushed apart by hand (unenforced).
@@ -60,7 +60,6 @@ or overwriting data by mistake, not about outside access.
 ## P3
 
 - Root `package.json` is still named `bookete-scraper`; README and layout describe one tool. The root README still recommends Node 22, while CI tests the scraper on Node 26 since CRM 1.9.1 (`README.md`, for the scraper review).
-- CRM: `server/mcp.js` reuses `web/search.js`; move the search core to `domain/` so the server does not import the web layer.
 
 ## Recently shipped (traceability)
 
@@ -68,6 +67,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI on a push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), each checked against the live `app.js` before the next.
 
+- CRM 1.9.3: the search core moved to `crm/src/domain/search.js`; nothing outside `crm/src/web/` imports the web layer (`crm/test/boundaries.test.js`).
 - CRM 1.9.2: leads are read as stored; the read-time `upgradeLead` is gone from `crm/src/server/store.js` and the use cases, kept for old backups in `chunkBackup` (44153f2). Precondition count on production: no lead outside the five statuses or below schemaVersion 3.
 - CRM 1.9.1: CI and `engines` on Node 26 (e1ee4bd).
 - CRM 1.9.0: an unsubscribe link (HMAC, `crm/src/server/unsubscribe.js`) in every mail but service mail to a Kunde, with one-click headers; rate limited in its own bucket (399204f).

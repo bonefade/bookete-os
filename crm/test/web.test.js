@@ -4,14 +4,16 @@ import { createStore, initialState } from "../src/web/store.js";
 import { tabBar, todayView, todosView, leadsView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar } from "../src/web/views.js";
 import { LEAD_FIELDS } from "../src/domain/lead.js";
 import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
-import { describeChange } from "../src/web/format.js";
-import { scoped } from "../src/web/selectors.js";
+import { describeChange, fmtDate } from "../src/web/format.js";
+import { scoped, activitiesByLead } from "../src/web/selectors.js";
 import { createApi, coalesced } from "../src/web/api.js";
 import { COLLECTIONS } from "../src/domain/constants.js";
 import worker from "../src/server/index.js";
 import { sha256 } from "../src/server/crypto.js";
 import { createD1 } from "./d1.js";
 import { readFileSync } from "node:fs";
+import { searchLeads } from "../src/domain/search.js";
+import { hitLabel } from "../src/web/search.js";
 
 // Renders every view once: catches missing imports and broken templates, which no bundler step reports.
 test("every view renders with data", () => {
@@ -122,6 +124,41 @@ test("saving the edit form of a lead deleted in the meantime asks the server, ne
   assert.equal(await saveLeadForm(uc, "L1", elements), "L1");
   assert.equal(await saveLeadForm(uc, null, elements), "NEW");
   assert.deepEqual(calls, [["update", "L1", { phone: "2" }], ["add", { name: "Krone", phone: "2" }]]);
+});
+
+test("search ranks a name prefix over a word in the name over a substring, then other fields; equal hits by pipeline, then fit, then name", () => {
+  const data = (leads) => ({ data: { leads: leads.map((l, i) => ({ ...LEAD_FIELDS, id: `L${i}`, ...l })), activities: [] } });
+  const names = (state, q) => searchLeads(state, q).map((r) => r.lead.name);
+  // The three names sort the other way round, so a tie broken by name cannot pass for this order.
+  assert.deepEqual(names(data([{ name: "Seewirt", person: "Maria Krone" }, { name: "Alte Schlosskrone" }, { name: "Gasthaus Krone" }, { name: "Kronenwirt" }]), "krone"),
+    ["Kronenwirt", "Gasthaus Krone", "Alte Schlosskrone", "Seewirt"]);
+  // Every lead matches only by its city, so the score is the same.
+  const graz = [["Adler", "disqualifiziert", 3], ["Berghof", "neu", 1], ["Dorfwirt", "neu", 3], ["Eck", "kontaktiert", 2], ["Café Anna", "kontaktiert", 3]];
+  assert.deepEqual(names(data(graz.map(([name, status, fit]) => ({ name, status, fit, city: "Graz", lostReason: status === "disqualifiziert" ? "Kein Bedarf" : null }))), "graz"),
+    ["Café Anna", "Dorfwirt", "Eck", "Berghof", "Adler"]);
+});
+
+test("search finds a phone number by its digits; of equal hits in the history it shows the newest, headed by its day and channel", () => {
+  const leads = [{ ...LEAD_FIELDS, id: "L1", name: "Krone", phone: "+43 316 123456" }, { ...LEAD_FIELDS, id: "L2", name: "Seewirt" }];
+  const activities = [
+    { id: "A2", leadId: "L2", date: "2026-10-08", channel: "E-Mail", direction: "in", text: "Die Speisekarte schicken wir", createdAt: "2026-10-08T09:00:00.000Z" },
+    { id: "A1", leadId: "L2", date: "2026-10-01", channel: "E-Mail", direction: "out", text: "Ihre Speisekarte gefällt uns", createdAt: "2026-10-01T09:00:00.000Z" },
+  ];
+  const state = { data: { leads, activities } };
+  const [phone] = searchLeads(state, "0316/123456");
+  assert.deepEqual([phone.lead.id, phone.hit.key], ["L1", "phone"]);
+  const [history, ...rest] = searchLeads(state, "speisekarte");
+  assert.deepEqual([history.lead.id, history.hit.act.id, rest.length], ["L2", "A2", 0]);
+  assert.equal(hitLabel(history.hit), `Verlauf ${fmtDate("2026-10-08")} \xB7 Antwort`);
+  assert.equal(hitLabel(searchLeads(state, "gefällt")[0].hit), `Verlauf ${fmtDate("2026-10-01")} \xB7 E-Mail`);
+});
+
+test("a lead's history is in timeline order, by day and then by when it was written, whatever order it was read in", () => {
+  const act = (id, leadId, date, createdAt) => ({ id, leadId, date, channel: "E-Mail", direction: "out", text: "x", createdAt });
+  const activities = [act("A3", "L1", "2026-10-08", "2026-10-08T12:00:00.000Z"), act("B1", "L2", "2026-10-02", "2026-10-02T09:00:00.000Z"), act("A1", "L1", "2026-10-01", "2026-10-09T09:00:00.000Z"), act("A2", "L1", "2026-10-08", "2026-10-08T09:00:00.000Z")];
+  const byLead = activitiesByLead({ data: { leads: [], activities } });
+  assert.deepEqual(byLead.get("L1").map((a) => a.id), ["A1", "A2", "A3"]);
+  assert.deepEqual(byLead.get("L2").map((a) => a.id), ["B1"]);
 });
 
 const TODAY = "2026-10-15";

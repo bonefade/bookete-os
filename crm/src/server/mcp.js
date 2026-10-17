@@ -6,7 +6,7 @@ import { nextActionHint, byTimeline } from "../domain/activity.js";
 import { fillTemplate } from "../domain/template.js";
 import { regionOf } from "../domain/region.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
-import { searchLeads } from "../web/search.js";
+import { searchLeads } from "../domain/search.js";
 
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const INSTRUCTIONS = `bookete CRM: restaurants (leads) in Austria that bookete approaches about table reservations.

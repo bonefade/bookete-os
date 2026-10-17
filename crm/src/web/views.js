@@ -4,7 +4,8 @@ import { addDays } from '../domain/dates.js';
 import { channelLink, instagramProfile } from './platform.js';
 import { countTouches, hasReply, sequenceExhausted, nextActionHint, meetingDue } from '../domain/activity.js';
 import { esc, fmtDate, fmtDateWithYear, relDate, options, describeChange, actorName, fmtTime, FIELD_LABEL } from './format.js';
-import { fold, searchTokens, searchLeads, markRanges, markHtml, snippetHtml } from './search.js';
+import { fold, searchTokens, searchLeads } from '../domain/search.js';
+import { hitLabel, markRanges, markHtml, snippetHtml } from './search.js';
 import { isPipeline, takesFollowUp, isDue, getsUnsubscribeLink } from '../domain/lead.js';
 import { outreachStats, lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
@@ -154,7 +155,7 @@ export function searchRow(state, r, i, tokens, today) {
   return `<li><button class="srow${i === state.ui.sIdx && tokens.length ? " act" : ""}${due ? " due" : ""}${l.optOutAt ? " out" : ""}" data-open="${esc(l.id)}">
   <span class="s-top"><span class="s-name">${hl(l.name)}</span><span class="c-fit" aria-label="Fit ${l.fit || 2}">${"★".repeat(l.fit || 2)}</span><span class="s-st st-${esc(l.status)}">${esc(STAGE_LABEL[l.status] || l.status)}</span></span>
   <span class="s-meta">${meta}</span>
-  ${r.hit ? `<span class="s-hit"><b>${esc(r.hit.label)}</b>${snippetHtml(r.hit, tokens)}</span>` : ""}
+  ${r.hit ? `<span class="s-hit"><b>${esc(hitLabel(r.hit))}</b>${snippetHtml(r.hit, tokens)}</span>` : ""}
 </button></li>`;
 }
 export const SEARCH_LIMIT = 60;

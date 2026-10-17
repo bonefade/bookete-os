@@ -10,6 +10,7 @@ import { encrypt } from "../src/server/crypto.js";
 import { unsubscribeUrl } from "../src/server/unsubscribe.js";
 import { readConfig } from "../src/server/config.js";
 import { ConflictError } from "../src/domain/errors.js";
+import { readdirSync, readFileSync } from "node:fs";
 
 const clock = { today: () => "2026-10-15", now: () => "2026-10-15T10:00:00.000Z" };
 
@@ -24,6 +25,13 @@ test("optOutAt can only be set through optOut, never through lead input", () => 
   assert.equal(COMMANDS.updateLead[0].safeParse({ id: "a", input: { optOutAt: null } }).success, false);
   assert.equal(COMMANDS.updateField[0].safeParse({ id: "a", key: "optOutAt", value: null }).success, false);
   assert.equal(COMMANDS.updateLead[0].safeParse({ id: "a", input: { name: "ok" } }).success, true);
+});
+
+test("no code outside the web app imports the web layer", () => {
+  // Every file under src/, so a new directory is checked too.
+  const src = new URL("../src/", import.meta.url);
+  for (const file of readdirSync(src, { recursive: true }).filter((f) => f.endsWith(".js") && !f.startsWith("web/")))
+    assert.doesNotMatch(readFileSync(new URL(file, src), "utf8"), /(?:from|import)\s*\(?\s*["'][^"']*\/web\//, file);
 });
 
 test("MCP exposes exactly these tools: no delete, no send", async () => {

@@ -1,16 +1,15 @@
 import { REGIONS, OTHER_REGION, regionOf } from '../domain/region.js';
 import { RESERVATION_TOOLS } from '../domain/constants.js';
-import { byTimeline, meetingDue } from '../domain/activity.js';
+import { meetingDue } from '../domain/activity.js';
 import { isPipeline, isDue } from '../domain/lead.js';
-import { groupByLead } from '../domain/stats.js';
+import { timelinesByLead } from '../domain/stats.js';
 
 let cacheKey = null;
 let cacheVal = null;
 export function activitiesByLead(state) {
   if (state.data.activities !== cacheKey) {
     cacheKey = state.data.activities;
-    cacheVal = groupByLead(state.data.activities);
-    for (const list of cacheVal.values()) list.sort(byTimeline);
+    cacheVal = timelinesByLead(state.data.activities);
   }
   return cacheVal;
 }

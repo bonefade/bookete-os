@@ -1,4 +1,4 @@
-import { hasReply, isReply } from './activity.js';
+import { byTimeline, hasReply, isReply } from './activity.js';
 import { weekStart } from './dates.js';
 
 export function groupByLead(activities) {
@@ -7,6 +7,12 @@ export function groupByLead(activities) {
     if (!m.has(a.leadId)) m.set(a.leadId, []);
     m.get(a.leadId).push(a);
   }
+  return m;
+}
+/** Each lead's history in timeline order. */
+export function timelinesByLead(activities) {
+  const m = groupByLead(activities);
+  for (const list of m.values()) list.sort(byTimeline);
   return m;
 }
 export function outreachStats(leads, actsByLead) {
