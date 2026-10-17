@@ -8,11 +8,11 @@ CRM release. Dates are absolute.
 - **P2:** when time allows: quality, hardening, performance.
 - **P3:** later or nice to have.
 
-_Last groomed: 2026-10-17_
+_Last groomed: 2026-10-18_
 
 ## Now (in flight)
 
-CRM 1.9.3 to 1.14.0: the clear items of the 1.9.2 groom and the top-bar search, one release each (owner, 2026-10-17).
+Nothing in flight. Next up: tasks as their own records (P1).
 
 ## P0
 
@@ -48,6 +48,22 @@ or overwriting data by mistake, not about outside access.
 - Rule gap: a comment in an applied migration may be edited when the code or tests it names change (wrangler tracks migrations by file name, so nothing re-runs); 0003's header was edited so in 1.9.2. No rule says so (unenforced; found in the 1.9.2 review).
 - Rule gap: a migration that rewrites stored records chooses its rows by the stored format version (`schemaVersion`), not by a value the old and new formats share (unenforced; found in the 1.4 plan review).
 
+- CRM: without Gmail, a lead whose address is closed only by a holder in the Papierkorb still gets mail links: the browser holds no trashed leads. The mail goes out, and logging it is refused. Documented in `crm/README.md` (found in the 1.11.0 review).
+- CRM: a closed address still counts as an address outside the send path: MCP `search_leads` reports `hasEmail`, and the Betriebe list counts and ranks the lead "mit E-Mail" (`withMail`, `crm/src/web/views.js`).
+- CRM: when a lead's own opt-out arrives by sync while its compose sheet is open, the hint names the lead itself as holding "dieselbe Adresse" (`addressOptOutText`, which also shows the opt-out date as a raw ISO date).
+- CRM: no test pins the closed-address compose sheet for a Kunde with its own opt-out and Gmail connected ("Text kopieren" and "Abbrechen", `crm/test/web.test.js`).
+- CRM: a lead created with the reason "Keine Kontaktaufnahme gewünscht" counts as having replied. Matters once scraped leads are imported.
+- CRM: on Betriebe, "N weitere Treffer außerhalb der Filter" and the bottom tabs drop what was typed into + Neu or the ICP form.
+- CRM: top-bar search: at 320px the placeholder "Suchen …" is cut before its "…", and the keyboard selection in the results can scroll under the bottom bar.
+- CRM: one meaning, two labels: "Betrieb" and "Name", "Nachfassen" and "Nachfassen am", "Fit" and "ICP-Fit", "Kontaktiert seit" and "Erstkontakt" (`FIELD_LABEL`, `crm/src/domain/constants.js`).
+- CRM: the Papierkorb asks for 50 and offers older ones when 50 come back, so exactly 50 leads show an empty next page; fetch one more than it shows (`TRASH_SHOWN`). MCP `search_leads` pages by offset, so a lead added between two pages can push another one past the page break.
+- CRM: `searchLeads` (`crm/src/domain/search.js`) runs on every keystroke over all leads; its cost at a few thousand leads is unmeasured.
+- CRM: a backup import batch uses 49 of the 50 queries D1 allows per Worker invocation on the Free plan; how D1 counts statements in one `batch` is unverified, and `crm/test/d1.js` does not model the cap (unenforced).
+- Rule gap: an injected dependency gets no silent default; `retryPause` defaults to no wait, and only a Worker test shows both call sites pass the real one (unenforced; found in the 1.12.0 review).
+- Rule gap: a test never asserts the wall-clock date. Three tests in `crm/test/access.test.js` expected 2026-10-17 and failed from 2026-10-18 (unenforced).
+- Rule gap: every mail link goes through one helper that knows the address block (`channelLink`, `offersMailto`), and a UI test clicks what was drawn rather than calling the handler (unenforced; found in the 1.11 and 1.13.0 reviews).
+- Rule gap: UI state belongs to its screen and is cleared on leaving it (`enterRoute`); 1.13.0 missed it once (unenforced).
+
 ## P3
 
 - Root `package.json` is still named `bookete-scraper`; README and layout describe one tool. The root README still recommends Node 22, while CI tests the scraper on Node 26 since CRM 1.9.1 (`README.md`, for the scraper review).
@@ -77,9 +93,3 @@ All deployed by CI on a push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DE
 - CRM 1.9.2: leads are read as stored; the read-time `upgradeLead` is gone from `crm/src/server/store.js` and the use cases, kept for old backups in `chunkBackup` (44153f2). Precondition count on production: no lead outside the five statuses or below schemaVersion 3.
 - CRM 1.9.1: CI and `engines` on Node 26 (e1ee4bd).
 - CRM 1.9.0: an unsubscribe link (HMAC, `crm/src/server/unsubscribe.js`) in every mail but service mail to a Kunde, with one-click headers; rate limited in its own bucket (399204f).
-- CRM 1.8.0: call script (a `leitfaden` template) and this week's numbers on Heute (69a52cb).
-- CRM 1.7.0: call outcomes, a call list and the appointment answer; `log_call` over MCP (3c06d95).
-- CRM 1.6.0: the Kundenakte on the lead (`crm/src/domain/account.js`), `update_account` over MCP (bb3800a).
-- CRM 1.5.0: every screen has its own address (e00ebd6).
-- CRM 1.4.1: migration `0003_statuses.sql` rewrote 585 stored leads to the five statuses (6c04798). Then the notes pass: 247 leads set by their notes through MCP (19 disqualified with a reason, 9 dated first contacts).
-- CRM 1.4.0: five statuses, a reason for every disqualified lead, the first-contact date (89cb175).
