@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.11.1 (2026-10-18)
+
+### Changed
+- **Only by Gmail once it is connected:** with Gmail connected, an e-mail that gets the Abmeldelink goes out only by "Per Gmail senden". "Nachricht schreiben" no longer offers "Kopieren & E-Mail öffnen", and the E-Mail button below it opens no mail program: both sent the mail without the Abmeldelink. Nor does a contact in the Kundenakte with the business's own address. A contact at another address, such as an agency, keeps its link: "Per Gmail senden" mails only the business. A Kunde's service mail has no Abmeldelink and keeps both. Without Gmail, both stay, and the other channels keep their link.
+
 ## 1.11.0 (2026-10-18)
 
 ### Added

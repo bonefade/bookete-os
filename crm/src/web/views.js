@@ -276,13 +276,17 @@ export function detailView(state, today) {
   // (a Kunde's service mail still goes out). From the leads this browser holds; the server refuses the mail too,
   // also for a lead in the Papierkorb.
   const closedTo = l.optOutAt ? l : getsUnsubscribeLink(l) ? optOutByAddress(state.data.leads, l) : undefined;
+  // With Gmail connected, mail that gets the Abmeldelink goes out only by Gmail: a mailto, in the sheet or the quick bar,
+  // would send it without the link. A Kunde's service mail has no Abmeldelink and keeps its mailto.
+  const onlyByGmail = state.caps.gmail && !!l.email && getsUnsubscribeLink(l);
   const touchTxt = l.status === "kontaktiert" && !hasReply(acts) ? `Kontakt ${t} von ${SEQUENCE_POLICY.maxTouches}` : t ? `${t} Kontakt${t > 1 ? "e" : ""}` : "";
-  // Whether the page offers a mail link to an address, such as a Kundenakte contact's: this lead's own address as
-  // above; another (an agency's) is closed when a business with an opt-out holds it, except on a Kunde.
-  const offersMailto = (email) => !(addressKey(email) === addressKey(l.email) ? closedTo : getsUnsubscribeLink(l) && optOutByAddress(state.data.leads, { email }));
+  // Whether the page offers a mail link to an address, the quick bar's or a Kundenakte contact's: this lead's own
+  // address as above, closed or only by Gmail; another (an agency's), which Gmail does not send to from here, is
+  // closed when a business with an opt-out holds it, except on a Kunde.
+  const offersMailto = (email) => !(addressKey(email) === addressKey(l.email) ? closedTo || onlyByGmail : getsUnsubscribeLink(l) && optOutByAddress(state.data.leads, { email }));
   let compose = "";
   if (c) {
-    // The server refuses mail to a closed address and logging one as sent, so the sheet then offers no send or log button, only "Text kopieren" and Abbrechen.
+    // The server refuses mail to a closed address and logging one as sent, so the sheet then offers no send or log button: Abbrechen, and "Text kopieren" unless mail goes only by Gmail (Gmail connected, not a Kunde).
     const addressOptOut = c.direction === "out" && c.channel === "E-Mail" && closedTo;
     const link = c.direction === "out" && !addressOptOut ? channelLink(l, c.channel, c.text) : "";
     const gmail = c.direction === "out" && c.channel === "E-Mail" && !!l.email && state.caps.gmail && !addressOptOut;
@@ -294,7 +298,7 @@ export function detailView(state, today) {
     ${c.missing?.length ? `<p class="hint">Noch leer: ${esc(c.missing.map((m) => "{" + m + "}").join(", "))}. Erg\xE4nze den Betrieb oder passe den Text an.</p>` : ""}
     ${addressOptOut ? `<p class="hint">${esc(addressOptOutText(addressOptOut))}</p>` : ""}
     ${gmail ? `<label>Betreff<input id="cSubj" value="${esc(c.subject)}"></label>${getsUnsubscribeLink(l) ? `<p class="hint">Per Gmail kommt am Ende ein Abmeldelink dazu.</p>` : ""}` : ""}
-    ${c.direction === "out" ? `<a class="btn full" style="margin-top:8px" data-act="copyOpen" ${link ? `href="${esc(link)}" target="_blank" rel="noopener"` : 'href="#"'}>${link ? `Kopieren & ${esc(c.channel)} \xF6ffnen` : "Text kopieren"}</a>` : ""}
+    ${c.direction === "out" && !(c.channel === "E-Mail" && onlyByGmail) ? `<a class="btn full" style="margin-top:8px" data-act="copyOpen" ${link ? `href="${esc(link)}" target="_blank" rel="noopener"` : 'href="#"'}>${link ? `Kopieren & ${esc(c.channel)} \xF6ffnen` : "Text kopieren"}</a>` : ""}
     ${gmail ? `<button class="primary full" style="margin-top:8px" data-act="sendEmail">Per Gmail senden</button>` : ""}
     ${addressOptOut ? `<button class="full" style="margin-top:8px" data-act="composeCancel">Abbrechen</button>` : `<div class="two" style="margin-top:8px"><button data-act="composeCancel">Abbrechen</button><button${gmail ? "" : ' class="primary"'} data-act="logActivity">${c.direction === "out" ? "Als gesendet eintragen" : "Eintragen"}</button></div>`}
   </div>`;
@@ -314,7 +318,7 @@ export function detailView(state, today) {
   ${ui.calling ? `<div class="sec"><button class="full" data-act="callNext">N\xE4chster \u203A</button></div>` : ""}
   ${l.optOutAt ? `<div class="card sec optout"><p style="margin:0;font-weight:600">M\xF6chte keine Nachrichten mehr</p><p class="note" style="margin:2px 0 8px">Opt-out seit ${esc(fmtDate(l.optOutAt))}. Keine Mails, DMs oder Anrufe. Nur aufheben, wenn der Betrieb sich selbst wieder meldet.</p><button class="more" data-act="clearOptOut">Opt-out aufheben</button></div>` : ""}
   ${c ? `<div class="sec">${compose}</div>` : l.optOutAt ? `<div class="sec"><button class="full" data-act="composeIn">Eingehende Nachricht eintragen</button></div>` : `<div class="two sec"><button class="primary" data-act="composeOut">Nachricht schreiben</button><button data-act="composeIn">Antwort eintragen</button></div>`}
-  <div class="sec"><div class="quick">${calls ? "" : btn(channelLink(l, "Telefon"), "Anrufen")}${btn(closedTo ? "" : channelLink(l, "E-Mail"), "E-Mail")}${btn(instagramProfile(l), "Instagram")}${btn(l.website, "Website")}</div></div>
+  <div class="sec"><div class="quick">${calls ? "" : btn(channelLink(l, "Telefon"), "Anrufen")}${btn(offersMailto(l.email) ? channelLink(l, "E-Mail") : "", "E-Mail")}${btn(instagramProfile(l), "Instagram")}${btn(l.website, "Website")}</div></div>
   <div class="sec"><h3>Status</h3><div class="chips">${STAGES.map(([k, v]) => `<button class="chip${k === "disqualifiziert" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}">${v}</button>`).join("")}</div>
     ${l.optOutAt ? "" : `<button class="danger full" style="margin-top:12px" data-act="optOut">Keine Nachrichten mehr (Opt-out)</button>`}
     ${ui.lostPick ? `<div class="card" style="margin-top:10px"><p style="margin:0 0 8px;font-weight:600">Warum disqualifiziert?</p><div class="chips">${LOST_REASONS.map((r) => `<button class="chip lostc" data-lost="${esc(r)}" aria-pressed="${l.lostReason === r}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="lostCancel">Abbrechen</button></div>` : lost && !l.optOutAt ? `<button class="more" data-act="lostPick">Grund \xE4ndern</button>` : ""}

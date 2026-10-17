@@ -107,9 +107,62 @@ test("the compose area says why no mail goes to an address another business with
   state.data.leads[0] = lead;
   state.data.leads[1] = { ...state.data.leads[1], email: "post@krone.at" };
   assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>Kopieren & E-Mail \xF6ffnen/);
+  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>E-Mail</);
   state.caps = { db: true, gmail: true };
   assert.match(detailView(state, today), /Per Gmail senden/);
-  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>E-Mail</);
+});
+
+test("with Gmail connected, mail that gets the Abmeldelink goes out only by Gmail; without Gmail, and to a Kunde, also by the mail program", () => {
+  const today = "2026-10-15";
+  const state = initialState();
+  const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert", email: "k@example.at", phone: "0664 123" };
+  state.data = { leads: [lead], activities: [], templates: [], settings: [] };
+  state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
+  state.caps = { db: true, gmail: true };
+  const compose = (channel) => ({ direction: "out", channel, templateId: "", date: today, subject: "S", text: "Hallo", missing: [] });
+  state.ui = { ...state.ui, leadId: "L1", compose: compose("E-Mail") };
+  const composeCard = () => detailView(state, today).split('class="card compose"')[1].split('class="quick"')[0];
+  const quickBar = () => detailView(state, today).split('class="quick"')[1].split("</div>")[0];
+  const viaGmail = composeCard();
+  assert.match(viaGmail, /Per Gmail senden/);
+  assert.doesNotMatch(viaGmail, /mailto:|data-act="copyOpen"/);
+  // The quick bar's E-Mail button has no link either, as for a closed address.
+  assert.match(quickBar(), /<a class="btn" aria-disabled="true">E-Mail<\/a>/);
+  assert.doesNotMatch(detailView(state, today), /mailto:/);
+  state.caps = { db: true, gmail: false };
+  assert.match(composeCard(), /href="mailto:k@example\.at[^"]*"[^>]*>Kopieren & E-Mail öffnen/);
+  assert.match(quickBar(), /href="mailto:k@example\.at[^"]*"[^>]*>E-Mail</);
+  // A Kunde's service mail gets no Abmeldelink, so its mailto stays next to Gmail.
+  state.caps = { db: true, gmail: true };
+  state.data.leads[0] = { ...lead, status: "kunde" };
+  assert.match(composeCard(), /Per Gmail senden/);
+  assert.match(composeCard(), /href="mailto:k@example\.at[^"]*"[^>]*>Kopieren & E-Mail öffnen/);
+  assert.match(quickBar(), /href="mailto:k@example\.at[^"]*"[^>]*>E-Mail</);
+  // Other channels have no Gmail path and keep their link.
+  state.data.leads[0] = lead;
+  state.ui = { ...state.ui, compose: compose("WhatsApp") };
+  assert.match(composeCard(), /href="https:\/\/wa\.me\/0664123[^"]*"[^>]*>Kopieren & WhatsApp öffnen/);
+});
+
+test("with Gmail connected, a Kundenakte contact at the lead's own address opens no mail program; one at another address, which Gmail does not send to, still does", () => {
+  const today = "2026-10-15";
+  const state = initialState();
+  const account = { contacts: [{ id: "C1", name: "Anna Wirt", email: "K@Example.at" }, { id: "C2", name: "Agentur Blau", email: "office@blau.at" }] };
+  const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "qualifiziert", email: "k@example.at", account };
+  state.data = { leads: [lead], activities: [], templates: [], settings: [] };
+  state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
+  state.caps = { db: true, gmail: true };
+  state.ui = { ...state.ui, leadId: "L1" };
+  const contacts = () => detailView(state, today).split("<h4>Kontakte</h4>")[1].split("<h3>Infos")[0];
+  const mailsTo = (address) => contacts().includes(`href="mailto:${address}"`);
+  assert.deepEqual(["K@Example.at", "office@blau.at"].map(mailsTo), [false, true]);
+  assert.match(contacts(), /<b>Anna Wirt<\/b><br>K@Example\.at/);
+  // Without Gmail, and on a Kunde (no Abmeldelink), the mail program is the way, as for the lead's own links.
+  state.caps = { db: true, gmail: false };
+  assert.deepEqual(["K@Example.at", "office@blau.at"].map(mailsTo), [true, true]);
+  state.caps = { db: true, gmail: true };
+  state.data.leads[0] = { ...lead, status: "kunde" };
+  assert.deepEqual(["K@Example.at", "office@blau.at"].map(mailsTo), [true, true]);
 });
 
 test("due leads are todos in their own tab, not in Heute", () => {
