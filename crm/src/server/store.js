@@ -96,16 +96,24 @@ export function createStore(db) {
         AND lower(trim(json_extract(data, '$.email'))) = lower(trim(?)) ORDER BY deleted, seq DESC LIMIT 1`, email);
       return row ? { lead: toRecord("leads", row), trashed: !!row.deleted } : null;
     },
+    /** Of these leads, the ones that still hold data, by id: live, or in the trash (`trashed`). An erased lead is not among them. */
+    async heldLeads(ids) {
+      const rows = await many("SELECT id, data, seq, deleted FROM docs WHERE collection = 'leads' AND data != '{}' AND id IN (SELECT value FROM json_each(?))", JSON.stringify(ids));
+      return new Map(rows.map((row) => [row.id, { lead: toRecord("leads", row), trashed: !!row.deleted }]));
+    },
     async activitiesOf(leadId, { deleted = false } = {}) {
       const rows = await many("SELECT id, data, seq, deleted FROM docs WHERE collection = 'activities' AND deleted = ? AND json_extract(data, '$.leadId') = ?", deleted ? 1 : 0, leadId);
       return rows.map((row) => toRecord("activities", row));
     },
-    /** A change to an existing record (patch, remove, restore) must name the read it is based on; only a put may go without. */
-    async commit(ops, actor) {
+    /**
+     * A change to an existing record (patch, remove, restore) must name the read it is based on; only a put may go without.
+     * `unchanged` ({ collection, id, base }) are records the writes depend on but do not change: the commit applies only while each is still as read.
+     */
+    async commit(ops, actor, unchanged = []) {
       if (!ops.length) return;
       const unbased = ops.find((op) => op.type !== "put" && !op.base);
       if (unbased) throw new Error(`${unbased.type} of ${unbased.collection}/${unbased.id} without a base`);
-      await batch([...guard(ops), ...writes(ops, actor)]);
+      await batch([...guard([...ops, ...unchanged]), ...writes(ops, actor)]);
     },
     /**
      * Erases a deleted lead for good: its data, the data of all its activities (`activities`, the live ones, are

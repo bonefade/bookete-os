@@ -74,7 +74,7 @@ To deploy from CI instead: add the repo secrets `CLOUDFLARE_API_TOKEN` and `CLOU
 ### 5. Move the data from the Claude artifact
 
 1. In the old artifact: **Mehr → Backup herunterladen**.
-2. In the new CRM: **Mehr → Sicherung einspielen**. Only records the CRM has never held are added, so importing twice does no harm, and an import never undoes an opt-out or a deletion.
+2. In the new CRM: **Mehr → Sicherung einspielen**. Only records the CRM has never held are added, so importing twice does no harm, and an import never undoes an opt-out or a deletion. An activity of a lead in the Papierkorb goes there with it; one of an erased lead is not added.
 
 ### 6. Connect agents
 

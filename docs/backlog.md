@@ -22,7 +22,6 @@ or overwriting data by mistake, not about outside access.
 
 ## P1
 
-- CRM: a backup import adds an activity the CRM never held even when its lead is in the Papierkorb or erased; on an erased lead that brings text back after the erase, and an import landing during an erase leaves its activity live and without history, because `purgeLead` guards only the lead row. Decide whether an import may add to a trashed lead, and refuse it for an erased one (second review of 1.9.0, 2026-10-17).
 - CRM: open and click tracking like HubSpot (owner, 2026-10-17): owner's decision, not built. A tracking pixel or rewritten links read the recipient's device without consent (§165 (3) TKG 2021, Art. 5 (3) ePrivacy, GDPR). "Detect replies" below tells us who answered without that.
 - CRM: tasks as their own records (due date, optional time, done), replacing the overloaded `nextStep` and the single `followUp`. Owner decided 2026-10-16: one owner per lead, so a lead gets an `owner` and Todos shows "mine" first.
 - CRM: detect replies. A cron reads the Gmail threads of sent mails and logs incoming replies, so a reply is logged and due on its own. Needs the `gmail.readonly` scope.
@@ -61,6 +60,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
 
+- CRM 1.13.1: a backup import puts a trashed lead's activity in the Papierkorb and adds none to an erased lead, guarded by the lead as read (owner: "Add it to the trash").
 - CRM 1.13.0: the search field sits in the top bar on every screen, the Suche tab is gone (owner, 2026-10-17).
 - CRM 1.12.0: a short random wait between write retries (`retryPause`, `crm/src/adapters/system.js`).
 - CRM 1.11.2: field labels in forms, search, the lead page and the Betriebe list come from `FIELD_LABEL` (`crm/src/domain/constants.js`).

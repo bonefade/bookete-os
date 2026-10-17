@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.13.1 (2026-10-18)
+
+### Fixed
+- **Sicherung einspielen:** a contact entry from a backup whose business is in the Papierkorb now goes into the Papierkorb with it and comes back when the business is restored. One whose business was erased with Endgültig löschen is no longer added, so nothing of an erased business comes back. An import that lands while someone erases that business stops with "Bitte nochmal versuchen"; running it again is safe.
+
 ## 1.13.0 (2026-10-18)
 
 ### Changed

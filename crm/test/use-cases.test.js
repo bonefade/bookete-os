@@ -219,6 +219,21 @@ test("an import can neither clear an opt-out nor bring back a deleted lead", asy
   assert.equal(await store.get("leads", gone), null);
 });
 
+test("an import adds an activity of a lead in the Papierkorb to the trash with it, and none to an erased lead", async () => {
+  const { store, uc } = setup();
+  const trashed = await uc.addLead({ name: "Weg" });
+  const erased = await uc.addLead({ name: "Gasthaus Geheim" });
+  await uc.deleteLead(trashed);
+  await uc.deleteLead(erased);
+  await uc.purgeLead(erased);
+  const activity = (id, leadId, text) => ({ id, leadId, direction: "in", channel: "E-Mail", date: "2026-10-01", text });
+  assert.equal(await uc.importBackup({ format: "bookete-crm-backup", data: { activities: [activity("A1", trashed, "Gerne"), activity("A2", erased, "Geheim antwortet")] } }), 1);
+  assert.deepEqual(await store.activitiesOf(trashed), []);
+  assert.equal((await store.ids("activities")).has("A2"), false);
+  await uc.restoreLead(trashed);
+  assert.deepEqual((await store.activitiesOf(trashed)).map((a) => a.text), ["Gerne"]);
+});
+
 test("a failing write rolls back the whole commit", async () => {
   const { store } = setup();
   await assert.rejects(store.commit([

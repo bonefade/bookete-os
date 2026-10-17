@@ -14,7 +14,7 @@ function twoUsers() {
   let n = 0, pending = null;
   const ids = { newId: () => `id${++n}` };
   const racing = { ...store };
-  for (const read of ["get", "getDeleted", "activitiesOf"]) {
+  for (const read of ["get", "getDeleted", "activitiesOf", "heldLeads"]) {
     racing[read] = async (...args) => {
       const found = await store[read](...args);
       if (pending?.read === read) {
@@ -176,6 +176,29 @@ test("a restore racing an erase does not bring back an empty lead", async () => 
   between(() => b.purgeLead(id), "getDeleted");
   await assert.rejects(a.restoreLead(id), (e) => e instanceof ValidationError && e.field === "id");
   assert.equal(await store.get("leads", id), null);
+});
+
+test("an import racing an erase adds nothing to the erased lead", async () => {
+  const { store, a, b, between } = twoUsers();
+  const id = await b.addLead({ name: "Gasthaus Geheim" });
+  await b.deleteLead(id);
+  const backup = { format: "bookete-crm-backup", data: { activities: [{ id: "A-old", leadId: id, direction: "in", channel: "E-Mail", date: "2026-10-01", text: "Geheim antwortet" }] } };
+  between(() => b.purgeLead(id), "heldLeads");
+  await assert.rejects(a.importBackup(backup), ConflictError);
+  assert.equal(await a.importBackup(backup), 0);
+  assert.equal((await store.ids("activities")).has("A-old"), false);
+});
+
+test("an import racing a delete leaves no live activity beside the deleted lead", async () => {
+  const { store, a, b, between } = twoUsers();
+  const id = await b.addLead({ name: "Gasthaus Krone" });
+  const backup = { format: "bookete-crm-backup", data: { activities: [{ id: "A-old", leadId: id, direction: "in", channel: "E-Mail", date: "2026-10-01", text: "Gerne" }] } };
+  between(() => b.deleteLead(id), "heldLeads");
+  await assert.rejects(a.importBackup(backup), ConflictError);
+  assert.equal((await store.ids("activities")).has("A-old"), false);
+  // Run again, the import puts it into the trash with its lead.
+  assert.equal(await a.importBackup(backup), 1);
+  assert.deepEqual((await store.activitiesOf(id, { deleted: true })).map((x) => x.text), ["Gerne"]);
 });
 
 test("an erase racing a restore leaves the restored lead and its history alone", async () => {

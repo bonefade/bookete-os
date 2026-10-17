@@ -36,7 +36,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
     }
   }
   const touch = (patch) => ({ ...patch, updatedAt: clock.now() });
-  const commit = (ops) => store.commit(ops, actor);
+  const commit = (ops, unchanged) => store.commit(ops, actor, unchanged);
   /**
    * Every change to a lead's fields goes through here, and every lead addLead creates; only importBackup writes a
    * lead without it, one the CRM never held, through normalizeLead alone. The Kundenakte has its own rules
@@ -230,7 +230,9 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
     /**
      * Restores records from a backup (the Claude artifact's or this app's). Only records the CRM has never
      * held are added, each through the same normalization as a normal write: an import can neither clear an
-     * opt-out nor bring back something deleted. Re-running an import is safe; the client sends it in chunks.
+     * opt-out nor bring back something deleted. An activity goes where its lead is: into the Papierkorb with a
+     * deleted lead, so a restore brings both back, and nowhere once the lead is erased. Re-running an import is
+     * safe; the client sends it in chunks.
      */
     async importBackup(backup) {
       if (backup?.format !== BACKUP_FORMAT) throw new ValidationError("backup", "Keine bookete-CRM-Sicherung");
@@ -246,20 +248,27 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),
         settings: (r) => ({ ...normalizeIcp(r), updatedAt: r.updatedAt || now }),
       };
-      const ops = [];
+      const ops = [], known = {}, leadsAsRead = new Map();
       for (const collection of COLLECTIONS) {
-        const known = await store.ids(collection);
-        for (const record of backup.data?.[collection] || []) {
-          if (known.has(record.id) || (collection === "settings" && record.id !== "icp")) continue;
+        known[collection] = await store.ids(collection);
+        const records = (backup.data?.[collection] || []).filter((r) => !known[collection].has(r.id) && (collection !== "settings" || r.id === "icp"));
+        const held = collection === "activities" && records.length ? await store.heldLeads([...new Set(records.map((r) => r.leadId))]) : new Map();
+        for (const record of records) {
           try {
             const { id: _id, ...data } = normalize[collection](record);
-            ops.push({ type: "put", collection, id: record.id, data });
+            const lead = held.get(data.leadId);
+            // An erased lead stays erased: none of its activities comes back.
+            if (collection === "activities" && !lead && known.leads.has(data.leadId)) continue;
+            if (lead) leadsAsRead.set(lead.lead.id, { collection: "leads", id: lead.lead.id, base: lead.lead });
+            ops.push({ type: "put", collection, id: record.id, data, trashed: lead?.trashed });
           } catch (e) {
             throw new ValidationError("backup", `${collection} ${record.id}: ${e.message}`);
           }
         }
       }
-      await commit(ops);
+      // Commits only while each lead is still as read, so an erase in between cannot leave an activity behind.
+      // Not retried: a chunk's writes take most of D1's queries per request; the conflict asks to run the import again, which is safe.
+      await commit(ops, [...leadsAsRead.values()]);
       return ops.length;
     }
   };
