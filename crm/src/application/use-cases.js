@@ -130,9 +130,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
     /** Moves the lead and its activities to the trash. Deleting a lead that is already gone does nothing. */
     deleteLead: (id) => retrying(async () => {
       const l = await store.get("leads", id);
-      if (!l) return;
-      const acts = await store.activitiesOf(id);
-      await commit([...acts.map((a) => ({ type: "remove", collection: "activities", id: a.id, base: a })), { type: "remove", collection: "leads", id, base: l }]);
+      if (l) await commit([{ type: "remove", collection: "leads", id, base: l }]);
     }),
     /** Brings a lead back from the trash with the activities deleted together with it. */
     restoreLead: (id) => retrying(async () => {
@@ -141,8 +139,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
         if (await store.get("leads", id)) return;
         throw new ValidationError("id", "Nicht im Papierkorb");
       }
-      const acts = await store.activitiesOf(id, { deleted: true });
-      await commit([{ type: "restore", collection: "leads", id, base: l }, ...acts.map((a) => ({ type: "restore", collection: "activities", id: a.id, base: a }))]);
+      await commit([{ type: "restore", collection: "leads", id, base: l }]);
     }),
     /** Erases a lead in the trash for good, all its activities and history included (a business's right to erasure). */
     purgeLead: (id) => retrying(async () => {
@@ -151,7 +148,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
         if (await store.get("leads", id)) throw new ValidationError("id", "Nur Betriebe im Papierkorb lassen sich endg\xFCltig l\xF6schen");
         return;
       }
-      await store.purgeLead(l, actor, await store.activitiesOf(id));
+      await store.purgeLead(l, actor);
     }),
     /** Status and, for disqualifiziert, the reason, validated together and written in one patch. */
     changeStatus: (id, status, reason) => changeLead(id, () => transition(status, reason)),

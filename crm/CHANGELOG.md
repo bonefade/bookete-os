@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.13.2 (2026-10-18)
+
+### Fixed
+- A business with many contacts (about 45 or more) can now be deleted and restored. Before, the database's limit of 50 queries per request stopped it.
+
 ## 1.13.1 (2026-10-18)
 
 ### Fixed

@@ -3,7 +3,7 @@ import { upgradeLead } from './lead.js';
 import { firstContactUntil } from './activity.js';
 import { groupByLead } from './stats.js';
 
-// Records per import call: keeps each request well inside D1's per-invocation query limit.
+// Records per import call, all collections together. A full chunk of activities takes 49 of the 50 queries D1 runs per Worker invocation on Free.
 export const IMPORT_CHUNK = 40;
 export const BACKUP_FORMAT = "bookete-crm-backup";
 export function createBackup({ leads, activities, templates, settings }, now) {

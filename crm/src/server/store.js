@@ -58,8 +58,26 @@ export function createStore(db) {
       ON d.collection = json_extract(b.value, '$[0]') AND d.id = json_extract(b.value, '$[1]') AND d.seq = json_extract(b.value, '$[2]') AND d.deleted = json_extract(b.value, '$[3]')`)
       .bind(based.length, expected)];
   }
-  // One counter bump, then the ops' statements.
-  const writes = (ops, actor) => [db.prepare("UPDATE counter SET seq = seq + ? WHERE id = 1").bind(ops.length), ...ops.map((op, i) => statement(op, actor, ops.length - 1 - i))];
+  // A lead's activities go into the trash or out of it in two statements however many there are (D1 runs at most
+  // 50 queries per Worker invocation), all that are there at commit, also one added since the lead was read.
+  // The counter makes room for them first; each gets its own seq, in their old order.
+  const moveActivities = (leadId, toTrash, actor) => {
+    const of = "FROM docs WHERE collection = 'activities' AND deleted = ? AND json_extract(data, '$.leadId') = ?";
+    return [
+      db.prepare(`UPDATE counter SET seq = seq + (SELECT COUNT(*) ${of}) WHERE id = 1`).bind(toTrash ? 0 : 1, leadId),
+      db.prepare(`UPDATE docs SET deleted = ?, seq = ${SEQ} - m.back, updated_by = ?
+        FROM (SELECT id, COUNT(*) OVER () - ROW_NUMBER() OVER (ORDER BY seq) AS back ${of}) AS m WHERE docs.collection = 'activities' AND docs.id = m.id`)
+        .bind(toTrash ? 1 : 0, actor, toTrash ? 0 : 1, leadId),
+    ];
+  };
+  const leadMoves = (ops, type, actor) => ops.filter((op) => op.collection === "leads" && op.type === type).flatMap((op) => moveActivities(op.id, type === "remove", actor));
+  // One counter bump, then the ops' statements. A lead's activities go to the trash before it and come back after it.
+  const writes = (ops, actor) => [
+    ...leadMoves(ops, "remove", actor),
+    db.prepare("UPDATE counter SET seq = seq + ? WHERE id = 1").bind(ops.length),
+    ...ops.map((op, i) => statement(op, actor, ops.length - 1 - i)),
+    ...leadMoves(ops, "restore", actor),
+  ];
   async function batch(statements) {
     try {
       return await db.batch(statements);
@@ -116,18 +134,18 @@ export function createStore(db) {
       await batch([...guard([...ops, ...unchanged]), ...writes(ops, actor)]);
     },
     /**
-     * Erases a deleted lead for good: its data, the data of all its activities (`activities`, the live ones, are
-     * deleted first; an activity the unsubscribe link or a backup import added to the deleted lead before this read is deleted with it) and every history row of both. The rows stay as empty, deleted tombstones (the lead's row
+     * Erases a deleted lead for good: its data, the data of all its activities (any still live go to the trash
+     * first; one the unsubscribe link or a backup import added to the deleted lead is erased with it) and every history row of both. The rows stay as empty, deleted tombstones (the lead's row
      * names who erased it), so sync and the import still know the ids. Fails with ConflictError unless the lead is
      * still in the trash as read.
      */
-    async purgeLead(base, actor, activities) {
-      const removals = activities.map((a) => ({ type: "remove", collection: "activities", id: a.id }));
+    async purgeLead(base, actor) {
       const acts = "SELECT id FROM docs WHERE collection = 'activities' AND json_extract(data, '$.leadId') = ?";
       // History goes after the writes (their triggers add rows) and before the activities are emptied (the query reads their leadId).
       await batch([
         ...guard([{ type: "restore", collection: "leads", id: base.id, base }]),
-        ...writes([...removals, { type: "erase", collection: "leads", id: base.id }], actor),
+        ...moveActivities(base.id, true, actor),
+        ...writes([{ type: "erase", collection: "leads", id: base.id }], actor),
         db.prepare(`DELETE FROM history WHERE collection = 'activities' AND id IN (${acts})`).bind(base.id),
         db.prepare("DELETE FROM history WHERE collection = 'leads' AND id = ?").bind(base.id),
         db.prepare(`UPDATE docs SET data = '{}' WHERE collection = 'activities' AND deleted = 1 AND id IN (${acts})`).bind(base.id),

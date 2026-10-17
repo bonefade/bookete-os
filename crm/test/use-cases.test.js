@@ -306,6 +306,39 @@ test("a deleted lead waits in the trash and comes back with its activities", asy
   assert.deepEqual((await store.changes(seq)).changes.map((c) => [c.collection, !!c.record]), [["leads", true], ["activities", true]]);
 });
 
+test("deleting or restoring a lead moves only its own activities", async () => {
+  const { store, uc } = setup();
+  const krone = await uc.addLead({ name: "Krone" });
+  const linde = await uc.addLead({ name: "Linde" });
+  await uc.logActivity(krone, { direction: "in", channel: "E-Mail", text: "Krone antwortet" });
+  await uc.logActivity(linde, { direction: "in", channel: "E-Mail", text: "Linde antwortet" });
+  const texts = async (id, deleted) => (await store.activitiesOf(id, { deleted })).map((a) => a.text);
+  await uc.deleteLead(krone);
+  assert.deepEqual(await texts(linde, false), ["Linde antwortet"]);
+  // Both in the Papierkorb: bringing one back leaves the other's activities in the trash with it.
+  await uc.deleteLead(linde);
+  await uc.restoreLead(krone);
+  assert.deepEqual(await texts(krone, false), ["Krone antwortet"]);
+  assert.deepEqual(await texts(linde, false), []);
+  assert.deepEqual(await texts(linde, true), ["Linde antwortet"]);
+});
+
+test("a lead's activities each get their own seq when it is deleted or restored, in their old order", async () => {
+  const db = createD1();
+  const store = createStore(db);
+  let n = 0;
+  const uc = createUseCases({ store, clock, ids: { newId: () => `id${++n}` }, actor: "jo@bookete.com (test)" });
+  const id = await uc.addLead({ name: "Krone" });
+  for (const text of ["Erste", "Zweite", "Dritte"]) await uc.logActivity(id, { direction: "in", channel: "E-Mail", text });
+  for (const move of [() => uc.deleteLead(id), () => uc.restoreLead(id)]) {
+    const { seq } = await store.changes(0);
+    await move();
+    const rows = (await db.prepare("SELECT seq, collection, json_extract(data, '$.text') AS text FROM docs WHERE seq > ? ORDER BY seq").bind(seq).all()).results;
+    assert.equal(new Set(rows.map((row) => row.seq)).size, 4);
+    assert.deepEqual(rows.filter((row) => row.collection === "activities").map((row) => row.text), ["Erste", "Zweite", "Dritte"]);
+  }
+});
+
 test("erasing a lead from the trash leaves no data and no history, and its id stays used", async () => {
   const db = createD1();
   const store = createStore(db);
@@ -316,6 +349,8 @@ test("erasing a lead from the trash leaves no data and no history, and its id st
   await uc.deleteLead(id);
   // A backup can still hold an activity of this lead the CRM never had; the erase covers it too.
   assert.equal(await uc.importBackup({ format: "bookete-crm-backup", data: { activities: [{ id: "A-old", leadId: id, direction: "in", channel: "E-Mail", date: "2026-10-01", text: "Geheim antwortet" }] } }), 1);
+  // Before 1.13.1 an import left such an activity live beside its deleted lead; the erase covers that one too.
+  await store.commit([{ type: "put", collection: "activities", id: "A-live", data: { leadId: id, direction: "in", channel: "E-Mail", date: "2026-10-02", text: "Geheim live" } }], "test");
   await uc.purgeLead(id);
   await uc.purgeLead(id);
   const leftover = await db.prepare("SELECT (SELECT group_concat(data) FROM docs) AS docs, (SELECT group_concat(coalesce(before, '') || after) FROM history) AS history").first();
@@ -324,6 +359,26 @@ test("erasing a lead from the trash leaves no data and no history, and its id st
   await rejects(uc.restoreLead(id), "id");
   assert.deepEqual((await store.changes(0)).changes, []);
   assert.equal(await uc.importBackup({ format: "bookete-crm-backup", data: { leads: [{ id, name: "Gasthaus Geheim" }] } }), 0);
+});
+
+test("erasing one lead from the trash leaves another's activities and their history", async () => {
+  const db = createD1();
+  const store = createStore(db);
+  let n = 0;
+  const uc = createUseCases({ store, clock, ids: { newId: () => `id${++n}` }, actor: "jo@bookete.com (test)" });
+  const geheim = await uc.addLead({ name: "Gasthaus Geheim" });
+  const linde = await uc.addLead({ name: "Linde" });
+  await uc.logActivity(geheim, { direction: "in", channel: "E-Mail", text: "Geheim antwortet" });
+  await uc.logActivity(linde, { direction: "in", channel: "E-Mail", text: "Linde antwortet" });
+  await uc.deleteLead(geheim);
+  await uc.deleteLead(linde);
+  const [act] = await store.activitiesOf(linde, { deleted: true });
+  const versions = "SELECT COUNT(*) AS n FROM history WHERE collection = 'activities' AND id = ?";
+  await uc.purgeLead(geheim);
+  // Two versions: logged, then moved to the trash with its lead.
+  assert.equal((await db.prepare(versions).bind(act.id).first()).n, 2);
+  await uc.restoreLead(linde);
+  assert.deepEqual((await store.activitiesOf(linde)).map((a) => a.text), ["Linde antwortet"]);
 });
 
 test("deleting a template twice is fine, and a deleted template is not saved back", async () => {
@@ -347,14 +402,18 @@ test("a lead's history says which entries deleted and restored it, also at the e
 });
 
 test("a lead with many contacts can be deleted, restored and erased within D1's limits", async () => {
-  const { store, uc } = setup();
-  const id = await uc.addLead({ name: "Gasthaus Krone" });
-  for (let i = 0; i < 30; i++) await uc.logActivity(id, { direction: "in", channel: "E-Mail", text: `Antwort ${i}` });
-  await uc.deleteLead(id);
-  assert.equal((await store.activitiesOf(id, { deleted: true })).length, 30);
-  await uc.restoreLead(id);
-  assert.equal((await store.activitiesOf(id)).length, 30);
-  await uc.deleteLead(id);
-  await uc.purgeLead(id);
+  const db = createD1();
+  const store = createStore(db);
+  let n = 0;
+  // Each call is one request, on a handle that counts D1's queries as one Worker invocation.
+  const request = () => createUseCases({ store: createStore(db.invocation()), clock, ids: { newId: () => `id${++n}` }, actor: "jo@bookete.com (test)" });
+  const id = await request().addLead({ name: "Gasthaus Krone" });
+  for (let i = 0; i < 60; i++) await request().logActivity(id, { direction: "in", channel: "E-Mail", text: `Antwort ${i}` });
+  await request().deleteLead(id);
+  assert.equal((await store.activitiesOf(id, { deleted: true })).length, 60);
+  await request().restoreLead(id);
+  assert.equal((await store.activitiesOf(id)).length, 60);
+  await request().deleteLead(id);
+  await request().purgeLead(id);
   assert.equal(await store.getDeleted("leads", id), null);
 });

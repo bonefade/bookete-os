@@ -11,6 +11,7 @@ import { COLLECTIONS, FIELD_LABEL } from "../src/domain/constants.js";
 import worker from "../src/server/index.js";
 import { sha256 } from "../src/server/crypto.js";
 import { createD1 } from "./d1.js";
+import { IMPORT_CHUNK, BACKUP_FORMAT } from "../src/domain/backup.js";
 import { readFileSync } from "node:fs";
 import { searchLeads } from "../src/domain/search.js";
 import { hitLabel } from "../src/web/search.js";
@@ -646,8 +647,30 @@ async function signedInFetch() {
     DB.prepare("INSERT INTO sessions VALUES (?, 'jo@bookete.com', ?)").bind(await sha256("jo"), Date.now() + 1e6),
   ]);
   const env = { DB, AUTH_LIMIT: { limit: async () => ({ success: true }) }, PUBLIC_URL: "https://crm.bookete.com", GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret", TOKEN_KEY: btoa("k".repeat(32)), CONSENT_SECRET: "c".repeat(32), ALLOWED_EMAILS: "jo@bookete.com" };
-  return (url, init = {}) => worker.fetch(new Request("https://crm.bookete.com" + url, { ...init, headers: { ...init.headers, Cookie: "__Host-crm-session=jo" } }), env, { waitUntil() {} });
+  return (url, init = {}) => worker.fetch(new Request("https://crm.bookete.com" + url, { ...init, headers: { ...init.headers, Cookie: "__Host-crm-session=jo" } }), { ...env, DB: DB.invocation() }, { waitUntil() {} });
 }
+
+// A full chunk of activities is the import's costliest request, close to D1's cap. The server takes no more records
+// in one request, whichever collections they are in; the client's chunks stay within that.
+test("an import request takes at most a full chunk, and a full chunk of activities, of a live and a deleted lead, stays within D1's queries", async () => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  try {
+    globalThis.fetch = await signedInFetch();
+    const api = createApi(async () => {});
+    const live = await api.addLead({ name: "Krone" });
+    const trashed = await api.addLead({ name: "Linde" });
+    await api.deleteLead({ id: trashed });
+    const activities = Array.from({ length: IMPORT_CHUNK }, (_, i) => ({ id: `A${i}`, leadId: i % 2 ? trashed : live, direction: "in", channel: "E-Mail", date: "2026-10-01", text: `Antwort ${i}` }));
+    const backup = { format: BACKUP_FORMAT, data: { activities, templates: [{ id: "T1", name: "Erstkontakt", purpose: "erstkontakt", body: "Hallo" }] } };
+    const whole = await fetch("/api/rpc/importBackup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ backup }) });
+    assert.equal(whole.status, 400);
+    assert.equal(await api.importBackup(backup, "2026-10-15"), IMPORT_CHUNK + 1);
+    await api.restoreLead(trashed);
+    assert.equal((await api.changes(0)).changes.filter((c) => c.collection === "activities").length, IMPORT_CHUNK);
+  } finally {
+    Object.defineProperty(globalThis, "fetch", saved);
+  }
+});
 
 test("the app's buttons and the browser's Back and Forward move through the addresses", async () => {
   const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);

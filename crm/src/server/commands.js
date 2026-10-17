@@ -56,6 +56,7 @@ export const COMMANDS = {
   deleteTemplate: [z.object({ id }), (uc, a) => uc.deleteTemplate(a.id)],
   saveIcp: [z.object({ icp: z.object({ fit: z.array(z.string().max(500)).max(50), noFit: z.array(z.string().max(500)).max(50), note: z.string().max(2000).optional() }) }), (uc, a) => uc.saveIcp(a.icp)],
   sendEmail: [Email, (uc, a) => uc.sendEmail(a.id, a)],
-  // Records are normalized by the use case; the client sends at most IMPORT_CHUNK per call.
-  importBackup: [z.object({ backup: z.object({ format: z.string(), data: z.record(z.string(), z.array(z.looseObject({ id })).max(IMPORT_CHUNK)) }).loose() }), (uc, a) => uc.importBackup(a.backup)],
+  // Records are normalized by the use case. At most IMPORT_CHUNK per call, all collections together, so no request
+  // costs more queries than a full chunk of activities; the client sends one collection at a time (chunkBackup).
+  importBackup: [z.object({ backup: z.object({ format: z.string(), data: z.record(z.string(), z.array(z.looseObject({ id }))).refine((data) => Object.values(data).flat().length <= IMPORT_CHUNK, `At most ${IMPORT_CHUNK} records per call`) }).loose() }), (uc, a) => uc.importBackup(a.backup)],
 };

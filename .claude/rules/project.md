@@ -48,8 +48,12 @@ working them as leads. Two parts, each with its own `package.json`:
   (`crm/src/server/commands.js`, `mcp.js`, `config.js`).
 - Migrations: `crm/migrations/`, applied by `wrangler d1 migrations apply`.
 - D1 test double: `crm/test/d1.js` runs on node:sqlite and refuses more than
-  100 bound parameters per query, as D1 does. D1's cap on queries per Worker
-  invocation (50 on Free) is not modelled (unenforced; backlog).
+  100 bound parameters per query, as D1 does. A handle from its `invocation()`
+  also refuses more than 50 queries, D1's cap per Worker invocation on Free
+  (each statement of a batch counts). Only tests that take one per request
+  check the cap: the browser tests through the Worker, among them a full
+  import chunk of activities (49 queries), and the delete, restore and erase
+  of a lead with many activities.
 - Backlog: `docs/backlog.md`, groomed with `/groom-backlog` at each CRM release.
 - Release: each production deploy bumps `version` in `crm/package.json` and adds a `crm/CHANGELOG.md` entry.
 - Access walk: `crm/test/access.test.js` calls every API route and RPC command without a valid session. A new command goes into its exact list.

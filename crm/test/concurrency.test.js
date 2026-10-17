@@ -8,23 +8,32 @@ import { ValidationError, ConflictError } from "../src/domain/errors.js";
 
 const clock = { today: () => "2026-10-15", now: () => "2026-10-15T10:00:00.000Z" };
 
-/** Two people on one database. `between(fn, read)` runs fn right after A's next `read` (default get), before A commits. */
+/**
+ * Two people on one database. `between(fn, read)` runs fn right after A's next `read` (default get), before A commits;
+ * `between(fn, "commit")` runs it right before A's next commit, after all of A's reads.
+ */
 function twoUsers() {
   const store = createStore(createD1());
   let n = 0, pending = null;
   const ids = { newId: () => `id${++n}` };
   const racing = { ...store };
-  for (const read of ["get", "getDeleted", "activitiesOf", "heldLeads"]) {
+  const runAt = async (at) => {
+    if (pending?.read !== at) return;
+    const { fn } = pending;
+    pending = null;
+    await fn();
+  };
+  for (const read of ["get", "getDeleted", "heldLeads"]) {
     racing[read] = async (...args) => {
       const found = await store[read](...args);
-      if (pending?.read === read) {
-        const { fn } = pending;
-        pending = null;
-        await fn();
-      }
+      await runAt(read);
       return found;
     };
   }
+  racing.commit = async (...args) => {
+    await runAt("commit");
+    return store.commit(...args);
+  };
   return {
     store,
     // No pause, so a retry runs at once: the races here are staged, not timed.
@@ -155,10 +164,22 @@ test("a commit with a stale read rolls back entirely, history included", async (
 test("an activity logged while the lead is being deleted goes to the trash with it", async () => {
   const { store, a, b, between } = twoUsers();
   const id = await b.addLead({ name: "Gasthaus Krone" });
-  between(() => b.logActivity(id, { direction: "in", channel: "E-Mail", text: "Gerne" }), "activitiesOf");
+  between(() => b.logActivity(id, { direction: "in", channel: "E-Mail", text: "Gerne" }));
   await a.deleteLead(id);
   assert.deepEqual(await store.activitiesOf(id), []);
   assert.deepEqual((await store.activitiesOf(id, { deleted: true })).map((x) => x.text), ["Gerne"]);
+});
+
+test("an activity imported while its lead is deleted or restored ends up with the lead", async () => {
+  const { store, a, b, between } = twoUsers();
+  const id = await b.addLead({ name: "Gasthaus Krone" });
+  const backup = (activityId) => ({ format: "bookete-crm-backup", data: { activities: [{ id: activityId, leadId: id, direction: "in", channel: "E-Mail", date: "2026-10-01", text: activityId }] } });
+  between(() => b.importBackup(backup("A1")), "commit");
+  await a.deleteLead(id);
+  assert.deepEqual(await store.activitiesOf(id), []);
+  between(() => b.importBackup(backup("A2")), "commit");
+  await a.restoreLead(id);
+  assert.deepEqual((await store.activitiesOf(id)).map((x) => x.text).sort(), ["A1", "A2"]);
 });
 
 test("an opt-out recorded while the lead is deleted is refused, not left behind", async () => {
