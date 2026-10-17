@@ -1,4 +1,4 @@
-import { STAGE_LABEL } from './constants.js';
+import { STAGE_LABEL, FIELD_LABEL } from './constants.js';
 import { timelinesByLead } from './stats.js';
 import { isPipeline } from './lead.js';
 import { regionOf } from './region.js';
@@ -20,16 +20,16 @@ export function fold(text) {
 }
 export const digitsOf = (s) => String(s || "").replace(/\D/g, "").replace(/^(00)?43/, "").replace(/^0+/, "");
 export const SEARCH_FIELDS = [
-  ["name", "Name", 60],
-  ["city", "Ort", 30],
-  ["person", "Person", 30],
-  ["email", "E-Mail", 25],
-  ["phone", "Telefon", 25],
-  ["instagram", "Instagram", 25],
-  ["website", "Website", 20],
-  ["hook", "Aufh\xE4nger", 15],
-  ["nextStep", "N\xE4chster Schritt", 15],
-  ["notes", "Notiz", 10]
+  ["name", FIELD_LABEL.name, 60],
+  ["city", FIELD_LABEL.city, 30],
+  ["person", FIELD_LABEL.person, 30],
+  ["email", FIELD_LABEL.email, 25],
+  ["phone", FIELD_LABEL.phone, 25],
+  ["instagram", FIELD_LABEL.instagram, 25],
+  ["website", FIELD_LABEL.website, 20],
+  ["hook", FIELD_LABEL.hook, 15],
+  ["nextStep", FIELD_LABEL.nextStep, 15],
+  ["notes", FIELD_LABEL.notes, 10]
 ];
 let idxLeads = null, idxActs = null, idxVal = [];
 export function searchIndex(state) {

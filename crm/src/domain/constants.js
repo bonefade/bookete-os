@@ -7,6 +7,8 @@ export const STAGES = [
   ["disqualifiziert", "Disqualifiziert"]
 ];
 export const STAGE_LABEL = Object.fromEntries(STAGES);
+/** How the app names a lead's fields: in forms, on the lead page, in list headers and filters, search and the Änderungen list. */
+export const FIELD_LABEL = { name: "Name", city: "Ort", type: "Art", region: "Region", status: "Status", fit: "ICP-Fit", instagram: "Instagram", phone: "Telefon", email: "E-Mail", website: "Website", person: "Ansprechperson", currentTool: "Reserviert aktuell \xFCber", hook: "Aufh\xE4nger", notes: "Notizen", nextStep: "N\xE4chster Schritt", followUp: "Nachfassen am", lostReason: "Grund", optOutAt: "Opt-out seit", contactedAt: "Erstkontakt", account: "Kundenakte" };
 export const STATUSES = new Set(STAGES.map(([k]) => k));
 /** Still being worked towards a deal. */
 export const PIPELINE_STATUSES = new Set(["neu", "kontaktiert", "qualifiziert"]);

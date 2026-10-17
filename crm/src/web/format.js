@@ -1,5 +1,5 @@
 import { addDays, daysBetween } from '../domain/dates.js';
-import { STAGE_LABEL } from '../domain/constants.js';
+import { STAGE_LABEL, FIELD_LABEL } from '../domain/constants.js';
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 export const fmtDate = (d) => d ? (new Date(d + "T12:00:00")).toLocaleDateString("de-AT", { weekday: "short", day: "numeric", month: "short" }) : "";
@@ -22,7 +22,6 @@ export const options = (arr, sel) => arr.map((v) => {
 // Statuses before 1.4.0, still in the history of versions written then.
 const LEGACY_STAGE_LABEL = { recherchiert: "Recherchiert", antwort: "Antwort", demo: "Gespr\xE4ch/Demo", onboarding: "Onboarding", "kein-interesse": "Kein Interesse" };
 const STATUS_LABEL = { ...LEGACY_STAGE_LABEL, ...STAGE_LABEL };
-export const FIELD_LABEL = { name: "Name", city: "Ort", type: "Art", region: "Region", status: "Status", fit: "ICP-Fit", instagram: "Instagram", phone: "Telefon", email: "E-Mail", website: "Website", person: "Ansprechperson", currentTool: "Reserviert aktuell \xFCber", hook: "Aufh\xE4nger", notes: "Notizen", nextStep: "N\xE4chster Schritt", followUp: "Nachfassen am", lostReason: "Grund", optOutAt: "Opt-out seit", contactedAt: "Erstkontakt", account: "Kundenakte" };
 const shown = (key, v) => {
   if (v == null || v === "") return "\u2013";
   if (key === "status") return STATUS_LABEL[v] || v;

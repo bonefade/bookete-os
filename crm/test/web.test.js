@@ -7,7 +7,7 @@ import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRout
 import { describeChange, fmtDate } from "../src/web/format.js";
 import { scoped, activitiesByLead } from "../src/web/selectors.js";
 import { createApi, coalesced } from "../src/web/api.js";
-import { COLLECTIONS } from "../src/domain/constants.js";
+import { COLLECTIONS, FIELD_LABEL } from "../src/domain/constants.js";
 import worker from "../src/server/index.js";
 import { sha256 } from "../src/server/crypto.js";
 import { createD1 } from "./d1.js";
@@ -189,6 +189,43 @@ test("due leads are todos in their own tab, not in Heute", () => {
   assert.doesNotMatch(todos, /Später|Abgeschlossen/);
   assert.doesNotMatch(todayView(state, today), /Alt|Heutig/);
   assert.match(tabBar(state, today), /data-tab="todos"[^]*?<span class="badge">3<\/span>/);
+});
+
+test("the forms, the lead page, the list and search name a field as FIELD_LABEL does", () => {
+  const today = "2026-10-15";
+  const state = initialState();
+  state.data = { leads: [{ ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert", person: "Maria Huber", notes: "Ruhetag Montag" }], activities: [], templates: [], settings: [] };
+  state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
+  // Search reads its labels once, when it loads, so it is checked by the labels themselves. It used to say "Person" and "Notiz".
+  const hitLabel = (gq) => searchView({ ...state, ui: { ...state.ui, gq } }, today).match(/class="s-hit"><b>([^<]*)</)[1];
+  assert.equal(hitLabel("maria"), "Ansprechperson");
+  assert.equal(hitLabel("ruhetag"), "Notizen");
+  // Labels no screen writes out, so a label written out again shows the old text and fails.
+  const renamed = Object.fromEntries(Object.keys(FIELD_LABEL).map((key) => [key, `Feld ${key}`]));
+  const saved = { ...FIELD_LABEL };
+  Object.assign(FIELD_LABEL, renamed);
+  try {
+    const form = leadEditView(state);
+    for (const key of ["name", "city", "type", "region", "status", "fit", "lostReason", "instagram", "phone", "email", "website", "person", "currentTool", "hook", "notes"])
+      assert.match(form, new RegExp(`>Feld ${key}( \\*)?<(input|select|textarea) name="${key}"`), key);
+    const quick = leadsView({ ...state, ui: { ...state.ui, quick: true } }, today);
+    for (const [key, id] of [["name", "qaName"], ["city", "qaCity"], ["instagram", "qaIg"], ["hook", "qaHook"]])
+      assert.match(quick, new RegExp(`>Feld ${key}( \\*)?<input id="${id}"`), key);
+    const page = detailView({ ...state, ui: { ...state.ui, leadId: "L1" } }, today);
+    assert.match(page, />Feld nextStep<input id="nextStep"/);
+    assert.match(page, />Feld followUp<\/label>/);
+    assert.match(page, /<input type="date" id="fu"[^>]*aria-label="Feld followUp"/);
+    assert.match(page, /<h3>Feld status<\/h3><div class="chips">/);
+    assert.match(page, /<h3>Feld notes<\/h3>/);
+    const list = leadsView(state, today);
+    const head = list.match(/<li class="lhead"[^>]*>([^]*?)<\/li>/)[1];
+    assert.deepEqual([...head.matchAll(/<span>([^<]*)<\/span>/g)].map(([, s]) => s).slice(2, 5), ["Feld city", "Feld status", "Feld nextStep"]);
+    assert.match(list, /data-filter="region" aria-label="Feld region"/);
+    assert.match(list, /data-filter="status" aria-label="Feld status"/);
+    assert.match(leadsView({ ...state, ui: { ...state.ui, status: "disqualifiziert" } }, today), /data-filter="reason" aria-label="Feld lostReason"/);
+  } finally {
+    Object.assign(FIELD_LABEL, saved);
+  }
 });
 
 test("a form save sends only the fields changed since the form opened", () => {

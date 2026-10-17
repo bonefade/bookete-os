@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.11.2 (2026-10-18)
+
+### Changed
+- Search names the fields as the rest of the app does: "Ansprechperson" instead of "Person", "Notizen" instead of "Notiz".
+
 ## 1.11.1 (2026-10-18)
 
 ### Changed
