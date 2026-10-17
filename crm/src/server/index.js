@@ -6,6 +6,7 @@ import { createStore } from "./store.js";
 import { createMailer } from "./gmail.js";
 import { COMMANDS } from "./commands.js";
 import { handleMcp } from "./mcp.js";
+import { isUnsubscribePath, isUnsubscribeLink, unsubscribeLeadId } from "./unsubscribe.js";
 import { createUseCases } from "../application/use-cases.js";
 import { systemClock, uuidIds } from "../adapters/system.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
@@ -13,17 +14,18 @@ import { ValidationError, ConflictError } from "../domain/errors.js";
 import pkg from "../../package.json" with { type: "json" };
 
 const SCOPE = "crm";
-// Open endpoints anyone can call; each costs an OAuth round trip or a KV write.
+// Open endpoints anyone can call; each costs an OAuth round trip, a KV write or a token check.
 const RATE_LIMITED = new Set(["GET /auth/login", "GET /auth/callback", "POST /oauth/register", "POST /oauth/token"]);
+const rateLimited = (method, pathname) => RATE_LIMITED.has(`${method} ${pathname}`) || isUnsubscribeLink(pathname);
 // The consent form posts here and is then redirected to the agent's own address, so no form-action.
 const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'";
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-const html = (body, headers = new Headers()) => {
+const html = (body, headers = new Headers(), status = 200) => {
   headers.set("Content-Type", "text/html; charset=utf-8");
   headers.set("Content-Security-Policy", PAGE_CSP);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "same-origin");
-  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>bookete CRM</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><body style="font:16px/1.5 system-ui;max-width:32rem;margin:3rem auto;padding:0 16px">${body}`, { headers });
+  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>bookete CRM</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><body style="font:16px/1.5 system-ui;max-width:32rem;margin:3rem auto;padding:0 16px">${body}`, { headers, status });
 };
 
 async function context(env, config, user, via) {
@@ -87,6 +89,27 @@ ${details.redirectIsLoopback ? "<p><b>Der Zugang geht an ein Programm auf deinem
   }
 }
 
+/**
+ * The unsubscribe link from a mail, no session. GET only asks, so a mail scanner that opens links opts no one out;
+ * POST (the button, or the mail client's one-click) opts out. The page reads the same whatever the lead's state.
+ */
+async function unsubscribe(request, env, config, pathname) {
+  const headers = () => new Headers({ "Cache-Control": "no-store" });
+  const leadId = await unsubscribeLeadId(config, pathname);
+  if (!leadId) return html("<h1>Link ung\xFCltig</h1><p>Dieser Abmeldelink ist nicht g\xFCltig. Bitte antworten Sie einfach auf unsere E-Mail.</p>", headers(), 400);
+  if (request.method === "GET") return html(`<h1>Keine E-Mails mehr von bookete?</h1>
+<p>Nach dem Abmelden schreiben wir Ihnen nicht mehr.</p>
+<form method="post"><button>Abmelden</button></form>`, headers());
+  if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
+  try {
+    await createUseCases({ store: createStore(env.DB), clock: systemClock, ids: uuidIds, actor: "Empf\xE4nger (Abmeldelink)" }).unsubscribe(leadId);
+  } catch (e) {
+    console.error("unsubscribe failed", e);
+    return html("<h1>Das hat nicht geklappt</h1><p>Bitte versuchen Sie es in ein paar Minuten noch einmal, oder antworten Sie einfach auf unsere E-Mail.</p>", headers(), 503);
+  }
+  return html("<h1>Sie sind abgemeldet</h1><p>Sie erhalten keine E-Mails mehr von uns.</p>", headers());
+}
+
 const LeadQuery = z.object({ id: z.string().min(1).max(100) });
 
 /** The rate-limit key: an IPv4 address, or the /64 of an IPv6 one, since one connection usually owns a whole /64. */
@@ -101,12 +124,15 @@ export function rateKey(ip) {
 }
 
 /**
- * Fails open: if the limiter itself errors, the request goes on. It only slows guessing and flooding;
- * the Google sign-in and the allowlist are the gate, and a limiter outage must not lock both users out.
+ * Fails open: if the limiter itself errors, the request goes on. It only slows guessing and flooding; the gate is
+ * the Google sign-in and the allowlist, or for the unsubscribe link its HMAC. A limiter outage must not lock both
+ * users out, nor keep a recipient from unsubscribing.
  */
 async function overLimit(request, env) {
   try {
-    const { success } = await env.AUTH_LIMIT.limit({ key: rateKey(request.headers.get("CF-Connecting-IP") || "") });
+    // The unsubscribe link has its own bucket: a mail provider's one-click POSTs never use up sign-in's, nor the reverse.
+    const bucket = isUnsubscribePath(new URL(request.url).pathname) ? "abmelden " : "";
+    const { success } = await env.AUTH_LIMIT.limit({ key: bucket + rateKey(request.headers.get("CF-Connecting-IP") || "") });
     return !success;
   } catch (e) {
     console.error("rate limiter failed", e);
@@ -120,6 +146,7 @@ async function app(request, env, config) {
   if (route === "GET /auth/login") return startLogin(request, config);
   if (route === "GET /auth/callback") return finishLogin(request, env, config);
   if (route === "POST /auth/logout") return logout(request, env);
+  if (isUnsubscribePath(url.pathname)) return unsubscribe(request, env, config, url.pathname);
 
   const user = await sessionUser(request, env, config);
   if (route === "POST /auth/logout-all") return user ? logoutEverywhere(request, env, config, user) : new Response(null, { status: 401 });
@@ -159,7 +186,7 @@ export default {
       resourceMetadata: { resource: `${config.PUBLIC_URL}/mcp`, authorization_servers: [config.PUBLIC_URL] },
     });
     // Before the OAuth provider, so a flood never reaches its KV writes.
-    if (RATE_LIMITED.has(`${request.method} ${new URL(request.url).pathname}`) && await overLimit(request, env)) {
+    if (rateLimited(request.method, new URL(request.url).pathname) && await overLimit(request, env)) {
       return new Response("Zu viele Anfragen. Bitte kurz warten.", { status: 429, headers: { "Retry-After": "60" } });
     }
     return provider.fetch(request, env, ctx);

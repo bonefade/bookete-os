@@ -5,7 +5,7 @@ import { channelLink, instagramProfile } from './platform.js';
 import { countTouches, hasReply, sequenceExhausted, nextActionHint, meetingDue } from '../domain/activity.js';
 import { esc, fmtDate, fmtDateWithYear, relDate, options, describeChange, actorName, fmtTime, FIELD_LABEL } from './format.js';
 import { fold, searchTokens, searchLeads, markRanges, markHtml, snippetHtml } from './search.js';
-import { isPipeline, takesFollowUp, isDue } from '../domain/lead.js';
+import { isPipeline, takesFollowUp, isDue, getsUnsubscribeLink } from '../domain/lead.js';
 import { outreachStats, lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
@@ -282,7 +282,7 @@ export function detailView(state, today) {
     <div class="two"><label>Kanal<select id="cCh">${options(CHANNELS, c.channel)}</select></label><label>Datum<input type="date" id="cDate" value="${esc(c.date)}" max="${esc(today)}"></label></div>
     <textarea id="cText" placeholder="${c.direction === "out" ? "Nachricht" : "Was haben sie geantwortet?"}">${esc(c.text)}</textarea>
     ${c.missing?.length ? `<p class="hint">Noch leer: ${esc(c.missing.map((m) => "{" + m + "}").join(", "))}. Erg\xE4nze den Betrieb oder passe den Text an.</p>` : ""}
-    ${gmail ? `<label>Betreff<input id="cSubj" value="${esc(c.subject)}"></label>` : ""}
+    ${gmail ? `<label>Betreff<input id="cSubj" value="${esc(c.subject)}"></label>${getsUnsubscribeLink(l) ? `<p class="hint">Per Gmail kommt am Ende ein Abmeldelink dazu.</p>` : ""}` : ""}
     ${c.direction === "out" ? `<a class="btn full" style="margin-top:8px" data-act="copyOpen" ${link ? `href="${esc(link)}" target="_blank" rel="noopener"` : 'href="#"'}>${link ? `Kopieren & ${esc(c.channel)} \xF6ffnen` : "Text kopieren"}</a>` : ""}
     ${gmail ? `<button class="primary full" style="margin-top:8px" data-act="sendEmail">Per Gmail senden</button>` : ""}
     <div class="two" style="margin-top:8px"><button data-act="composeCancel">Abbrechen</button><button${gmail ? "" : ' class="primary"'} data-act="logActivity">${c.direction === "out" ? "Als gesendet eintragen" : "Eintragen"}</button></div>

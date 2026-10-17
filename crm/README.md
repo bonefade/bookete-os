@@ -4,7 +4,7 @@ The shared CRM for bookete's outreach, at https://crm.bookete.com.
 Two people sign in with their `@bookete.com` Google accounts. Agents (Claude, Claude Code) work in it through MCP.
 
 - **Web app:** leads, contact history, follow-ups, templates. Changes from the other person show up within seconds.
-- **Gmail:** "Per Gmail senden" in the compose sheet sends from your own mailbox and logs the message.
+- **Gmail:** "Per Gmail senden" in the compose sheet sends from your own mailbox and logs the message. Every mail sent with "Per Gmail senden" or drafted by an agent, except to a Kunde, ends with a personal unsubscribe link (also in the `List-Unsubscribe` header); using it records an opt-out under "Empfänger (Abmeldelink)", also on a lead in the Papierkorb.
 - **Kundenakte:** on each Qualifiziert or Kunde business, what we deliver (bookete, website, integration), its systems (domain and who owns it, DNS, hosting, e-mail, website, POS, each with the contact who runs it) and the people to reach, agencies included. Never passwords, only where the logins are kept.
 - **MCP:** `https://crm.bookete.com/mcp`. Agents can search, create and update leads, fill in the Kundenakte, log contacts and calls and create Gmail drafts. They cannot send or delete.
 - **Rules on the server:** opt-outs, status changes and the follow-up cadence are enforced on every write, whoever writes.
@@ -20,7 +20,7 @@ Architecture and commands: `../.claude/rules/project.md`.
 - **Kunde.**
 - **Disqualifiziert:** closed, always with one of these reasons: Zufrieden mit aktueller Lösung, Kein Bedarf, Zu klein, Nicht unsere Zielgruppe, Geschlossen / existiert nicht, Nicht erreicht, Keine Kontaktaufnahme gewünscht. Which system a business uses is a fact (`currentTool`), not a reason.
 
-A disqualified lead has no follow-up. Any new contact reopens it as Kontaktiert. "Keine Kontaktaufnahme gewünscht" is an opt-out, whether it comes from the Opt-out button or the reason picker: no outgoing contact until the opt-out is lifted. After five unanswered contacts the CRM offers to close a lead as "Nicht erreicht".
+A disqualified lead has no follow-up. Any new contact reopens it as Kontaktiert. "Keine Kontaktaufnahme gewünscht" is an opt-out, whether it comes from the Opt-out button or the reason picker: no outgoing contact until the opt-out is lifted. A Kunde who opts out stays Kunde with its win date and next step; only the follow-up date goes. After five unanswered contacts the CRM offers to close a lead as "Nicht erreicht".
 
 Every call ends with one outcome, tapped on the lead page: Nicht erreicht (call again in two days, unless a date not set by the follow-up sequence is ahead, such as an appointment or a date with a next step; the fifth attempt without getting through closes the lead as "Nicht erreicht"), Rückruf (date required), Termin vereinbart (Qualifiziert, date required) or Kein Interesse (Disqualifiziert, reason required). A call in which we spoke to them counts as an answer. A call never moves a Kunde out of Kunde, and a missed one keeps their next step. On the appointment's day the lead asks how it went: Kunde, Kein Abschluss with a reason, or a new appointment. Todos has the call list (due calls first, then new leads by fit) with "Nächster" to work through it. The Anruf card has a folded Gesprächsleitfaden: the oldest template of that kind, else a default. Heute shows this week's calls, those reached, appointments, new customers (`wonAt`, the day a lead became Kunde, set by the server) and the most common reasons for Kein Interesse.
 
@@ -53,12 +53,13 @@ npx wrangler kv namespace create OAUTH_KV  # put the id into wrangler.jsonc
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
 openssl rand -base64 32 | npx wrangler secret put TOKEN_KEY       # encrypts stored Gmail tokens
-openssl rand -base64 32 | npx wrangler secret put CONSENT_SECRET  # signs remembered MCP consents
+openssl rand -base64 32 | npx wrangler secret put CONSENT_SECRET  # signs remembered MCP consents and unsubscribe links
 npx wrangler secret put ALLOWED_EMAILS     # e.g. you@bookete.com,partner@bookete.com
 ```
 
 The Worker refuses every request while one of these is missing or malformed.
 Changing `TOKEN_KEY` makes stored Gmail access unreadable: everyone signs in again.
+Changing `CONSENT_SECRET` ends every unsubscribe link already sent; recipients then have to reply instead.
 Removing an address from `ALLOWED_EMAILS` ends that person's web and MCP access at once.
 
 ### 4. Deploy

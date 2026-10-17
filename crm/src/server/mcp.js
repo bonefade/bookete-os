@@ -14,7 +14,7 @@ Statuses: ${STAGES.map(([k, label]) => `${k} (${label})`).join(", ")}. Every wri
 Rules the server enforces: disqualifiziert needs a reason (${LOST_REASONS.join(" | ")}) and has no follow-up; the reason "${OPT_OUT_REASON}" records an opt-out. Opted-out businesses (optOutAt) must not be contacted. contactedAt is the date of first contact: null on neu, set on kontaktiert, qualifiziert and kunde, either on disqualifiziert. Setting it on a neu lead moves the lead to kontaktiert. Logging any contact moves neu, or disqualifiziert without an opt-out, to kontaktiert; an outgoing message moves the follow-up date by the sequence policy.
 A customer's Kundenakte (lead.account: services we deliver, their systems such as domain and DNS and who runs them, contacts including agencies) is read with get_lead and written with update_account, which takes the Kundenakte as read and refuses the write if it changed since. It never holds passwords, only where logins are kept.
 A phone call is logged with log_call, which records its outcome and moves the lead on by it; a call never moves a kunde out of kunde.
-Agents cannot send email: create_gmail_draft puts a draft into the user's Gmail for a person to review and send.`;
+Agents cannot send email: create_gmail_draft puts a draft into the user's Gmail for a person to review and send. The CRM adds the lead's unsubscribe link at the end, except for a Kunde; do not write one yourself.`;
 
 const id = z.string().describe("Lead id");
 const summary = (l, acts, today) => ({
@@ -81,7 +81,7 @@ const TOOLS = {
       if (template.purpose === "leitfaden") throw new ValidationError("templateId", "Ein Gespr\xE4chsleitfaden ist keine Nachricht");
       return fillTemplate(template.body, lead);
     }],
-  create_gmail_draft: ["Create a Gmail draft to the lead's email address in the signed-in user's mailbox. Nothing is sent or logged; a person reviews and sends it.",
+  create_gmail_draft: ["Create a Gmail draft to the lead's email address in the signed-in user's mailbox. Nothing is sent or logged; a person reviews and sends it. The draft ends with the lead's unsubscribe link, unless the lead is a Kunde.",
     z.object({ id, subject: z.string().min(1).max(300), text: z.string().min(1).max(20000) }),
     async ({ id: leadId, ...msg }, { uc }) => uc.draftEmail(leadId, msg)],
 };

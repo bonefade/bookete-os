@@ -2,6 +2,17 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.9.0 (2026-10-17)
+
+### Added
+- **Abmeldelink:** every mail from the CRM to a business that is not Kunde, sent with "Per Gmail senden" or drafted by an agent, ends with "Sie möchten keine E-Mails mehr von uns? Abmelden: …", a link only for that business. Sent mail also carries the one-click headers (RFC 8058), so a mail program such as Gmail may show its own "Abmelden" button.
+- The link opens a page with one button. Pressing it (or the mail program's button) records the opt-out, the same as the Opt-out button: Disqualifiziert · Keine Kontaktaufnahme gewünscht, and a Verlauf entry "Opt-out über den Abmeldelink". Opening the link alone changes nothing, so a mail scanner cannot opt anyone out. A lead in the Papierkorb is opted out there too, so restoring it does not make it mailable again.
+- Mail to a Kunde carries no Abmeldelink: it is service mail, and one click would otherwise block every mail and call to the customer. A link from a mail sent before they became Kunde still works.
+- **An opt-out keeps a Kunde Kunde**, by the Opt-out button, the Abmeldelink or a call: the win date and the next step stay, only the follow-up date goes.
+
+### Not added
+- Open and click tracking. A tracking pixel or rewritten links read the recipient's device without consent (§165 (3) TKG 2021, Art. 5 (3) ePrivacy, GDPR); this is the owner's decision.
+
 ## 1.8.0 (2026-10-17)
 
 ### Added

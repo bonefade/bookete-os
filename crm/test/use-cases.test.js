@@ -63,7 +63,7 @@ test("sendEmail sends first, then logs the activity with the same text", async (
   const { store, uc } = setup({ mailer });
   const id = await uc.addLead({ name: "Heuriger Mail", email: "heuriger@example.at" });
   const res = await uc.sendEmail(id, { subject: "Tische", text: "Grüß Gott" });
-  assert.deepEqual(mailer.sent, [{ to: "heuriger@example.at", subject: "Tische", text: "Grüß Gott" }]);
+  assert.deepEqual(mailer.sent, [{ leadId: id, to: "heuriger@example.at", subject: "Tische", text: "Grüß Gott", serviceMail: false }]);
   assert.equal(res.gmail.threadId, "t1");
   const acts = await store.activitiesOf(id);
   assert.equal(acts.length, 1);
@@ -76,8 +76,19 @@ test("drafts are created but never logged as sent", async () => {
   const { store, uc } = setup({ mailer });
   const id = await uc.addLead({ name: "Draft Wirt", email: "wirt@example.at" });
   assert.deepEqual(await uc.draftEmail(id, { subject: "S", text: "T" }), { draftId: "d1" });
+  assert.deepEqual(mailer.sent, [{ draft: { leadId: id, to: "wirt@example.at", subject: "S", text: "T", serviceMail: false } }]);
   assert.equal((await store.activitiesOf(id)).length, 0);
   assert.equal((await store.get("leads", id)).status, "neu");
+});
+
+test("mail to a Kunde goes without the unsubscribe link, sent or drafted", async () => {
+  const mailer = fakeMailer();
+  const { uc } = setup({ mailer });
+  const id = await uc.addLead({ name: "Stammkunde", email: "kunde@example.at" });
+  await uc.changeStatus(id, "kunde");
+  await uc.sendEmail(id, { subject: "Rechnung", text: "Anbei" });
+  await uc.draftEmail(id, { subject: "Termin", text: "Passt Montag?" });
+  assert.deepEqual(mailer.sent.map((m) => (m.draft || m).serviceMail), [true, true]);
 });
 
 test("without Gmail, sending fails before anything happens", async () => {

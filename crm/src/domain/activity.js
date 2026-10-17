@@ -141,10 +141,8 @@ export function planAfterCall(lead, acts, activity, { date, time }, policy = SEQ
       return { ...patch, ...(!kunde && { status: "qualifiziert" }), followUp: date, nextStep: "Termin" + at };
     default: {
       if (!kunde) return { ...patch, status: "disqualifiziert", lostReason: activity.reason, nextStep: "" };
-      if (activity.reason !== OPT_OUT_REASON) return patch;
       // The opt-out reason is an opt-out on a customer too.
-      const { status: _status, lostReason: _lostReason, ...optOut } = optOutPatch(activity.date);
-      return { ...patch, ...optOut };
+      return activity.reason === OPT_OUT_REASON ? { ...patch, ...optOutPatch(activity.date, lead) } : patch;
     }
   }
 }

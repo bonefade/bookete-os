@@ -1,7 +1,7 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, firstContactUntil, callActivity, planAfterCall, meetingPatch } from "../domain/activity.js";
-import { normalizeLead, LEAD_FIELDS, STORED, upgradeLead, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch } from "../domain/lead.js";
+import { normalizeLead, LEAD_FIELDS, STORED, upgradeLead, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
@@ -74,6 +74,17 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     return { activity, plan };
   });
   const logActivity = (id, input) => logContact(id, input, planAfterActivity);
+  /** The opt-out, dated, and how it reached us in the Verlauf, in one write. */
+  /** `trashed`: the lead is in the Papierkorb; the entry goes there with it, so a restore brings both back. */
+  async function recordOptOut(l, text, { trashed = false } = {}) {
+    const date = clock.today();
+    const activity = newActivityRecord({ leadId: l.id, direction: "in", channel: "Sonstiges", date, text }, { id: ids.newId(), now: clock.now(), today: date });
+    // Their message is a contact like any other: it dates the first contact, as planAfterActivity does.
+    await commit([
+      patchOp(l, leadDiff(l, { ...optOutPatch(date, l), contactedAt: firstContactOf([activity], l.contactedAt) })),
+      { type: "put", collection: "activities", id: activity.id, data: activity, trashed }
+    ]);
+  }
   async function mailable(id) {
     if (!mailer) throw new ValidationError("gmail", "Gmail ist nicht verbunden. Bitte neu anmelden.");
     const l = await lead(id);
@@ -146,21 +157,15 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     /** A phone call and how it ended: logged, and the lead moved on by the outcome, in one write. */
     logCall: async (id, call) => logContact(id, callActivity(call, clock.today()), (l, acts, activity) => planAfterCall(l, acts, activity, call)),
     /** The business asked not to be contacted again: record it (dated) and close the lead. */
-    optOut: (id, note) => retrying(async () => {
-      const l = await lead(id);
-      const date = clock.today();
-      const activity = newActivityRecord({
-        leadId: id,
-        direction: "in",
-        channel: "Sonstiges",
-        date,
-        text: "Opt-out: m\xF6chte keine Nachrichten mehr." + (note ? " " + String(note).trim() : "")
-      }, { id: ids.newId(), now: clock.now(), today: date });
-      // Their message is a contact like any other: it dates the first contact, as planAfterActivity does.
-      await commit([
-        patchOp(l, leadDiff(l, { ...optOutPatch(date), contactedAt: firstContactOf([activity], l.contactedAt) })),
-        { type: "put", collection: "activities", id: activity.id, data: activity }
-      ]);
+    optOut: (id, note) => retrying(async () => recordOptOut(await lead(id), "Opt-out: m\xF6chte keine Nachrichten mehr." + (note ? " " + String(note).trim() : ""))),
+    /**
+     * The recipient used the link in a mail. Once is enough: a lead already opted out stays as it is.
+     * A lead in the Papierkorb is opted out there, so a restore cannot make it mailable again.
+     */
+    unsubscribe: (id) => retrying(async () => {
+      const live = await store.get("leads", id);
+      const l = live || await store.getDeleted("leads", id);
+      if (l && !l.optOutAt) await recordOptOut(l, "Opt-out \xFCber den Abmeldelink in einer E-Mail.", { trashed: !live });
     }),
     clearOptOut: (id) => changeLead(id, clearOptOutPatch),
     async saveTemplate(id, input) {
@@ -185,7 +190,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     /** Sends from the signed-in user's Gmail, then logs the activity. */
     async sendEmail(id, { subject, text, templateId }) {
       const l = await mailable(id);
-      const sent = await mailer.send({ to: l.email, subject, text });
+      const sent = await mailer.send({ leadId: id, to: l.email, subject, text, serviceMail: !getsUnsubscribeLink(l) });
       try {
         return { ...(await logActivity(id, { direction: "out", channel: "E-Mail", text, templateId })), gmail: sent };
       } catch (e) {
@@ -196,7 +201,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     /** Agents prepare, people send: a Gmail draft, nothing logged. */
     async draftEmail(id, { subject, text }) {
       const l = await mailable(id);
-      return mailer.draft({ to: l.email, subject, text });
+      return mailer.draft({ leadId: id, to: l.email, subject, text, serviceMail: !getsUnsubscribeLink(l) });
     },
     /**
      * Restores records from a backup (the Claude artifact's or this app's). Only records the CRM has never

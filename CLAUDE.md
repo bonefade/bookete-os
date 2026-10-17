@@ -15,7 +15,7 @@ Start `claude` in the checkout itself. Project settings, plugins, the status lin
 
 ## Review
 
-A change to the access boundary (`crm/src/server/auth.js`, `mcp.js`, `commands.js`) or a migration gets `/second-review` before it merges.
+A change to the access boundary (`crm/src/server/auth.js`, `mcp.js`, `commands.js`, `unsubscribe.js`, and the routing in `index.js`) or a migration gets `/second-review` before it merges.
 
 ## The CRM as an MCP server
 

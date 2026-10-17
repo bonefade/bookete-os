@@ -42,6 +42,10 @@ test("every view renders with data", () => {
     assert.doesNotMatch(text, /<script(?![^>]*\bsrc=)/i, where);
   }
   assert.doesNotMatch(html, /undefined/);
+  // The compose hint names the unsubscribe link only where the mail gets one.
+  assert.match(detailView(state, today), /Abmeldelink/);
+  lead.status = "kunde";
+  assert.doesNotMatch(detailView(state, today), /Abmeldelink/);
 });
 
 test("due leads are todos in their own tab, not in Heute", () => {

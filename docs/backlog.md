@@ -12,7 +12,7 @@ _Last groomed: 2026-10-17_
 
 ## Now (in flight)
 
-CRM 1.4: five statuses with required reasons (1.4.0), then migration 0003 rewriting the stored leads (1.4.1). Then, in this order (owner, 2026-10-17): lead pages with their own address, the Kundenakte, call outcomes and call list, call script and weekly numbers, email tracking with an unsubscribe link.
+CRM 1.4: five statuses with required reasons (1.4.0), then migration 0003 rewriting the stored leads (1.4.1). Then, in this order (owner, 2026-10-17): lead pages with their own address, the Kundenakte, call outcomes and call list, call script and weekly numbers, an unsubscribe link in every mail (1.9.0).
 
 ## P0
 
@@ -22,8 +22,11 @@ or overwriting data by mistake, not about outside access.
 
 ## P1
 
+- CRM: a backup import adds an activity the CRM never held even when its lead is in the Papierkorb or erased; on an erased lead that brings text back after the erase, and an import landing during an erase leaves its activity live and without history, because `purgeLead` guards only the lead row. Decide whether an import may add to a trashed lead, and refuse it for an erased one (second review of 1.9.0, 2026-10-17).
 - CRM: drop the read-time `upgradeLead` in `crm/src/server/store.js` once migration 0003 has run in production (1.4.1). Keep it in `chunkBackup` for old backups. First count leads with a status outside the five, at any schemaVersion: the read-time upgrade is what covers a 1.3 write after 0003.
-- CRM: email tracking like HubSpot, and an unsubscribe link for recipients (owner, 2026-10-17). Open tracking needs consent (TKG §165, GDPR); the unsubscribe link is a public endpoint and gets `/second-review`.
+- CRM: open and click tracking like HubSpot (owner, 2026-10-17): owner's decision, not built. A tracking pixel or rewritten links read the recipient's device without consent (§165 (3) TKG 2021, Art. 5 (3) ePrivacy, GDPR). "Detect replies" below tells us who answered without that.
+- CRM: "Kopieren & E-Mail öffnen" (a mailto link) sends the compose text without the unsubscribe link, also when Gmail is connected. Add the link there too, or offer only "Per Gmail senden" once Gmail is connected.
+- CRM: an opt-out belongs to the lead, not to the email address. The same business added again under a new id (a new scrape, a duplicate) can be mailed again. A suppression list by address would close that.
 
 - CRM: tasks as their own records (due date, optional time, done), replacing the overloaded `nextStep` and the single `followUp`. Owner decided 2026-10-16: one owner per lead, so a lead gets an `owner` and Todos shows "mine" first.
 - CRM: detect replies. A cron reads the Gmail threads of sent mails and logs incoming replies, so a reply is logged and due on its own. Needs the `gmail.readonly` scope.

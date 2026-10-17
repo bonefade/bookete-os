@@ -3,6 +3,7 @@ const b64 = (bytes) => btoa(String.fromCharCode(...bytes));
 const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 export const base64url = (bytes) => b64(bytes).replace(/[+/=]/g, (c) => ({ "+": "-", "/": "_", "=": "" })[c]);
+export const fromBase64url = (s) => unb64(s.replace(/[-_]/g, (c) => (c === "-" ? "+" : "/")));
 export const randomToken = () => base64url(crypto.getRandomValues(new Uint8Array(32)));
 
 export async function sha256(text) {

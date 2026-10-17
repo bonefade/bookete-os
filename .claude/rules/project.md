@@ -35,6 +35,10 @@ working them as leads. Two parts, each with its own `package.json`:
 - `crm/src/web/`: the browser UI, bundled by esbuild to `crm/public/app.js`.
 - Access: `allowedUser()` in `crm/src/server/auth.js` is the one check.
   Web sessions and MCP tokens both end there; `ALLOWED_EMAILS` decides.
+  The one route that touches lead data without a session is the
+  unsubscribe link (`/abmelden/`, `crm/src/server/unsubscribe.js`, routed
+  in `index.js`): its HMAC decides, and it can only opt out the lead it was
+  made for.
 - Agents may draft email, never send it. Sending is a person in the web app.
 
 ## Stack specifics the rules refer to

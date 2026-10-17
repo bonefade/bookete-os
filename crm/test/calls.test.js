@@ -130,9 +130,9 @@ test("a call never moves a customer out of Kunde", async () => {
   // The fifth attempt without getting through closes only a lead in the sequence.
   assert.deepEqual(shape(await after({ outcome: "nicht-erreicht" })), ["kunde", "2026-10-17", "Onboarding", null]);
   assert.deepEqual(shape(await after({ outcome: "kein-interesse", reason: "Zu klein" })), ["kunde", "2026-10-19", "Onboarding", null]);
-  // A customer who asks not to be called again is opted out, and stays Kunde.
+  // A customer who asks not to be called again is opted out, and stays Kunde with its next step.
   const no = await after({ outcome: "kein-interesse", reason: "Keine Kontaktaufnahme gew\xFCnscht" });
-  assert.deepEqual([...shape(no), no.optOutAt], ["kunde", null, "", null, "2026-10-15"]);
+  assert.deepEqual([...shape(no), no.optOutAt], ["kunde", null, "Onboarding", null, "2026-10-15"]);
 });
 
 test("an outcome belongs to a call and its reason to Kein Interesse, on every write path", async () => {

@@ -82,6 +82,8 @@ export function newLeadRecord(input, { id, now, today }) {
 export const isPipeline = (lead) => PIPELINE_STATUSES.has(lead.status);
 /** Everything but a disqualified lead can have a follow-up and a next step; a Kunde has onboarding to-dos. */
 export const takesFollowUp = (lead) => lead.status !== "disqualifiziert";
+/** Mail to a Kunde is service mail and carries no unsubscribe link: one click would otherwise block every mail and call to a customer. */
+export const getsUnsubscribeLink = (lead) => lead.status !== "kunde";
 export const isDue = (lead, today) => takesFollowUp(lead) && !!lead.followUp && lead.followUp <= today;
 /** Status and reason as one change; normalizeLead checks the pair. */
 export function transition(status, reason = null) {
@@ -97,8 +99,13 @@ export function followUpPatch(lead, date) {
   if (date && !takesFollowUp(lead)) throw new ValidationError("followUp", "Disqualifiziert \u2013 kein Nachfassen. Erst den Status \xE4ndern.");
   return { followUp: date || null };
 }
-export function optOutPatch(date) {
+/**
+ * An opt-out closes a lead with the opt-out reason. A customer stays Kunde with its win date and next step;
+ * only the follow-up date goes, since nobody may contact them.
+ */
+export function optOutPatch(date, lead) {
   if (!isDate(date)) throw new ValidationError("optOutAt", "Datum ung\xFCltig");
+  if (lead.status === "kunde") return { optOutAt: date, followUp: null };
   return { optOutAt: date, status: "disqualifiziert", lostReason: OPT_OUT_REASON, followUp: null, nextStep: "" };
 }
 /** The business wants contact again: a lead closed by the opt-out reopens as kontaktiert. */

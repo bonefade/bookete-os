@@ -6,6 +6,8 @@ const DEFAULTS = { leads: LEAD_FIELDS, activities: { templateId: null } };
 const SEQ = "(SELECT seq FROM counter WHERE id = 1)";
 /** The row's seq when it was read: a write based on that read names the record as `base`. Not enumerable, so it never reaches data or JSON. */
 const VERSION = Symbol("version");
+/** Whether the row was in the trash when read: a write based on it applies only while it still is. */
+const DELETED = Symbol("deleted");
 
 function toRecord(collection, row) {
   let record = { ...DEFAULTS[collection], ...JSON.parse(row.data), id: row.id };
@@ -16,7 +18,7 @@ function toRecord(collection, row) {
     const upgraded = upgradeLead(record);
     if (upgraded !== record) record = Object.assign(upgraded, { schemaVersion: record.schemaVersion });
   }
-  return Object.defineProperty(record, VERSION, { value: row.seq });
+  return Object.defineProperties(record, { [VERSION]: { value: row.seq }, [DELETED]: { value: !!row.deleted } });
 }
 
 /** Document store on D1. `commit` applies a list of writes in one transaction; history rows come from triggers (migration 0002). */
@@ -26,14 +28,16 @@ export function createStore(db) {
     const NEXT_SEQ = `(${SEQ} - ${back})`;
     const { id: _id, ...data } = op.data || {};
     switch (op.type) {
+      // `trashed` puts the record straight into the trash, beside the deleted lead it belongs to.
       case "put":
-        return db.prepare(`INSERT INTO docs (collection, id, data, seq, deleted, updated_by) VALUES (?, ?, ?, ${NEXT_SEQ}, 0, ?)
-          ON CONFLICT (collection, id) DO UPDATE SET data = excluded.data, seq = excluded.seq, deleted = 0, updated_by = excluded.updated_by`)
-          .bind(op.collection, op.id, JSON.stringify(data), actor);
+        return db.prepare(`INSERT INTO docs (collection, id, data, seq, deleted, updated_by) VALUES (?, ?, ?, ${NEXT_SEQ}, ?, ?)
+          ON CONFLICT (collection, id) DO UPDATE SET data = excluded.data, seq = excluded.seq, deleted = excluded.deleted, updated_by = excluded.updated_by`)
+          .bind(op.collection, op.id, JSON.stringify(data), op.trashed ? 1 : 0, actor);
       // json_patch is RFC 7396: a null value removes the key, and toRecord restores it from DEFAULTS.
+      // A patch applies where its base was read, live or in the trash.
       case "patch":
-        return db.prepare(`UPDATE docs SET data = json_patch(data, ?), seq = ${NEXT_SEQ}, updated_by = ? WHERE collection = ? AND id = ? AND deleted = 0`)
-          .bind(JSON.stringify(data), actor, op.collection, op.id);
+        return db.prepare(`UPDATE docs SET data = json_patch(data, ?), seq = ${NEXT_SEQ}, updated_by = ? WHERE collection = ? AND id = ? AND deleted = ?`)
+          .bind(JSON.stringify(data), actor, op.collection, op.id, op.base[DELETED] ? 1 : 0);
       // Soft delete: the data stays, so the record can be restored until it is purged.
       case "remove":
         return db.prepare(`UPDATE docs SET deleted = 1, seq = ${NEXT_SEQ}, updated_by = ? WHERE collection = ? AND id = ? AND deleted = 0`)
@@ -56,7 +60,7 @@ export function createStore(db) {
     const based = ops.filter((op) => op.base);
     if (!based.length) return [];
     if (new Set(based.map((op) => `${op.collection}/${op.id}`)).size !== based.length) throw new Error("Two guarded ops on one record");
-    const expected = JSON.stringify(based.map((op) => [op.collection, op.id, op.base[VERSION], op.type === "restore" ? 1 : 0]));
+    const expected = JSON.stringify(based.map((op) => [op.collection, op.id, op.base[VERSION], op.base[DELETED] ? 1 : 0]));
     return [db.prepare(`INSERT OR REPLACE INTO write_guard (id, hit) SELECT 1, COUNT(*) = ? FROM json_each(?) AS b JOIN docs AS d
       ON d.collection = json_extract(b.value, '$[0]') AND d.id = json_extract(b.value, '$[1]') AND d.seq = json_extract(b.value, '$[2]') AND d.deleted = json_extract(b.value, '$[3]')`)
       .bind(based.length, expected)];
@@ -80,7 +84,7 @@ export function createStore(db) {
     },
     /** A deleted record that can still be restored (purged ones have no data left). */
     async getDeleted(collection, id) {
-      const row = await one("SELECT id, data, seq FROM docs WHERE collection = ? AND id = ? AND deleted = 1 AND data != '{}'", collection, id);
+      const row = await one("SELECT id, data, seq, deleted FROM docs WHERE collection = ? AND id = ? AND deleted = 1 AND data != '{}'", collection, id);
       return row ? toRecord(collection, row) : null;
     },
     async list(collection) {
@@ -91,7 +95,7 @@ export function createStore(db) {
       return new Set((await many("SELECT id FROM docs WHERE collection = ?", collection)).map((row) => row.id));
     },
     async activitiesOf(leadId, { deleted = false } = {}) {
-      const rows = await many("SELECT id, data, seq FROM docs WHERE collection = 'activities' AND deleted = ? AND json_extract(data, '$.leadId') = ?", deleted ? 1 : 0, leadId);
+      const rows = await many("SELECT id, data, seq, deleted FROM docs WHERE collection = 'activities' AND deleted = ? AND json_extract(data, '$.leadId') = ?", deleted ? 1 : 0, leadId);
       return rows.map((row) => toRecord("activities", row));
     },
     /** A change to an existing record (patch, remove, restore) must name the read it is based on; only a put may go without. */
@@ -103,7 +107,7 @@ export function createStore(db) {
     },
     /**
      * Erases a deleted lead for good: its data, the data of all its activities (`activities`, the live ones, are
-     * deleted first; no write path changes an activity of a deleted lead) and every history row of both. The rows stay as empty, deleted tombstones (the lead's row
+     * deleted first; an activity the unsubscribe link or a backup import added to the deleted lead before this read is deleted with it) and every history row of both. The rows stay as empty, deleted tombstones (the lead's row
      * names who erased it), so sync and the import still know the ids. Fails with ConflictError unless the lead is
      * still in the trash as read.
      */
@@ -119,10 +123,15 @@ export function createStore(db) {
         db.prepare(`UPDATE docs SET data = '{}' WHERE collection = 'activities' AND deleted = 1 AND id IN (${acts})`).bind(base.id),
       ]);
     },
-    /** The newest deleted leads that can be restored, with who deleted them and when. */
+    /**
+     * The newest deleted leads that can be restored, with who deleted them and when: the version that moved the lead
+     * to the trash, not a later write there (an opt-out by the link).
+     */
     async trash() {
-      const rows = await many(`SELECT d.id, d.data, d.seq, d.updated_by AS actor, h.at FROM docs d LEFT JOIN history h ON h.seq = d.seq
-        WHERE d.collection = 'leads' AND d.deleted = 1 AND d.data != '{}' ORDER BY d.seq DESC LIMIT ?`, TRASH_SHOWN);
+      const rows = await many(`SELECT d.id, d.data, d.seq, d.deleted, COALESCE(h.actor, d.updated_by) AS actor, h.at FROM docs d
+        LEFT JOIN history h ON h.seq = (SELECT MIN(x.seq) FROM history x WHERE x.collection = d.collection AND x.id = d.id AND x.deleted = 1
+          AND x.seq > (SELECT COALESCE(MAX(y.seq), 0) FROM history y WHERE y.collection = d.collection AND y.id = d.id AND y.deleted = 0))
+        WHERE d.collection = 'leads' AND d.deleted = 1 AND d.data != '{}' ORDER BY COALESCE(h.seq, d.seq) DESC LIMIT ?`, TRASH_SHOWN);
       return rows.map((row) => ({ lead: toRecord("leads", row), actor: row.actor, at: row.at }));
     },
     /** A lead's newest 100 versions, newest first: each with the data before and after, who wrote it and when, and whether it was deleted before. */

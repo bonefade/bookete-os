@@ -4,6 +4,9 @@ import { createD1 } from "./d1.js";
 import worker, { rateKey } from "../src/server/index.js";
 import { COMMANDS } from "../src/server/commands.js";
 import { sha256 } from "../src/server/crypto.js";
+import { createStore } from "../src/server/store.js";
+import { createUseCases } from "../src/application/use-cases.js";
+import { unsubscribeUrl, unsubscribeLeadId } from "../src/server/unsubscribe.js";
 import { readFileSync } from "node:fs";
 
 // The authorization walk: every command and API route, called without a valid session, is refused
@@ -105,4 +108,141 @@ test("a signed-in user can see which version is deployed", async () => {
   ]);
   const me = await (await fetchAs(e, "__Host-crm-session=jo-tok", "GET", "/api/me")).json();
   assert.equal(me.version, JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
+});
+
+const config = { PUBLIC_URL: "https://crm.bookete.com", CONSENT_SECRET: "c".repeat(32) };
+const path = (url) => new URL(url).pathname;
+async function withLeads(e, ...names) {
+  let n = 0;
+  const uc = createUseCases({ store: createStore(e.DB), clock: { today: () => "2026-10-17", now: () => "2026-10-17T10:00:00.000Z" }, ids: { newId: () => `L${++n}` }, actor: "jo@bookete.com (test)" });
+  return { uc, ids: await Promise.all(names.map((name) => uc.addLead({ name, email: "wirt@example.at" }))) };
+}
+
+test("an unsubscribe link opts out only the lead it was made for", async () => {
+  const url = await unsubscribeUrl(config, "L1");
+  assert.match(url, /^https:\/\/crm\.bookete\.com\/abmelden\/[\w-]+\.[\w-]{43}$/);
+  assert.equal(await unsubscribeLeadId(config, path(url)), "L1");
+  const [id, mac] = path(url).slice(10).split(".");
+  const other = path(await unsubscribeUrl(config, "L2")).slice(10).split(".")[1];
+  for (const token of [`${id}.${other}`, `${id}.${mac.slice(0, -1)}A`, `${btoa("L2").replace(/=/g, "")}.${mac}`, id, `${id}.${mac}x`, "x.y"]) {
+    assert.equal(await unsubscribeLeadId(config, "/abmelden/" + token), null, token);
+  }
+  assert.equal(await unsubscribeLeadId({ ...config, CONSENT_SECRET: "d".repeat(32) }, path(url)), null);
+  // The longest id a lead can have, in letters that take three bytes each.
+  const longest = "\u20AC".repeat(100);
+  assert.equal(await unsubscribeLeadId(config, path(await unsubscribeUrl(config, longest))), longest);
+  // Signed, but not a shape we send: refused before the HMAC is looked at.
+  assert.equal(await unsubscribeLeadId(config, `${path(url)}.x`), null);
+  assert.equal(await unsubscribeLeadId(config, path(await unsubscribeUrl(config, "a".repeat(301)))), null);
+});
+
+test("the unsubscribe page needs no session; GET only asks, POST opts out once", async () => {
+  const e = await env();
+  const { ids: [id] } = await withLeads(e, "Krone");
+  const link = path(await unsubscribeUrl(config, id));
+  const asked = await fetchAs(e, null, "GET", link);
+  assert.equal(asked.status, 200);
+  assert.match(await asked.text(), /<form method="post"><button>Abmelden<\/button><\/form>/);
+  assert.equal((await createStore(e.DB).get("leads", id)).optOutAt, null);
+  for (const body of ["", "List-Unsubscribe=One-Click"]) {
+    const done = await fetchAs(e, null, "POST", link, body, { "Content-Type": "application/x-www-form-urlencoded" });
+    assert.equal(done.status, 200);
+    assert.match(await done.text(), /Sie sind abgemeldet/);
+    assert.equal(done.headers.get("Cache-Control"), "no-store");
+  }
+  const l = await createStore(e.DB).get("leads", id);
+  assert.deepEqual([l.optOutAt, l.status, l.lostReason], ["2026-10-17", "disqualifiziert", "Keine Kontaktaufnahme gew\xFCnscht"]);
+  const acts = await createStore(e.DB).activitiesOf(id);
+  assert.deepEqual(acts.map((a) => [a.direction, a.text]), [["in", "Opt-out \xFCber den Abmeldelink in einer E-Mail."]]);
+  const [row] = (await e.DB.prepare("SELECT updated_by FROM docs WHERE collection = 'leads' AND id = ?").bind(id).all()).results;
+  assert.equal(row.updated_by, "Empf\xE4nger (Abmeldelink)");
+});
+
+test("the unsubscribe page reads the same for a lead already opted out or deleted, and refuses a forged link", async () => {
+  const e = await env();
+  const { uc, ids: [out, gone] } = await withLeads(e, "Krone", "Post");
+  await uc.optOut(out, "am Telefon");
+  await uc.deleteLead(gone);
+  const pages = [];
+  for (const id of [out, gone]) {
+    const res = await fetchAs(e, null, "POST", path(await unsubscribeUrl(config, id)), "");
+    pages.push([res.status, await res.text()]);
+  }
+  assert.deepEqual(pages[0], pages[1]);
+  assert.equal((await createStore(e.DB).activitiesOf(out)).length, 1);
+  const forged = await fetchAs(e, null, "POST", "/abmelden/TDE.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "");
+  assert.equal(forged.status, 400);
+  assert.equal((await fetchAs(e, null, "PUT", path(await unsubscribeUrl(config, out)), "")).status, 405);
+});
+
+test("the link opts out a lead in the Papierkorb there, so a restore brings it back opted out", async () => {
+  const e = await env();
+  const { uc, ids: [id] } = await withLeads(e, "Krone");
+  await uc.deleteLead(id);
+  assert.equal((await fetchAs(e, null, "POST", path(await unsubscribeUrl(config, id)), "")).status, 200);
+  const store = createStore(e.DB);
+  assert.equal(await store.get("leads", id), null);
+  assert.deepEqual((await store.activitiesOf(id)).length, 0);
+  // The Papierkorb still names who deleted it, not the recipient.
+  const [entry] = await store.trash();
+  assert.deepEqual([entry.lead.optOutAt, entry.actor], ["2026-10-17", "jo@bookete.com (test)"]);
+  await uc.restoreLead(id);
+  assert.deepEqual((await store.activitiesOf(id)).map((a) => a.text), ["Opt-out \xFCber den Abmeldelink in einer E-Mail."]);
+  await assert.rejects(uc.logActivity(id, { direction: "out", channel: "E-Mail", text: "Hallo" }), (err) => err.field === "optOutAt");
+});
+
+test("the Papierkorb lists by deletion, not by a later opt-out by the link", async () => {
+  const e = await env();
+  const { uc, ids: [first, second] } = await withLeads(e, "Krone", "Post");
+  await uc.deleteLead(first);
+  await uc.deleteLead(second);
+  await fetchAs(e, null, "POST", path(await unsubscribeUrl(config, first)), "");
+  assert.deepEqual((await createStore(e.DB).trash()).map((t) => t.lead.id), [second, first]);
+});
+
+test("the link keeps a Kunde Kunde, with its win date and next step", async () => {
+  const e = await env();
+  const { uc, ids: [id] } = await withLeads(e, "Krone");
+  await uc.changeStatus(id, "kunde");
+  await uc.setNextStep(id, "Onboarding: Widget einbauen");
+  await fetchAs(e, null, "POST", path(await unsubscribeUrl(config, id)), "");
+  const l = await createStore(e.DB).get("leads", id);
+  assert.deepEqual([l.status, l.wonAt, l.nextStep, l.optOutAt], ["kunde", "2026-10-17", "Onboarding: Widget einbauen", "2026-10-17"]);
+});
+
+test("the link records the recipient, even in a browser signed in to the CRM", async () => {
+  const e = await env();
+  await e.DB.batch([
+    e.DB.prepare("INSERT INTO users (email, name, updated_at) VALUES ('jo@bookete.com', 'Jo', 'now')"),
+    e.DB.prepare("INSERT INTO sessions VALUES (?, 'jo@bookete.com', ?)").bind(await sha256("jo"), Date.now() + 1e6),
+  ]);
+  const { ids: [id] } = await withLeads(e, "Krone");
+  await fetchAs(e, "__Host-crm-session=jo", "POST", path(await unsubscribeUrl(config, id)), "");
+  const [row] = (await e.DB.prepare("SELECT updated_by FROM docs WHERE collection = 'leads' AND id = ?").bind(id).all()).results;
+  assert.equal(row.updated_by, "Empf\xE4nger (Abmeldelink)");
+});
+
+test("a failed unsubscribe says so and asks to try again, not a bare error", async () => {
+  const e = await env();
+  const { ids: [id] } = await withLeads(e, "Krone");
+  const db = e.DB;
+  e.DB = { prepare: (sql) => db.prepare(sql), batch: async () => { throw new Error("D1_ERROR: network"); } };
+  const res = await fetchAs(e, null, "POST", path(await unsubscribeUrl(config, id)), "");
+  assert.equal(res.status, 503);
+  assert.match(await res.text(), /noch einmal/);
+});
+
+test("the unsubscribe link is rate limited per IP in its own bucket, after its shape and before its HMAC is checked", async () => {
+  const limit = limiter(0);
+  const e = await env(limit);
+  const res = await fetchAs(e, null, "POST", path(await unsubscribeUrl(config, "L1")), "", { "CF-Connecting-IP": "1.2.3.4" });
+  assert.equal(res.status, 429);
+  assert.deepEqual(limit.keys, ["abmelden 1.2.3.4"]);
+  // A forged link shaped like ours is limited too, so guessing costs the limit before any HMAC check.
+  const forged = await fetchAs(e, null, "POST", "/abmelden/TDE.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", { "CF-Connecting-IP": "1.2.3.4" });
+  assert.equal(forged.status, 429);
+  // A path no link of ours has costs no limiter call.
+  const junk = await fetchAs(e, null, "POST", "/abmelden/nicht-von-uns", "", { "CF-Connecting-IP": "1.2.3.4" });
+  assert.equal(junk.status, 400);
+  assert.equal(limit.keys.length, 2);
 });
