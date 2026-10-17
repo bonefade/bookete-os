@@ -256,8 +256,9 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
   const back = () => leave(backRoute(S().ui));
   const openLead = (id) => go(routeOf({ view: "detail", leadId: id }));
   const openTemplate = (id) => go(routeOf({ view: "editTemplate", templateId: id }));
-  const loadTrash = () => run(async () => {
-    ui({ trash: await uc.trash() });
+  /** A page of the Papierkorb: the newest, or those deleted before `before`. */
+  const loadTrash = (before = null) => run(async () => {
+    ui({ trash: await uc.trash(before), trashBefore: before });
     render();
   }, null, "Laden fehlgeschlagen");
   function startCompose(direction) {
@@ -516,7 +517,8 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
         render();
       }
     },
-    showTrash: loadTrash,
+    showTrash: () => loadTrash(),
+    trashOlder: (el) => loadTrash(Number(el.dataset.before)),
     logoutAll: (el, ev) => {
       if (!confirm("Auf allen Ger\xE4ten abmelden und alle verbundenen Agenten trennen?")) ev.preventDefault();
     }
@@ -552,10 +554,10 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
     }
     const writes = d.status || d.lost || d.fu || d.call || d.meeting || d.restore || d.purge || d.act && !UI_ONLY_ACTIONS.has(d.act);
     if (writes && !uc) return toast("Keine Verbindung zur Datenbank");
-    if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash();
+    if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash(st.ui.trashBefore);
     if (d.purge) {
       if (!confirm("Endg\xFCltig l\xF6schen? Der Betrieb, seine Kontakte und alle \xC4nderungen sind dann weg. Das l\xE4sst sich nicht r\xFCckg\xE4ngig machen.")) return;
-      return await run(() => uc.purgeLead(d.purge).then(() => true), "Endg\xFCltig gel\xF6scht") && loadTrash();
+      return await run(() => uc.purgeLead(d.purge).then(() => true), "Endg\xFCltig gel\xF6scht") && loadTrash(st.ui.trashBefore);
     }
     const lead = currentLead(st);
     if (d.status) {

@@ -33,7 +33,6 @@ or overwriting data by mistake, not about outside access.
 
 - Move the repo to stage `live` (`profiles/ai-factory/patterns/deploy-safety.md` §0): a `staging` branch, a staging Worker with its own D1, and branch protection. Owner decided 2026-10-16 to skip it for now; revisit when a third person or a second write path joins.
 - CRM: trash retention. Deleted leads stay in the Papierkorb until someone erases them; decide whether they should be erased on their own after a set time.
-- CRM: Papierkorb paging. It lists the newest 50 deleted leads; older ones show once those are restored or erased.
 - CRM: a check of the store against real D1 in CI. The unit tests run on node:sqlite; the write guard, the history triggers and the purge were checked once by hand against local D1 (workerd) on 2026-10-16. Migration 0003 was run on local D1 by the 1.4.1 reviewer on 2026-10-17: rows equal to node:sqlite's, and the whole file rolled back when the self-check failed; its today fallback for undatable rows was checked there the same day.
 - CRM: a pipeline board, one column per status, with counts.
 - Rule gap: a migration that removes what the running Worker still writes (a contract step) reaches production only after the Worker that no longer writes it is live. The deploy applies migrations before the new Worker, and nothing stops both steps from reaching `main` in one push; 1.4.0 and 1.4.1 were pushed apart by hand (unenforced).
@@ -59,6 +58,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
 
+- CRM 1.14.0: the Papierkorb pages back 50 at a time (`GET /api/trash?before=`).
 - CRM 1.13.2: delete, restore and erase move a lead's activities in two fixed statements; `crm/test/d1.js` models D1's 50 queries per invocation, and an import request takes at most one chunk.
 - CRM 1.13.1: a backup import puts a trashed lead's activity in the Papierkorb and adds none to an erased lead, guarded by the lead as read (owner: "Add it to the trash").
 - CRM 1.13.0: the search field sits in the top bar on every screen, the Suche tab is gone (owner, 2026-10-17).

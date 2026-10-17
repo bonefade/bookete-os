@@ -36,5 +36,5 @@ export const SEQUENCE_POLICY = { cadence: [3, 7], maxTouches: 5, defaultFollowUp
 export const CALL_OUTCOMES = [["nicht-erreicht", "Nicht erreicht"], ["rueckruf", "R\xFCckruf"], ["termin", "Termin vereinbart"], ["kein-interesse", "Kein Interesse"]];
 export const OUTCOME_LABEL = Object.fromEntries(CALL_OUTCOMES);
 export const COLLECTIONS = ["leads", "activities", "templates", "settings"];
-/** How many deleted leads the Papierkorb lists, newest first. */
+/** How many deleted leads the Papierkorb lists per page, newest first. */
 export const TRASH_SHOWN = 50;

@@ -87,7 +87,7 @@ The first connection opens a sign-in and a consent page. The agent then acts as 
 
 Three layers, from the smallest mistake to the biggest:
 
-1. **A single change or a deleted lead:** **Änderungen** at the bottom of a lead shows who changed what, old and new value. A deleted lead goes to **Mehr → Papierkorb** (the newest 50) and comes back with its contact history.
+1. **A single change or a deleted lead:** **Änderungen** at the bottom of a lead shows who changed what, old and new value. A deleted lead goes to **Mehr → Papierkorb** (50 at a time, newest first; **Ältere anzeigen** goes further back) and comes back with its contact history.
    **Endgültig löschen** there erases the lead, all its contacts and its changes, for a business that asks to be deleted. Its opt-out goes with it, so its e-mail address takes mail again (see Gmail above). Time Travel (below) still holds it until its window has passed.
 2. **The whole database, any minute of the recent past:** D1 Time Travel keeps a point-in-time history automatically (7 days on the Workers Free plan, 30 on Paid). A restore overwrites the database in place, so export a backup first and agree on it together:
 

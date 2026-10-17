@@ -7,7 +7,7 @@ import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRout
 import { describeChange, fmtDate } from "../src/web/format.js";
 import { scoped, activitiesByLead } from "../src/web/selectors.js";
 import { createApi, coalesced } from "../src/web/api.js";
-import { COLLECTIONS, FIELD_LABEL } from "../src/domain/constants.js";
+import { COLLECTIONS, FIELD_LABEL, TRASH_SHOWN } from "../src/domain/constants.js";
 import worker from "../src/server/index.js";
 import { sha256 } from "../src/server/crypto.js";
 import { createD1 } from "./d1.js";
@@ -15,6 +15,7 @@ import { IMPORT_CHUNK, BACKUP_FORMAT } from "../src/domain/backup.js";
 import { readFileSync } from "node:fs";
 import { searchLeads } from "../src/domain/search.js";
 import { hitLabel } from "../src/web/search.js";
+import { unsubscribeUrl } from "../src/server/unsubscribe.js";
 
 // Renders every view once: catches missing imports and broken templates, which no bundler step reports.
 test("every view renders with data", () => {
@@ -972,6 +973,45 @@ test("the Kundenakte form saves through the server what it showed, reopens at on
     await save({ "contacts.0.drop": true });
     const a = await stored();
     assert.deepEqual([a.contacts, a.systems.domain], [[], { what: "krone.at", by: "" }]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("the Papierkorb pages back through the server, and a restore or erase keeps the page", async () => {
+  const saved = ["history", "location", "window", "document", "confirm", "fetch"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    globalThis.fetch = await signedInFetch();
+    const api = createApi(async () => {});
+    const ids = [];
+    for (let i = 0; i < TRASH_SHOWN + 2; i++) {
+      const id = await api.addLead({ name: `Betrieb ${i}` });
+      await api.deleteLead({ id });
+      ids.push(id);
+    }
+    // The oldest and the last on the first page are opted out by the link while in the trash: written last, each stays on the
+    // page its deletion puts it on, and the page boundary stays where the deletions put it.
+    for (const id of [ids[0], ids[2]]) {
+      const link = new URL(await unsubscribeUrl({ PUBLIC_URL: "https://crm.bookete.com", CONSENT_SECRET: "c".repeat(32) }, id));
+      assert.equal((await fetch(link.pathname, { method: "POST" })).status, 200);
+    }
+    const store = createStore(initialState());
+    for (const c of COLLECTIONS) store.data(c, []);
+    const { root, click } = fakeBrowser("#/mehr", store, api);
+    const shown = () => [...root.innerHTML.matchAll(/data-restore="([^"]+)"/g)].map(([, id]) => id);
+    const newest = ids.slice(2).reverse();
+    await click({ act: "showTrash" });
+    assert.deepEqual(shown(), newest);
+    await click({ act: "trashOlder", before: root.innerHTML.match(/data-act="trashOlder" data-before="(\d+)"/)[1] });
+    assert.deepEqual(shown(), [ids[1], ids[0]]);
+    await click({ restore: ids[0] });
+    assert.deepEqual(shown(), [ids[1]]);
+    await click({ purge: ids[1] });
+    assert.match(root.innerHTML, /Keine \xE4lteren gel\xF6schten Betriebe/);
+    assert.match(root.innerHTML, /data-act="showTrash">Zu den neuesten</);
+    await click({ act: "showTrash" });
+    assert.deepEqual(shown(), newest);
+    assert.equal((await fetch("/api/trash?before=x")).status, 400);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }

@@ -44,7 +44,7 @@ export function createApi(onWrite) {
     me: () => call("/api/me"),
     changes: (since) => call("/api/sync?since=" + since),
     history: (lead) => call("/api/history?id=" + encodeURIComponent(lead.id)),
-    trash: () => call("/api/trash"),
+    trash: (before) => call("/api/trash" + (before ? "?before=" + before : "")),
     addLead: (input) => rpc("addLead", { input }),
     updateField: (lead, key, value) => rpc("updateField", { id: lead.id, key, value }),
     updateLead: (lead, input) => rpc("updateLead", { id: lead.id, input }),

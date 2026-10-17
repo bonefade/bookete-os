@@ -215,15 +215,18 @@ export function moreView(state) {
   <div class="sec"><h3>Warum disqualifiziert</h3><div class="card">${lost.length ? `<dl class="facts" style="padding:0">${lost.map(([k, v]) => `<div class="fact"><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join("")}</dl>` : `<p class="note" style="margin:0">Noch keine disqualifizierten Betriebe.</p>`}</div></div>
   <div class="sec"><h3>Nachfass-Rhythmus</h3><div class="card"><p style="margin:0">Nach dem Erstkontakt: Follow-up nach ${cadence[0]} Tagen, dann nach weiteren ${cadence[1]} Tagen. Nach ${maxTouches} Kontakten ohne Antwort schl\xE4gt die App vor, abzuschlie\xDFen.</p></div></div>
   <div class="sec"><h3>Backup</h3><div class="card"><p style="margin:0 0 10px">Alle Betriebe, Kontakte, Vorlagen und das ICP als versionierte JSON-Datei sichern.</p><button class="primary full" data-act="export"${state.caps.db ? "" : " disabled"}>Backup herunterladen</button><button class="full" style="margin-top:8px" data-act="importPick"${state.caps.db ? "" : " disabled"}>Sicherung einspielen</button><input type="file" id="importFile" accept="application/json,.json" hidden></div></div>
-  <div class="sec"><h3>Papierkorb</h3><div class="card">${trashHtml(state.ui.trash)}</div></div>
+  <div class="sec"><h3>Papierkorb</h3><div class="card">${trashHtml(state.ui.trash, state.ui.trashBefore)}</div></div>
   <div class="sec"><h3>Konto</h3><div class="card"><p style="margin:0 0 10px">${esc(state.me?.email || "")} \xB7 Gmail ${state.caps.gmail ? "verbunden" : `nicht verbunden \u2013 <a href="/auth/login">neu anmelden</a>`}</p><form method="post" action="/auth/logout" style="margin:0"><button class="full">Abmelden</button></form><form method="post" action="/auth/logout-all" style="margin:8px 0 0"><button class="full" data-act="logoutAll">\xDCberall abmelden</button></form><p class="note" style="margin:6px 0 0">Meldet dich auf allen Ger\xE4ten ab und trennt alle verbundenen Agenten.</p>${state.me?.version ? `<p class="note" style="margin:10px 0 0">Version ${esc(state.me.version)}</p>` : ""}</div></div>
 </div>`;
 }
-/** Deleted leads, loaded on demand; each can come back or be erased for good. */
-function trashHtml(trash) {
+/** Deleted leads, loaded on demand a page at a time; each can come back or be erased for good. */
+function trashHtml(trash, before) {
   if (!trash) return `<button class="full" data-act="showTrash">Papierkorb \xF6ffnen</button>`;
-  if (!trash.length) return `<p class="note" style="margin:0">Der Papierkorb ist leer.</p>`;
-  return (trash.length >= TRASH_SHOWN ? `<p class="note" style="margin:0 0 8px">Die neuesten ${TRASH_SHOWN}; \xE4ltere erscheinen, wenn diese weg sind.</p>` : "") + trash.map(({ lead, actor, at }) => `<div class="entry"><div class="h"><span>${esc(fmtTime(at))} \xB7 ${esc(actorName(actor))}</span></div><p style="margin:2px 0 8px;font-weight:600">${esc([lead.name, lead.city].filter(Boolean).join(" \xB7 "))}</p><div class="two"><button data-restore="${esc(lead.id)}">Wiederherstellen</button><button class="danger" data-purge="${esc(lead.id)}">Endg\xFCltig l\xF6schen</button></div></div>`).join("");
+  const newest = before ? `<button class="full" style="margin-top:8px" data-act="showTrash">Zu den neuesten</button>` : "";
+  if (!trash.length) return `<p class="note" style="margin:0">${before ? "Keine \xE4lteren gel\xF6schten Betriebe." : "Der Papierkorb ist leer."}</p>` + newest;
+  // A full page may have older ones behind it.
+  const older = trash.length >= TRASH_SHOWN ? `<button class="full" style="margin-top:8px" data-act="trashOlder" data-before="${esc(trash.at(-1).seq)}">\xC4ltere anzeigen</button>` : "";
+  return trash.map(({ lead, actor, at }) => `<div class="entry"><div class="h"><span>${esc(fmtTime(at))} \xB7 ${esc(actorName(actor))}</span></div><p style="margin:2px 0 8px;font-weight:600">${esc([lead.name, lead.city].filter(Boolean).join(" \xB7 "))}</p><div class="two"><button data-restore="${esc(lead.id)}">Wiederherstellen</button><button class="danger" data-purge="${esc(lead.id)}">Endg\xFCltig l\xF6schen</button></div></div>`).join("") + older + newest;
 }
 /** Who changed what on this lead, loaded on demand. */
 function changesHtml(changes) {

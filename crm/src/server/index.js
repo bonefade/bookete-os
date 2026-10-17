@@ -111,6 +111,7 @@ async function unsubscribe(request, env, config, pathname) {
 }
 
 const LeadQuery = z.object({ id: z.string().min(1).max(100) });
+const TrashQuery = z.object({ before: z.coerce.number().int().positive().optional() });
 
 /** The rate-limit key: an IPv4 address, or the /64 of an IPv6 one, since one connection usually owns a whole /64. */
 export function rateKey(ip) {
@@ -159,7 +160,10 @@ async function app(request, env, config) {
     const query = LeadQuery.safeParse(Object.fromEntries(url.searchParams));
     return query.success ? Response.json(await createStore(env.DB).history(query.data.id)) : Response.json({ error: "Ung\xFCltige Eingabe" }, { status: 400 });
   }
-  if (route === "GET /api/trash") return Response.json(await createStore(env.DB).trash());
+  if (route === "GET /api/trash") {
+    const query = TrashQuery.safeParse(Object.fromEntries(url.searchParams));
+    return query.success ? Response.json(await createStore(env.DB).trash(query.data.before)) : Response.json({ error: "Ung\xFCltige Eingabe" }, { status: 400 });
+  }
   if (request.method === "POST" && url.pathname.startsWith("/api/rpc/")) return rpc(request, env, config, user, url.pathname.slice(9));
   return new Response("Not found", { status: 404 });
 }

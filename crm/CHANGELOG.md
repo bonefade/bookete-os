@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.14.0 (2026-10-18)
+
+### Added
+- **Papierkorb:** "Ältere anzeigen" shows the next 50 deleted businesses, "Zu den neuesten" goes back. Before, only the newest 50 showed. Restoring or erasing one keeps you on the page.
+
 ## 1.13.2 (2026-10-18)
 
 ### Fixed
