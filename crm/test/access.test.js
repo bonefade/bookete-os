@@ -8,6 +8,8 @@ import { createStore } from "../src/server/store.js";
 import { createUseCases } from "../src/application/use-cases.js";
 import { unsubscribeUrl, unsubscribeLeadId } from "../src/server/unsubscribe.js";
 import { readFileSync } from "node:fs";
+// The unsubscribe route stamps an opt-out with the Worker's own clock, not the test's, so its date is that clock's today.
+import { systemClock } from "../src/adapters/system.js";
 
 // The authorization walk: every command and API route, called without a valid session, is refused
 // before its input is read. The exact list makes each new command a conscious addition to this walk.
@@ -151,7 +153,7 @@ test("the unsubscribe page needs no session; GET only asks, POST opts out once",
     assert.equal(done.headers.get("Cache-Control"), "no-store");
   }
   const l = await createStore(e.DB).get("leads", id);
-  assert.deepEqual([l.optOutAt, l.status, l.lostReason], ["2026-10-17", "disqualifiziert", "Keine Kontaktaufnahme gew\xFCnscht"]);
+  assert.deepEqual([l.optOutAt, l.status, l.lostReason], [systemClock.today(), "disqualifiziert", "Keine Kontaktaufnahme gew\xFCnscht"]);
   const acts = await createStore(e.DB).activitiesOf(id);
   assert.deepEqual(acts.map((a) => [a.direction, a.text]), [["in", "Opt-out \xFCber den Abmeldelink in einer E-Mail."]]);
   const [row] = (await e.DB.prepare("SELECT updated_by FROM docs WHERE collection = 'leads' AND id = ?").bind(id).all()).results;
@@ -185,7 +187,7 @@ test("the link opts out a lead in the Papierkorb there, so a restore brings it b
   assert.deepEqual((await store.activitiesOf(id)).length, 0);
   // The Papierkorb still names who deleted it, not the recipient.
   const [entry] = await store.trash();
-  assert.deepEqual([entry.lead.optOutAt, entry.actor], ["2026-10-17", "jo@bookete.com (test)"]);
+  assert.deepEqual([entry.lead.optOutAt, entry.actor], [systemClock.today(), "jo@bookete.com (test)"]);
   await uc.restoreLead(id);
   assert.deepEqual((await store.activitiesOf(id)).map((a) => a.text), ["Opt-out \xFCber den Abmeldelink in einer E-Mail."]);
   await assert.rejects(uc.logActivity(id, { direction: "out", channel: "E-Mail", text: "Hallo" }), (err) => err.field === "optOutAt");
@@ -207,7 +209,7 @@ test("the link keeps a Kunde Kunde, with its win date and next step", async () =
   await uc.setNextStep(id, "Onboarding: Widget einbauen");
   await fetchAs(e, null, "POST", path(await unsubscribeUrl(config, id)), "");
   const l = await createStore(e.DB).get("leads", id);
-  assert.deepEqual([l.status, l.wonAt, l.nextStep, l.optOutAt], ["kunde", "2026-10-17", "Onboarding: Widget einbauen", "2026-10-17"]);
+  assert.deepEqual([l.status, l.wonAt, l.nextStep, l.optOutAt], ["kunde", "2026-10-17", "Onboarding: Widget einbauen", systemClock.today()]);
 });
 
 test("the link records the recipient, even in a browser signed in to the CRM", async () => {
