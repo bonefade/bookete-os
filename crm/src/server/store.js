@@ -1,4 +1,4 @@
-import { LEAD_FIELDS } from "../domain/lead.js";
+import { LEAD_FIELDS, upgradeLead } from "../domain/lead.js";
 import { ConflictError } from "../domain/errors.js";
 import { TRASH_SHOWN } from "../domain/constants.js";
 
@@ -8,7 +8,14 @@ const SEQ = "(SELECT seq FROM counter WHERE id = 1)";
 const VERSION = Symbol("version");
 
 function toRecord(collection, row) {
-  const record = { ...DEFAULTS[collection], ...JSON.parse(row.data), id: row.id };
+  let record = { ...DEFAULTS[collection], ...JSON.parse(row.data), id: row.id };
+  // Rows written before 1.4.0 read as 1.4.0 leads everywhere (use cases, sync, trash, MCP) until migration 0003
+  // has rewritten them; drop this in the release after 0003 has run. It runs before the version symbol is attached: an upgraded lead is a copy.
+  // The copy keeps the stored schemaVersion: it was upgraded without its activities, so a backup taken now is upgraded again on import, with them.
+  if (collection === "leads") {
+    const upgraded = upgradeLead(record);
+    if (upgraded !== record) record = Object.assign(upgraded, { schemaVersion: record.schemaVersion });
+  }
   return Object.defineProperty(record, VERSION, { value: row.seq });
 }
 

@@ -2,6 +2,24 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.4.0 (2026-10-17)
+
+### Changed
+- **Five statuses:** Neu, Kontaktiert, Qualifiziert, Kunde, Disqualifiziert. Recherchiert is now Neu, Antwort is Kontaktiert, Gespräch/Demo is Qualifiziert, Onboarding is Kunde.
+- **Disqualifiziert needs a reason**, picked from seven: Zufrieden mit aktueller Lösung, Kein Bedarf, Zu klein, Nicht unsere Zielgruppe, Geschlossen / existiert nicht, Nicht erreicht, Keine Kontaktaufnahme gewünscht. "Sonstiges", "Hat schon ein Tool", "Keine Antwort" and "Später nochmal" are gone. A "Kein Interesse" without one of the new reasons shows as Neu or Kontaktiert again, so it can be worked or closed with a real reason.
+- **Contacted is visible:** each business shows "Kontaktiert seit …" or "Nie kontaktiert", and the list filters by it. Any contact either way dates it, an opt-out message too.
+- **One filter row:** Region, System and Kontakt (mit Telefon / mit E-Mail) as compact selects; Betriebe filters by status, reason and contacted.
+- Picking "Keine Kontaktaufnahme gewünscht" as a reason records an opt-out at once: no more outgoing contact. Unlike the Opt-out button it asks nothing, logs no "Opt-out" contact and keeps the next step.
+- The sequence offers "Nicht erreicht" after five unanswered contacts, not three.
+- A disqualified business has no follow-up; a new contact reopens it as Kontaktiert. Its follow-up is then set as on any Kontaktiert business: after an outgoing contact by the sequence (3, then 7 days; 4 once they have replied), after a reply the day of the reply.
+- A first contact made outside the CRM is entered through an agent (MCP `update_lead`, `contactedAt`, not after today); it moves a Neu business to Kontaktiert.
+- A contact can no longer be logged with a date after today: it has not happened yet. Plan it as the follow-up instead.
+
+- Until 1.4.1 has run, the first change to an old business also stores its new status and reason, and Änderungen shows them under the person who made that change.
+
+### Deploying
+- No rollback to 1.3 once 1.4.0 has written: 1.3 does not know the five statuses. A lead 1.3 writes after that reads with the five again in 1.4.
+
 ## 1.3.0 (2026-10-16)
 
 ### Added

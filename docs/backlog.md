@@ -8,11 +8,11 @@ CRM release. Dates are absolute.
 - **P2:** when time allows: quality, hardening, performance.
 - **P3:** later or nice to have.
 
-_Last groomed: 2026-10-16_
+_Last groomed: 2026-10-17_
 
 ## Now (in flight)
 
-Nothing in flight. Next up: tasks as their own records (one owner per lead, decided 2026-10-16).
+CRM 1.4: five statuses with required reasons (1.4.0), then migration 0003 rewriting the stored leads (1.4.1). Then, in this order (owner, 2026-10-17): lead pages with their own address, the Kundenakte, call outcomes and call list, call script and weekly numbers, email tracking with an unsubscribe link.
 
 ## P0
 
@@ -22,15 +22,22 @@ or overwriting data by mistake, not about outside access.
 
 ## P1
 
+- CRM: drop the read-time `upgradeLead` in `crm/src/server/store.js` once migration 0003 has run in production (1.4.1). Keep it in `chunkBackup` for old backups. First count leads with a status outside the five, at any schemaVersion: the read-time upgrade is what covers a 1.3 write after 0003.
+- CRM: lead pages with their own address, so the browser's back button, reload and links work (owner, 2026-10-17).
+- CRM: Kundenakte for customers and those closing: what we deliver (bookete, homepage, integration), their systems (domain and who owns it, DNS, hosting, the agencies handling them) and the contacts to reach (owner, 2026-10-17).
+- CRM: call outcomes and a call list with "Nächster" (release 2); call script and weekly numbers (release 3).
+- CRM: email tracking like HubSpot, and an unsubscribe link for recipients (owner, 2026-10-17). Open tracking needs consent (TKG §165, GDPR); the unsubscribe link is a public endpoint and gets `/second-review`.
+
 - CRM: tasks as their own records (due date, optional time, done), replacing the overloaded `nextStep` and the single `followUp`. Owner decided 2026-10-16: one owner per lead, so a lead gets an `owner` and Todos shows "mine" first.
-- CRM: meeting outcome. After a demo date passes, ask how it went and set status and next task from the answer (9 leads sat in "Demo" with past dates on 2026-10-16).
-- CRM: detect replies. A cron reads the Gmail threads of sent mails and logs incoming replies, so leads move to "Antwort" on their own. Needs the `gmail.readonly` scope.
+- CRM: meeting outcome. After an appointment passes, ask how it went and set status and next task from the answer (9 leads sat in "Demo", now Qualifiziert, with past dates on 2026-10-16).
+- CRM: detect replies. A cron reads the Gmail threads of sent mails and logs incoming replies, so a reply is logged and due on its own. Needs the `gmail.readonly` scope.
 - Scraper → CRM: import scraped leads (CSV or MCP `create_lead`), skipping businesses already in the CRM. Needs duplicate detection first.
 - Legal check before scaling email outreach: §107 TKG generally requires prior consent for marketing email, B2B included.
 - CRM: weekly automatic export of the database to R2 (needs a bucket), so a copy exists outside D1 and its 7-day Time Travel window.
 
 ## P2
 
+- CRM: picking the opt-out reason records the opt-out, but not as the Opt-out button does: no confirm, no "Opt-out" entry in the Verlauf, the next step kept. One use case for both (second review of 1.4.0).
 - Move the repo to stage `live` (`profiles/ai-factory/patterns/deploy-safety.md` §0): a `staging` branch, a staging Worker with its own D1, and branch protection. Owner decided 2026-10-16 to skip it for now; revisit when a third person or a second write path joins.
 - CRM: trash retention. Deleted leads stay in the Papierkorb until someone erases them; decide whether they should be erased on their own after a set time.
 - CRM: `search_leads` over MCP answers about 50 KB; page it and return a compact field set.
@@ -41,6 +48,8 @@ or overwriting data by mistake, not about outside access.
 - CRM: a check of the store against real D1 in CI. The unit tests run on node:sqlite; the write guard, the history triggers and the purge were checked once by hand against local D1 (workerd) on 2026-10-16.
 - CRM: a pipeline board, one column per status, with counts.
 - Migration safety (principle 5): no migration linter exists for D1/SQLite here (unenforced — needs tooling). Until then, every migration gets `/second-review`.
+- Rule gap: a rule derived from history (activities) must either be read with that history by the read-time upgrade or recomputed from it on write; 1.4.0's first-contact date missed this once (found in the 1.4.0 review). Mechanism: `crm/test/statuses.test.js` runs every lead write on old rows with activities and checks the stored first contact; a new history-derived rule adds its check there.
+- Rule gap: a migration that rewrites stored records chooses its rows by the stored format version (`schemaVersion`), not by a value the old and new formats share (unenforced; found in the 1.4 plan review).
 
 ## P3
 

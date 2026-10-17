@@ -17,23 +17,30 @@ export const actsOf = (state, leadId) => activitiesByLead(state).get(leadId) || 
 export const currentLead = (state) => state.data.leads.find((l) => l.id === state.ui.leadId) || null;
 export const icpOf = (state) => state.data.settings.find((s) => s.id === "icp") || null;
 export const isReady = (state) => state.status.leads && state.status.activities;
-export function scoped(state, leads = state.data.leads, { ignoreTool = false } = {}) {
-  const { region, onlyEmail, tool } = state.ui;
-  return leads.filter((l) => (region === "alle" || regionOf(l) === region) && (!onlyEmail || !!l.email) && (ignoreTool || tool === "alle" || (l.currentTool || "unbekannt") === tool));
+/** The shared filters, by their key in the UI state; "alle" lets every lead through. */
+const FILTERS = {
+  region: (l, v) => regionOf(l) === v,
+  tool: (l, v) => (l.currentTool || "unbekannt") === v,
+  contact: (l, v) => v === "telefon" ? !!l.phone : !!l.email
+};
+/** The leads the shared filters let through; `ignore` leaves one of them out, so its own choices can be counted. */
+export function scoped(state, leads = state.data.leads, ignore = null) {
+  return leads.filter((l) => Object.entries(FILTERS).every(([k, pass]) => k === ignore || state.ui[k] === "alle" || pass(l, state.ui[k])));
+}
+function countBy(leads, keyOf) {
+  const m = {};
+  for (const l of leads) m[keyOf(l)] = (m[keyOf(l)] || 0) + 1;
+  return m;
 }
 export function toolCounts(state) {
-  const m = {};
-  for (const l of scoped(state, state.data.leads, { ignoreTool: true })) {
-    const t = l.currentTool || "unbekannt";
-    m[t] = (m[t] || 0) + 1;
-  }
+  const m = countBy(scoped(state, state.data.leads, "tool"), (l) => l.currentTool || "unbekannt");
   return RESERVATION_TOOLS.filter((t) => m[t] || t === state.ui.tool).map((t) => [t, m[t] || 0]).sort((a, b) => b[1] - a[1]);
 }
 export function regionCounts(state) {
-  const m = {};
-  for (const l of state.data.leads) {
-    const r = regionOf(l);
-    m[r] = (m[r] || 0) + 1;
-  }
-  return [...REGIONS, OTHER_REGION].filter((r) => m[r]).map((r) => [r, m[r]]);
+  const m = countBy(scoped(state, state.data.leads, "region"), regionOf);
+  return [...REGIONS, OTHER_REGION].filter((r) => m[r] || r === state.ui.region).map((r) => [r, m[r] || 0]);
+}
+export function contactCounts(state) {
+  const leads = scoped(state, state.data.leads, "contact");
+  return [["telefon", "mit Telefon"], ["email", "mit E-Mail"]].map(([k, label]) => [k, label, leads.filter((l) => FILTERS.contact(l, k)).length]);
 }

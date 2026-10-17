@@ -30,7 +30,7 @@ export function createApi(onWrite) {
     deleteLead: (lead) => rpc("deleteLead", { id: lead.id }),
     restoreLead: (id) => rpc("restoreLead", { id }),
     purgeLead: (id) => rpc("purgeLead", { id }),
-    changeStatus: (lead, status) => rpc("changeStatus", { id: lead.id, status }),
+    changeStatus: (lead, status, reason) => rpc("changeStatus", { id: lead.id, status, reason }),
     setLostReason: (lead, reason) => rpc("setLostReason", { id: lead.id, reason }),
     closeWithoutReply: (lead) => rpc("closeWithoutReply", { id: lead.id }),
     setFollowUp: (lead, date) => rpc("setFollowUp", { id: lead.id, date }),
@@ -42,9 +42,9 @@ export function createApi(onWrite) {
     deleteTemplate: (id) => rpc("deleteTemplate", { id }),
     saveIcp: (icp) => rpc("saveIcp", { icp: { fit: icp.fit, noFit: icp.noFit, note: icp.note } }),
     sendEmail: (lead, msg) => rpc("sendEmail", { id: lead.id, ...msg }),
-    async importBackup(backup) {
+    async importBackup(backup, today) {
       let added = 0;
-      for (const chunk of chunkBackup(backup)) added += await rpc("importBackup", { backup: chunk });
+      for (const chunk of chunkBackup(backup, today)) added += await rpc("importBackup", { backup: chunk });
       return added;
     },
   };

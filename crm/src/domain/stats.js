@@ -14,12 +14,10 @@ export function outreachStats(leads, actsByLead) {
   const replied = leads.filter((l) => hasReply(acts(l))).length;
   return { contacted, replied, replyRate: contacted ? replied / contacted : null };
 }
+/** Disqualified leads by reason, most first; each has a reason. */
 export function lostBreakdown(leads) {
   const out = {};
-  for (const l of leads) if (l.status === "kein-interesse") {
-    const r = l.lostReason || "ohne Grund";
-    out[r] = (out[r] || 0) + 1;
-  }
+  for (const l of leads) if (l.status === "disqualifiziert") out[l.lostReason] = (out[l.lostReason] || 0) + 1;
   return Object.entries(out).sort((a, b) => b[1] - a[1]);
 }
 export function templateUsage(activities) {

@@ -18,6 +18,10 @@ export function newActivityRecord(input, { id, now, today }) {
     createdAt: now
   };
 }
+/** A contact is logged once it happened: a date after today would give a first contact that has not been. */
+export function assertHappened(activity, today) {
+  if (activity.date > today) throw new ValidationError("date", "Das Datum liegt in der Zukunft");
+}
 export const byTimeline = (a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.createdAt || "") < (b.createdAt || "") ? -1 : 1;
 export function countTouches(acts) {
   const days = new Set();
@@ -28,16 +32,29 @@ export function countTouches(acts) {
   return days.size;
 }
 export const hasReply = (acts) => acts.some((a) => a.direction === "in");
+/** The date of the first contact: the earliest of these activities, either way, or `since` if that is earlier. */
+export const firstContactOf = (acts, since = null) => acts.reduce((d, a) => (!d || a.date < d ? a.date : d), since);
+/** The first contact an old lead's activities give. One dated after today (1.3 took any date) is no contact yet. */
+export const firstContactUntil = (acts, today) => firstContactOf(acts.filter((a) => a.date <= today));
 export const lastChannel = (acts) => ([...acts].sort(byTimeline).at(-1) || {}).channel || null;
 export function assertMayContact(lead, direction) {
   if (direction === "out" && lead.optOutAt) throw new ValidationError("optOutAt", "M\xF6chte nicht mehr kontaktiert werden (Opt-out seit " + lead.optOutAt + ")");
 }
+/**
+ * What logging an activity changes on the lead. Any contact, either way, dates the first contact and moves
+ * neu to kontaktiert; it reopens a disqualified lead (they called back, or we work them again), but an opt-out
+ * stays closed: their message is logged and nothing else changes.
+ */
 export function planAfterActivity(lead, acts, activity, policy = SEQUENCE_POLICY) {
   const all = [...acts, activity];
   const patch = {};
+  // A contact logged later but dated earlier moves the first contact back. An opted-out lead's contact dates it too.
+  const first = firstContactOf(all, lead.contactedAt);
+  if (first !== lead.contactedAt) patch.contactedAt = first;
+  if (lead.optOutAt) return patch;
+  const status = lead.status === "neu" || lead.status === "disqualifiziert" ? "kontaktiert" : lead.status;
+  if (status !== lead.status) patch.status = status;
   if (activity.direction === "out") {
-    const status = lead.status === "recherchiert" ? "kontaktiert" : lead.status;
-    if (status !== lead.status) patch.status = status;
     if (status === "kontaktiert" && !hasReply(all)) {
       const n = countTouches(all);
       const idx = Math.min(n - 1, policy.cadence.length - 1);
@@ -47,7 +64,6 @@ export function planAfterActivity(lead, acts, activity, policy = SEQUENCE_POLICY
       patch.followUp = addDays(activity.date, policy.defaultFollowUpDays);
     }
   } else {
-    if (lead.status === "kontaktiert" || lead.status === "recherchiert") patch.status = "antwort";
     patch.followUp = activity.date;
     patch.nextStep = "Antworten";
   }
@@ -59,11 +75,10 @@ export function sequenceExhausted(lead, acts, policy = SEQUENCE_POLICY) {
 export function nextActionHint(lead, acts, policy = SEQUENCE_POLICY) {
   if (lead.optOutAt) return "";
   if (lead.nextStep) return lead.nextStep;
-  if (lead.status === "recherchiert") return "Erstkontakt schreiben";
+  if (lead.status === "neu") return "Erstkontakt";
   if (lead.status === "kontaktiert" && !hasReply(acts)) {
     const n = countTouches(acts);
     return n >= policy.maxTouches ? `Keine Antwort nach ${n} Kontakten \u2013 abschlie\xDFen?` : `Nachfassen (Kontakt ${n + 1} von ${policy.maxTouches})`;
   }
-  if (lead.status === "antwort") return "Antworten";
   return "";
 }

@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { LeadInput } from "./commands.js";
-import { STAGES, CHANNELS, LOST_REASONS } from "../domain/constants.js";
-import { isDue, isOpen } from "../domain/lead.js";
+import { LeadInput, Status, Reason } from "./commands.js";
+import { STAGES, CHANNELS, LOST_REASONS, OPT_OUT_REASON } from "../domain/constants.js";
+import { isDue, takesFollowUp } from "../domain/lead.js";
 import { nextActionHint, byTimeline } from "../domain/activity.js";
 import { fillTemplate } from "../domain/template.js";
 import { regionOf } from "../domain/region.js";
@@ -10,20 +10,20 @@ import { searchLeads } from "../web/search.js";
 
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const INSTRUCTIONS = `bookete CRM: restaurants (leads) in Austria that bookete approaches about table reservations.
-Statuses: ${STAGES.map(([k]) => k).join(", ")}. Every write is recorded under the signed-in user.
-Rules the server enforces: opted-out businesses (optOutAt) must not be contacted; logging an outgoing message moves the follow-up date by the sequence policy.
+Statuses: ${STAGES.map(([k, label]) => `${k} (${label})`).join(", ")}. Every write is recorded under the signed-in user.
+Rules the server enforces: disqualifiziert needs a reason (${LOST_REASONS.join(" | ")}) and has no follow-up; the reason "${OPT_OUT_REASON}" records an opt-out. Opted-out businesses (optOutAt) must not be contacted. contactedAt is the date of first contact: null on neu, set on kontaktiert, qualifiziert and kunde, either on disqualifiziert. Setting it on a neu lead moves the lead to kontaktiert. Logging any contact moves neu, or disqualifiziert without an opt-out, to kontaktiert; an outgoing message moves the follow-up date by the sequence policy.
 Agents cannot send email: create_gmail_draft puts a draft into the user's Gmail for a person to review and send.`;
 
 const id = z.string().describe("Lead id");
 const summary = (l, acts, today) => ({
   id: l.id, name: l.name, city: l.city, region: regionOf(l), status: l.status, fit: l.fit, email: l.email || undefined,
-  followUp: l.followUp, due: isDue(l, today), optOut: !!l.optOutAt, next: isOpen(l) ? nextActionHint(l, acts) : undefined,
+  followUp: l.followUp, contactedAt: l.contactedAt, due: isDue(l, today), optOut: !!l.optOutAt, next: takesFollowUp(l) ? nextActionHint(l, acts) : undefined,
 });
 
 /** Tools: name → description, input schema, handler. Writes go through the same use cases as the web app. */
 const TOOLS = {
   search_leads: ["Search leads by name, place, person, notes or history. Empty query lists all. Filter by status, or only those due for follow-up.",
-    z.object({ query: z.string().default(""), status: z.enum(STAGES.map(([k]) => k)).optional(), dueOnly: z.boolean().default(false), limit: z.number().int().min(1).max(200).default(30) }),
+    z.object({ query: z.string().default(""), status: Status.optional(), dueOnly: z.boolean().default(false), limit: z.number().int().min(1).max(200).default(30) }),
     async ({ query, status, dueOnly, limit }, { store, clock }) => {
       const [leads, activities] = await Promise.all([store.list("leads"), store.list("activities")]);
       const today = clock.today();
@@ -43,11 +43,11 @@ const TOOLS = {
   create_lead: ["Add a new lead. Only name is required.",
     LeadInput.required({ name: true }),
     async (input, { uc }) => ({ id: await uc.addLead(input) })],
-  update_lead: ["Change fields of a lead. Only the given fields change.",
+  update_lead: ["Change fields of a lead. Only the given fields change, plus what the rules derive from them. contactedAt (YYYY-MM-DD, not after today) records a first contact made outside the CRM and moves a neu lead to kontaktiert; it cannot be cleared.",
     z.object({ id, fields: LeadInput }),
     async ({ id: leadId, fields }, { uc }) => (await uc.updateLead(leadId, fields), { ok: true })],
-  change_status: [`Move a lead to another status. For kein-interesse give a lostReason: ${LOST_REASONS.join(" | ")}.`,
-    z.object({ id, status: z.enum(STAGES.map(([k]) => k)), lostReason: z.enum(LOST_REASONS).optional() }),
+  change_status: [`Move a lead to another status. disqualifiziert needs a lostReason: ${LOST_REASONS.join(" | ")}. Any other status takes none.`,
+    z.object({ id, status: Status, lostReason: Reason.optional() }),
     async ({ id: leadId, status, lostReason }, { uc }) => {
       await uc.changeStatus(leadId, status, lostReason);
       return { ok: true };

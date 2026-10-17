@@ -35,12 +35,12 @@ function twoUsers() {
 test("a status change made while an activity is being logged is not overwritten", async () => {
   const { store, a, b, between } = twoUsers();
   const id = await b.addLead({ name: "Gasthaus Krone" });
-  between(() => b.changeStatus(id, "demo"));
+  between(() => b.changeStatus(id, "qualifiziert"));
   await a.logActivity(id, { direction: "in", channel: "E-Mail", text: "Gerne am Montag" });
   // Same result as if the two had happened one after the other.
   const { store: s2, a: a2, b: b2 } = twoUsers();
   const id2 = await b2.addLead({ name: "Gasthaus Krone" });
-  await b2.changeStatus(id2, "demo");
+  await b2.changeStatus(id2, "qualifiziert");
   await a2.logActivity(id2, { direction: "in", channel: "E-Mail", text: "Gerne am Montag" });
   const [got, want] = [await store.get("leads", id), await s2.get("leads", id2)];
   assert.equal(got.status, want.status);

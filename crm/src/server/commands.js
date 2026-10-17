@@ -1,14 +1,17 @@
 import { z } from "zod";
 import { LEAD_FIELDS } from "../domain/lead.js";
 import { IMPORT_CHUNK } from "../domain/backup.js";
+import { STAGES, LOST_REASONS } from "../domain/constants.js";
 
 const id = z.string().min(1).max(100);
 const text = z.string().max(20000);
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-// optOutAt is not writable here: only optOut / clearOptOut may set it.
-export const LeadInput = z.object(Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt").map((k) =>
-  [k, k === "fit" ? z.coerce.number().int().min(1).max(3) : k === "followUp" ? date.nullable() : text.nullable()]
-))).partial().strict();
+export const Status = z.enum(STAGES.map(([k]) => k));
+export const Reason = z.enum(LOST_REASONS);
+// lostReason takes "" from the form's empty option; normalizeLead then asks for a reason where one is needed.
+const FIELD = { fit: z.coerce.number().int().min(1).max(3), followUp: date.nullable(), contactedAt: date.nullable(), status: Status, lostReason: z.union([Reason, z.literal("")]).nullable() };
+// optOutAt is not writable here: it is set by optOut or by picking the opt-out reason, and cleared only by clearOptOut.
+export const LeadInput = z.object(Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt").map((k) => [k, FIELD[k] ?? text.nullable()]))).partial().strict();
 const ActivityInput = z.object({ direction: z.enum(["out", "in"]), channel: z.string().max(40), date: z.union([date, z.literal("")]).optional(), text, templateId: z.string().max(100).nullish() });
 const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish() });
 
@@ -16,12 +19,12 @@ const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min
 export const COMMANDS = {
   addLead: [z.object({ input: LeadInput }), (uc, a) => uc.addLead(a.input)],
   updateLead: [z.object({ id, input: LeadInput }), (uc, a) => uc.updateLead(a.id, a.input)],
-  updateField: [z.object({ id, key: LeadInput.keyof(), value: z.union([text, z.number()]).nullable() }), (uc, a) => uc.updateField(a.id, a.key, a.value)],
+  updateField: [z.discriminatedUnion("key", Object.entries(LeadInput.shape).map(([key, value]) => z.object({ id, key: z.literal(key), value }))), (uc, a) => uc.updateField(a.id, a.key, a.value)],
   deleteLead: [z.object({ id }), (uc, a) => uc.deleteLead(a.id)],
   restoreLead: [z.object({ id }), (uc, a) => uc.restoreLead(a.id)],
   purgeLead: [z.object({ id }), (uc, a) => uc.purgeLead(a.id)],
-  changeStatus: [z.object({ id, status: z.string() }), (uc, a) => uc.changeStatus(a.id, a.status)],
-  setLostReason: [z.object({ id, reason: z.string() }), (uc, a) => uc.setLostReason(a.id, a.reason)],
+  changeStatus: [z.object({ id, status: Status, reason: Reason.optional() }), (uc, a) => uc.changeStatus(a.id, a.status, a.reason)],
+  setLostReason: [z.object({ id, reason: Reason }), (uc, a) => uc.setLostReason(a.id, a.reason)],
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],
   setFollowUp: [z.object({ id, date: z.union([date, z.literal("")]).nullable() }), (uc, a) => uc.setFollowUp(a.id, a.date)],
   setNextStep: [z.object({ id, text: z.string().max(500) }), (uc, a) => uc.setNextStep(a.id, a.text)],

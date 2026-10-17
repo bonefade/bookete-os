@@ -1,7 +1,7 @@
 import { STAGE_LABEL } from '../domain/constants.js';
 import { activitiesByLead } from './selectors.js';
 import { esc, fmtDate } from './format.js';
-import { isOpen } from '../domain/lead.js';
+import { isPipeline } from '../domain/lead.js';
 import { regionOf } from '../domain/region.js';
 
 export function fold(text) {
@@ -85,7 +85,7 @@ export function searchLeads(state, q) {
     }
     if (ok) out.push({ lead: e.lead, score, hit });
   }
-  return out.sort((a, b) => b.score - a.score || (isOpen(b.lead) ? 1 : 0) - (isOpen(a.lead) ? 1 : 0) || (b.lead.fit || 2) - (a.lead.fit || 2) || a.lead.name.localeCompare(b.lead.name, "de"));
+  return out.sort((a, b) => b.score - a.score || (isPipeline(b.lead) ? 1 : 0) - (isPipeline(a.lead) ? 1 : 0) || (b.lead.fit || 2) - (a.lead.fit || 2) || a.lead.name.localeCompare(b.lead.name, "de"));
 }
 export function markRanges(f, tokens) {
   const r = [];

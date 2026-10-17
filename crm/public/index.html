@@ -86,9 +86,6 @@ ul.rows{list-style:none;margin:0;padding:0}
 .row .meta.due{color:var(--due);font-weight:600}
 .fit{color:var(--brass);font-size:.85rem;letter-spacing:1px}
 .empty{padding:22px 12px;color:var(--muted);text-align:center;background:var(--surface);border:1px dashed var(--line);border-radius:14px}
-.seg{display:grid;grid-template-columns:repeat(4,1fr);background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:3px;margin-bottom:10px}
-.seg button{border:none;min-height:38px;padding:6px 4px;font-size:.9rem;border-radius:9px;background:none}
-.seg button[aria-pressed="true"]{background:var(--pine);color:var(--bg);font-weight:600}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px}
 .card+.card{margin-top:10px}
 
@@ -135,15 +132,12 @@ ul.rows{list-style:none;margin:0;padding:0}
 .stats{grid-template-columns:repeat(4,1fr)}
 @media (max-width:520px){.stats{grid-template-columns:repeat(2,1fr)}}
 .fbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:12px}
-.fbar .chips.region{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;max-width:100%;scrollbar-width:none;-webkit-overflow-scrolling:touch}
-.fbar .chips.region::-webkit-scrollbar{display:none}
-.fbar .chip{white-space:nowrap;flex:0 0 auto}
-.chip b{font-weight:600;opacity:.75;margin-left:2px}
+/* two selects side by side on a phone, all in one row on a wide screen */
+.fbar select{flex:1 1 160px;width:auto;min-width:0;max-width:260px;min-height:40px;padding:6px 10px}
 .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px}
-.toolbar .seg{margin:0;flex:1 1 320px;max-width:460px}
 .toolbar input[type=search]{flex:1 1 140px;width:auto;min-width:0}
 .toolbar select{flex:0 1 190px;width:auto;min-width:0}
-@media (max-width:759px){.toolbar .seg{flex-basis:100%;max-width:none}.toolbar select{flex-basis:130px}}
+@media (max-width:759px){.toolbar select{flex-basis:130px}}
 .count{margin:4px 2px 8px}
 ul.ltable{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface)}
 .ltable li+li{border-top:1px solid var(--line)}
@@ -161,7 +155,7 @@ ul.ltable{list-style:none;margin:0;padding:0;border:1px solid var(--line);border
 .c-mail{grid-area:mail;font-size:.85rem;color:var(--muted);text-align:right}
 .c-loc,.c-st,.c-next{font-size:.85rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .c-st{color:var(--pine);font-weight:600}
-.st-kein-interesse{color:var(--due)}
+.st-disqualifiziert{color:var(--due)}
 /* mobile: two lines — name/fit/when, then status · ort · next */
 .c-sub{grid-area:sub;font-size:.85rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lhead{display:none}
@@ -186,9 +180,7 @@ ul.ltable{list-style:none;margin:0;padding:0;border:1px solid var(--line);border
 .qe-actions button{min-height:38px;padding:6px 14px}
 @media (min-width:760px){.facts.qe{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}.facts.qe .fact{border-bottom:1px solid var(--line)}}
 .tabs[hidden]{display:none!important}
-.fbar.tools{margin-top:-4px;flex-wrap:nowrap}
-.flabel{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;flex:0 0 auto;margin-right:2px}
-.fbar.tools .chips.region{flex:1 1 auto;min-width:0}
+label[hidden]{display:none}
 .todo{display:grid;width:100%;text-align:left;border:none;border-radius:0;background:transparent;padding:10px 14px 10px 12px;min-height:52px;column-gap:10px;row-gap:2px;
   grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"what when" "who who";box-shadow:inset 4px 0 0 var(--due)}
 .todo:hover{background:var(--pine-soft)}
@@ -201,7 +193,6 @@ ul.ltable{list-style:none;margin:0;padding:0;border:1px solid var(--line);border
 .brand svg{height:24px;aspect-ratio:5/3}
 .brand .wm{font:500 1.15rem/1 Manrope,system-ui,sans-serif;letter-spacing:-.02em}
 .brand .sub{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
-.chip.q:not([aria-pressed="true"]){border-color:var(--brass);color:var(--brass)}
 
 /* ---- v5: global search ---- */
 :root{--mark:#F3DFA2}

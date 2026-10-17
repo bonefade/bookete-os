@@ -1,8 +1,7 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
-import { COLLECTIONS } from "../domain/constants.js";
-import { newActivityRecord, assertMayContact, planAfterActivity } from "../domain/activity.js";
-import { SCHEMA_VERSION } from "../domain/constants.js";
-import { normalizeLead, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch } from "../domain/lead.js";
+import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
+import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, firstContactUntil } from "../domain/activity.js";
+import { normalizeLead, LEAD_FIELDS, STORED, upgradeLead, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
 
@@ -30,15 +29,33 @@ async function retrying(step) {
 export function createUseCases({ store, clock, ids, actor, mailer = null }) {
   const touch = (patch) => ({ ...patch, updatedAt: clock.now() });
   const commit = (ops) => store.commit(ops, actor);
-  const patchLead = (base, patch) => commit([{ type: "patch", collection: "leads", id: base.id, base, data: touch(patch) }]);
-  /** The common shape: read the lead, compute a patch from it, write the patch only if the lead is still as read. */
+  /**
+   * Every change to a stored lead goes through here: the patch runs through normalizeLead on the read lead and
+   * every field that differs is written, so what the rules derive (a cleared reason, contactedAt, an opt-out)
+   * holds on every path. The diff is against the lead as stored: on a row from before 1.4.0 that the store
+   * upgraded on read, the first write stores the upgraded fields too. Its schemaVersion stays until 0003 rewrites
+   * the row, so the store upgrades it on read again, to the same lead. Empty when nothing changes.
+   */
+  const leadDiff = (l, patch) => {
+    const next = normalizeLead(patch, l, clock.today());
+    const stored = l[STORED] || l;
+    return Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(stored[k] ?? null)));
+  };
+  // `l` itself is the base: its version symbol is not copied by a spread.
+  const patchOp = (l, diff) => ({ type: "patch", collection: "leads", id: l.id, base: l, data: touch(diff) });
+  /** The common shape: read the lead, compute a patch from it, write the diff only if the lead is still as read. Says whether anything changed. */
   const changeLead = (id, compute) => retrying(async () => {
     const l = await lead(id);
-    await patchLead(l, compute(l));
+    const diff = leadDiff(l, compute(l));
+    if (Object.keys(diff).length) await commit([patchOp(l, diff)]);
+    return Object.keys(diff).length > 0;
   });
   async function lead(id) {
     const found = await store.get("leads", id);
     if (!found) throw new ValidationError("id", "Betrieb nicht gefunden");
+    // The store upgrades a row from before 1.4.0 without its activities; its first contact is the earliest of them.
+    // Upgraded again in place, so the lead keeps the store's version symbol, which the write guard checks.
+    if (found[STORED]) Object.assign(found, upgradeLead(found[STORED], firstContactUntil(await store.activitiesOf(id), clock.today())));
     return found;
   }
   // The lead is always written (at least updatedAt), so a concurrent opt-out, status change or delete is never missed.
@@ -46,10 +63,11 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     const l = await lead(id);
     assertMayContact(l, input.direction);
     const activity = newActivityRecord({ ...input, leadId: id }, { id: ids.newId(), now: clock.now(), today: clock.today() });
+    assertHappened(activity, clock.today());
     const plan = planAfterActivity(l, await store.activitiesOf(id), activity);
     await commit([
       { type: "put", collection: "activities", id: activity.id, data: activity },
-      { type: "patch", collection: "leads", id, base: l, data: touch(plan) },
+      patchOp(l, leadDiff(l, plan)),
     ]);
     return { activity, plan };
   });
@@ -63,25 +81,14 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
 
   return {
     async addLead(input) {
-      const record = newLeadRecord(input, { id: ids.newId(), now: clock.now() });
+      const record = newLeadRecord(input, { id: ids.newId(), now: clock.now(), today: clock.today() });
       await commit([{ type: "put", collection: "leads", id: record.id, data: record }]);
       return record.id;
     },
     /** Inline quick edit of a single field; same validation as the full form. */
-    updateField: (id, key, value) => retrying(async () => {
-      const l = await lead(id);
-      const next = normalizeLead({ [key]: value }, l);
-      if (String(next[key] ?? "") === String(l[key] ?? "")) return false;
-      await patchLead(l, { [key]: next[key] });
-      return true;
-    }),
-    /** Writes only the fields whose normalized value differs, so a save that changes nothing leaves no history entry. */
-    updateLead: (id, input) => retrying(async () => {
-      const l = await lead(id);
-      const next = normalizeLead(input, l);
-      const patch = Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
-      if (Object.keys(patch).length) await patchLead(l, patch);
-    }),
+    updateField: (id, key, value) => changeLead(id, () => ({ [key]: value })),
+    /** A save that changes nothing leaves no history entry. */
+    updateLead: (id, input) => changeLead(id, () => input),
     /** Moves the lead and its activities to the trash. Deleting a lead that is already gone does nothing. */
     deleteLead: (id) => retrying(async () => {
       const l = await store.get("leads", id);
@@ -108,14 +115,11 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
       }
       await store.purgeLead(l, actor, await store.activitiesOf(id));
     }),
-    /** Status and, for kein-interesse, the reason, validated together and written in one patch. */
-    changeStatus: (id, status, reason) => changeLead(id, (l) => {
-      const patch = transition(l, status);
-      return reason ? { ...patch, ...lostReasonPatch({ ...l, ...patch }, reason) } : patch;
-    }),
+    /** Status and, for disqualifiziert, the reason, validated together and written in one patch. */
+    changeStatus: (id, status, reason) => changeLead(id, () => transition(status, reason)),
     setLostReason: (id, reason) => changeLead(id, (l) => lostReasonPatch(l, reason)),
-    closeWithoutReply: (id) => changeLead(id, (l) => ({ ...transition(l, "kein-interesse"), lostReason: "Keine Antwort" })),
-    setFollowUp: (id, date) => changeLead(id, () => followUpPatch(date)),
+    closeWithoutReply: (id) => changeLead(id, () => transition("disqualifiziert", "Nicht erreicht")),
+    setFollowUp: (id, date) => changeLead(id, (l) => followUpPatch(l, date)),
     setNextStep: (id, text) => changeLead(id, () => ({ nextStep: String(text || "").trim() })),
     logActivity,
     /** The business asked not to be contacted again: record it (dated) and close the lead. */
@@ -129,8 +133,9 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
         date,
         text: "Opt-out: m\xF6chte keine Nachrichten mehr." + (note ? " " + String(note).trim() : "")
       }, { id: ids.newId(), now: clock.now(), today: date });
+      // Their message is a contact like any other: it dates the first contact, as planAfterActivity does.
       await commit([
-        { type: "patch", collection: "leads", id, base: l, data: touch(optOutPatch(date)) },
+        patchOp(l, leadDiff(l, { ...optOutPatch(date), contactedAt: firstContactOf([activity], l.contactedAt) })),
         { type: "put", collection: "activities", id: activity.id, data: activity }
       ]);
     }),
@@ -179,7 +184,11 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
       if (backup?.format !== BACKUP_FORMAT) throw new ValidationError("backup", "Keine bookete-CRM-Sicherung");
       const now = clock.now();
       const normalize = {
-        leads: (r) => ({ ...normalizeLead(r), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),
+        leads: (r) => {
+          // The browser upgrades an old backup whole, with its activities (chunkBackup); one chunk alone could not.
+          if (!(r.schemaVersion >= SCHEMA_VERSION)) throw new ValidationError("backup", "Format vor 1.4.0 \u2013 bitte die App neu laden und erneut importieren");
+          return { ...normalizeLead(r, LEAD_FIELDS, clock.today()), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
+        },
         activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),
         settings: (r) => ({ ...normalizeIcp(r), updatedAt: r.updatedAt || now }),

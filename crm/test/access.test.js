@@ -87,7 +87,7 @@ test("a write that keeps losing races answers 409 with a message, not 500", asyn
   await e.DB.batch([
     e.DB.prepare("INSERT INTO users (email, name, updated_at) VALUES ('jo@bookete.com', 'Jo', 'now')"),
     e.DB.prepare("INSERT INTO sessions VALUES (?, 'jo@bookete.com', ?)").bind(await sha256("jo"), Date.now() + 1e6),
-    e.DB.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', '{"name":"Krone","status":"recherchiert"}', 1)`),
+    e.DB.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', '{"name":"Krone","status":"neu"}', 1)`),
   ]);
   // What D1 raises when the write guard's CHECK fails.
   const db = e.DB;

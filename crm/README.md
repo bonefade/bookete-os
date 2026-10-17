@@ -11,6 +11,16 @@ Two people sign in with their `@bookete.com` Google accounts. Agents (Claude, Cl
 
 Architecture and commands: `../.claude/rules/project.md`.
 
+## How a lead moves
+
+- **Neu:** never contacted.
+- **Kontaktiert:** contacted at least once, still open. The first call, mail or message in either direction, an opt-out message included, sets the date of first contact (`contactedAt`); it can't lie after today, is never cleared, and a lead with it can't go back to Neu. For a contact made outside the CRM, an agent enters it (MCP `update_lead`); that moves a Neu lead here.
+- **Qualifiziert:** an appointment is agreed.
+- **Kunde.**
+- **Disqualifiziert:** closed, always with one of these reasons: Zufrieden mit aktueller Lösung, Kein Bedarf, Zu klein, Nicht unsere Zielgruppe, Geschlossen / existiert nicht, Nicht erreicht, Keine Kontaktaufnahme gewünscht. Which system a business uses is a fact (`currentTool`), not a reason.
+
+A disqualified lead has no follow-up. Any new contact reopens it as Kontaktiert. "Keine Kontaktaufnahme gewünscht" is an opt-out, whether it comes from the Opt-out button or the reason picker: no outgoing contact until the opt-out is lifted. After five unanswered contacts the CRM offers to close a lead as "Nicht erreicht".
+
 ## Setup
 
 One-time, in this order.

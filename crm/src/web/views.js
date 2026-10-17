@@ -1,11 +1,11 @@
 import { STAGES, STAGE_LABEL, LOST_REASONS, BUSINESS_TYPES, RESERVATION_TOOLS, CHANNELS, TEMPLATE_PURPOSES, PURPOSE_LABEL, SEQUENCE_POLICY, TRASH_SHOWN } from '../domain/constants.js';
-import { actsOf, currentLead, icpOf, isReady, scoped, regionCounts, toolCounts } from './selectors.js';
+import { actsOf, currentLead, icpOf, isReady, scoped, regionCounts, toolCounts, contactCounts } from './selectors.js';
 import { addDays } from '../domain/dates.js';
 import { channelLink, instagramProfile } from './platform.js';
 import { countTouches, hasReply, sequenceExhausted, nextActionHint } from '../domain/activity.js';
 import { esc, fmtDate, relDate, options, describeChange, actorName, fmtTime, FIELD_LABEL } from './format.js';
 import { fold, searchTokens, searchLeads, markRanges, markHtml, snippetHtml } from './search.js';
-import { isOpen, isDue } from '../domain/lead.js';
+import { isPipeline, takesFollowUp, isDue } from '../domain/lead.js';
 import { outreachStats, lostBreakdown, templateUsage } from '../domain/stats.js';
 import { REGIONS, regionOf } from '../domain/region.js';
 
@@ -24,10 +24,10 @@ export function tabBar(state, today) {
 }
 export function leadRow(state, l, today) {
   const acts = actsOf(state, l.id);
-  const hint = isOpen(l) ? nextActionHint(l, acts) : l.status === "kein-interesse" ? l.lostReason || "" : "";
+  const hint = takesFollowUp(l) ? nextActionHint(l, acts) : l.lostReason || "";
   const due = isDue(l, today);
   const short = (d) => (new Date(d + "T12:00:00")).toLocaleDateString("de-AT", { weekday: "short", day: "numeric", month: "numeric" });
-  const when = l.optOutAt ? "Opt-out" : l.followUp && isOpen(l) ? due ? l.followUp === today ? "heute" : "f\xE4llig " + short(l.followUp).replace(/^\S+ /, "") : short(l.followUp) : "";
+  const when = l.optOutAt ? "Opt-out" : l.followUp && takesFollowUp(l) ? due ? l.followUp === today ? "heute" : "f\xE4llig " + short(l.followUp).replace(/^\S+ /, "") : short(l.followUp) : "";
   return `<li><button class="lrow${due ? " due" : ""}${l.optOutAt ? " out" : ""}" data-open="${esc(l.id)}">
   <span class="c-name">${esc(l.name)}</span>
   <span class="c-fit" aria-label="Fit ${l.fit || 2}">${"\u2605".repeat(l.fit || 2)}</span>
@@ -41,21 +41,24 @@ export function leadRow(state, l, today) {
 }
 export const listHead = `<li class="lhead" aria-hidden="true"><span>Betrieb</span><span></span><span>Ort</span><span>Status</span><span>N\xE4chster Schritt</span><span>\u2709</span><span>Nachfassen</span></li>`;
 export const rowsOf = (state, arr, today) => `<ul class="ltable">${listHead}${arr.map((l) => leadRow(state, l, today)).join("")}</ul>`;
-export function filterBar(state) {
-  const { region, onlyEmail } = state.ui;
-  const rc = regionCounts(state);
+/** One filter as a select; `choices` are [value, label, count]. The controller writes the value to ui[key]. */
+const filterSelect = (key, label, choices, value) => `<select data-filter="${key}" aria-label="${label}">${options(choices.map(([k, l, n]) => [k, `${l} (${n})`]), value)}</select>`;
+/** The filters every list shares, in one row; `more` adds a view's own filters to it. */
+export function filterBar(state, more = "") {
+  const { ui } = state;
+  const all = (ignore) => scoped(state, state.data.leads, ignore).length;
   return `<div class="fbar">
-  <div class="chips region">${[["alle", "Alle", state.data.leads.length], ...rc.map(([r, n]) => [r, r, n])].map(([k, label, n]) => `<button class="chip" data-region="${esc(k)}" aria-pressed="${region === k}">${esc(label)} <b>${n}</b></button>`).join("")}</div>
-  <button class="chip" data-act="toggleEmail" aria-pressed="${onlyEmail}">\u2709 nur mit E-Mail</button>
-</div>
-<div class="fbar tools"><span class="flabel">System</span><div class="chips region">${[["alle", "Alle", scoped(state, state.data.leads, { ignoreTool: true }).length], ...toolCounts(state).map(([t, n]) => [t, t, n])].map(([k, label, n]) => `<button class="chip${k === "Quandoo" ? " q" : ""}" data-tool="${esc(k)}" aria-pressed="${state.ui.tool === k}">${esc(label)} <b>${n}</b></button>`).join("")}</div></div>`;
+  ${filterSelect("region", "Region", [["alle", "Alle Regionen", all("region")], ...regionCounts(state).map(([r, n]) => [r, r, n])], ui.region)}
+  ${filterSelect("tool", "System", [["alle", "Alle Systeme", all("tool")], ...toolCounts(state).map(([t, n]) => [t, t, n])], ui.tool)}
+  ${filterSelect("contact", "Kontakt", [["alle", "Alle Kontakte", all("contact")], ...contactCounts(state)], ui.contact)}${more}
+</div>`;
 }
 export const loadingOr = (state, html) => isReady(state) ? html : `<div class="empty">${esc(state.status.failed || "Lade Daten \u2026")}</div>`;
 export function todayView(state, today) {
-  const leads = scoped(state), open = leads.filter(isOpen), wk = addDays(today, 7);
+  const leads = scoped(state), open = leads.filter(isPipeline), wk = addDays(today, 7);
   const byDate = (a, b) => a.followUp < b.followUp ? -1 : 1;
   const soon = open.filter((l) => l.followUp && l.followUp > today && l.followUp <= wk).sort(byDate);
-  const fresh = leads.filter((l) => l.status === "recherchiert" && !l.followUp && !l.optOutAt).sort((a, b) => b.fit - a.fit || (b.email ? 1 : 0) - (a.email ? 1 : 0));
+  const fresh = leads.filter((l) => l.status === "neu" && !l.followUp).sort((a, b) => b.fit - a.fit || (b.email ? 1 : 0) - (a.email ? 1 : 0));
   const s = outreachStats(leads, new Map(leads.map((l) => [l.id, actsOf(state, l.id)])));
   const list = (arr, empty) => arr.length ? rowsOf(state, arr, today) : `<div class="empty">${empty}</div>`;
   const date = (new Date(today + "T12:00:00")).toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long" });
@@ -66,7 +69,7 @@ export function todayView(state, today) {
   <div class="stats"><div class="stat"><b>${s.contacted}</b><span>kontaktiert</span></div><div class="stat"><b>${s.replied}</b><span>Antworten</span></div><div class="stat"><b>${s.replyRate == null ? "\u2013" : Math.round(s.replyRate * 100) + " %"}</b><span>Antwortquote</span></div><div class="stat"><b>${withMail}</b><span>bereit per Mail</span></div></div>
   ${loadingOr(state, `
   <div class="sec"><h3>N\xE4chste 7 Tage <small>${soon.length}</small></h3>${list(soon, "Keine Termine diese Woche.")}</div>
-  <div class="sec"><h3>Bereit zum Anschreiben <small>${fresh.length}</small></h3>${list(fresh, "Keine recherchierten Betriebe in dieser Auswahl.")}</div>`)}
+  <div class="sec"><h3>Bereit zum Anschreiben <small>${fresh.length}</small></h3>${list(fresh, "Keine neuen Betriebe in dieser Auswahl.")}</div>`)}
 </div>`;
 }
 /** Due leads as a to-do list: what to do first, then for whom and since when. */
@@ -84,7 +87,9 @@ export function todosView(state, today) {
   ${loadingOr(state, sec("\xDCberf\xE4llig", due.filter((l) => l.followUp < today), "Nichts \xFCberf\xE4llig.") + sec("Heute", due.filter((l) => l.followUp === today), "F\xFCr heute nichts offen."))}
 </div>`;
 }
-export const SEGMENTS = { offen: (l) => isOpen(l), kunden: (l) => l.status === "kunde", verloren: (l) => l.status === "kein-interesse", alle: () => true };
+/** The Betriebe status filter: [value, label, test]. Offen is the pipeline. */
+export const STATUS_FILTERS = [["offen", "Offen", isPipeline], ...STAGES.map(([k, label]) => [k, label, (l) => l.status === k]), ["alle", "Alle", () => true]];
+const CONTACTED = [["alle", "Kontaktiert: alle"], ["ja", "Kontaktiert: ja"], ["nein", "Kontaktiert: nein"]];
 export const SORTS = {
   prio: (a, b) => b.fit - a.fit || ((a.followUp || "9") < (b.followUp || "9") ? -1 : 1) || a.name.localeCompare(b.name, "de"),
   nachfassen: (a, b) => ((a.followUp || "9") < (b.followUp || "9") ? -1 : (a.followUp || "9") > (b.followUp || "9") ? 1 : 0) || b.fit - a.fit,
@@ -92,9 +97,19 @@ export const SORTS = {
   status: (a, b) => STAGES.findIndex(([k]) => k === b.status) - STAGES.findIndex(([k]) => k === a.status) || b.fit - a.fit
 };
 export function leadsView(state, today) {
-  const { seg, q, quick, sort } = state.ui;
+  const { status, reason, contacted, q, quick, sort } = state.ui;
   const base = scoped(state);
-  let list = base.filter(SEGMENTS[seg]);
+  // Reason and contacted are offered, and filter, only with Disqualifiziert; there the status says neither.
+  const disq = status === "disqualifiziert";
+  const byReason = (l, r = reason) => r === "alle" || l.lostReason === r;
+  const byContacted = (l, c = contacted) => c === "alle" || !!l.contactedAt === (c === "ja");
+  const closed = base.filter((l) => l.status === "disqualifiziert");
+  const own = filterSelect("status", "Status", STATUS_FILTERS.map(([k, label, pass]) => [k, label, base.filter(pass).length]), status) + (disq
+    ? filterSelect("reason", "Grund", [["alle", "Alle Gr\xFCnde"], ...LOST_REASONS.map((r) => [r, r])].map(([k, label]) => [k, label, closed.filter((l) => byContacted(l) && byReason(l, k)).length]), reason)
+      + filterSelect("contacted", "Kontaktiert", CONTACTED.map(([k, label]) => [k, label, closed.filter((l) => byReason(l) && byContacted(l, k)).length]), contacted)
+    : "");
+  let list = base.filter(STATUS_FILTERS.find(([k]) => k === status)[2]);
+  if (disq) list = list.filter((l) => byReason(l) && byContacted(l));
   let hidden = 0;
   if (q) {
     const hits = new Set(searchLeads(state, q).map((r) => r.lead.id));
@@ -111,9 +126,8 @@ export function leadsView(state, today) {
   return `<div class="wrap wide">
   <div class="head"><h1>Betriebe</h1><button class="primary" data-act="quick"${state.caps.db ? "" : " disabled"}>+ Neu</button></div>
   ${quickForm}
-  ${filterBar(state)}
+  ${filterBar(state, own)}
   <div class="toolbar">
-    <div class="seg">${[["offen", "Offen"], ["kunden", "Kunden"], ["verloren", "Verloren"], ["alle", "Alle"]].map(([k, v]) => `<button data-seg="${k}" aria-pressed="${seg === k}">${v} ${base.filter(SEGMENTS[k]).length}</button>`).join("")}</div>
     <input type="search" id="q" placeholder="Suchen \u2026" value="${esc(q)}" aria-label="Suchen">
     <select id="sort" aria-label="Sortierung">${options([["prio", "\u2195 Fit"], ["nachfassen", "\u2195 Nachfassen"], ["status", "\u2195 Status"], ["name", "\u2195 Name"]], sort)}</select>
   </div>
@@ -125,9 +139,9 @@ export function searchRow(state, r, i, tokens, today) {
   const l = r.lead;
   const hl = (txt) => tokens.length ? markHtml(txt, markRanges(fold(txt), tokens)) : esc(txt);
   const acts = actsOf(state, l.id);
-  const hint = isOpen(l) ? nextActionHint(l, acts) : l.status === "kein-interesse" ? l.lostReason || "" : "";
+  const hint = takesFollowUp(l) ? nextActionHint(l, acts) : l.lostReason || "";
   const due = isDue(l, today);
-  const when = l.optOutAt ? "Opt-out" : l.followUp && isOpen(l) ? (due ? "f\xE4llig " : "nachfassen ") + relDate(l.followUp, today) : "";
+  const when = l.optOutAt ? "Opt-out" : l.followUp && takesFollowUp(l) ? (due ? "f\xE4llig " : "nachfassen ") + relDate(l.followUp, today) : "";
   const meta = [l.city ? hl(l.city) : "", esc(regionOf(l)), esc(hint), when ? `<span class="${due || l.optOutAt ? "warn" : ""}">${esc(when)}</span>` : ""].filter(Boolean).join(" \xB7 ");
   return `<li><button class="srow${i === state.ui.sIdx && tokens.length ? " act" : ""}${due ? " due" : ""}${l.optOutAt ? " out" : ""}" data-open="${esc(l.id)}">
   <span class="s-top"><span class="s-name">${hl(l.name)}</span><span class="c-fit" aria-label="Fit ${l.fit || 2}">${"★".repeat(l.fit || 2)}</span><span class="s-st st-${esc(l.status)}">${esc(STAGE_LABEL[l.status] || l.status)}</span></span>
@@ -153,7 +167,7 @@ export function searchResultsHtml(state, today) {
 }
 export function searchView(state, today) {
   return `<div class="wrap wide">
-  <div class="head"><div><h1>Suche</h1><p>Alle Betriebe – unabh\xE4ngig von Region, System und Status</p></div></div>
+  <div class="head"><div><h1>Suche</h1><p>Alle Betriebe – unabh\xE4ngig von Region, System, Kontakt und Status</p></div></div>
   <div class="sbox"><div class="sfield">${ICONS.suche}<input type="search" id="gq" value="${esc(state.ui.gq)}" placeholder="Name, Ort, Person, Telefon, Notiz …" aria-label="Alle Betriebe durchsuchen" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></div>
   <p class="note">Findet auch Notizen und den gesamten Verlauf. Umlaute egal, mehrere W\xF6rter grenzen ein.<span class="skeys"> \xB7 <kbd>↑</kbd><kbd>↓</kbd> w\xE4hlen, <kbd>Enter</kbd> \xF6ffnet \xB7 von \xFCberall: <kbd>/</kbd> oder <kbd>Strg K</kbd></span></p></div>
   <div id="sres">${searchResultsHtml(state, today)}</div>
@@ -190,7 +204,7 @@ export function moreView(state) {
   return `<div class="wrap">
   <div class="head"><h1>Mehr</h1></div>
   <div class="sec"><h3>Ideal Customer Profile</h3><div class="card icp">${icpBody}</div></div>
-  <div class="sec"><h3>Warum verloren</h3><div class="card">${lost.length ? `<dl class="facts" style="padding:0">${lost.map(([k, v]) => `<div class="fact"><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join("")}</dl>` : `<p class="note" style="margin:0">Noch keine verlorenen Betriebe.</p>`}</div></div>
+  <div class="sec"><h3>Warum disqualifiziert</h3><div class="card">${lost.length ? `<dl class="facts" style="padding:0">${lost.map(([k, v]) => `<div class="fact"><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join("")}</dl>` : `<p class="note" style="margin:0">Noch keine disqualifizierten Betriebe.</p>`}</div></div>
   <div class="sec"><h3>Nachfass-Rhythmus</h3><div class="card"><p style="margin:0">Nach dem Erstkontakt: Follow-up nach ${cadence[0]} Tagen, dann nach weiteren ${cadence[1]} Tagen. Nach ${maxTouches} Kontakten ohne Antwort schl\xE4gt die App vor, abzuschlie\xDFen.</p></div></div>
   <div class="sec"><h3>Backup</h3><div class="card"><p style="margin:0 0 10px">Alle Betriebe, Kontakte, Vorlagen und das ICP als versionierte JSON-Datei sichern.</p><button class="primary full" data-act="export"${state.caps.db ? "" : " disabled"}>Backup herunterladen</button><button class="full" style="margin-top:8px" data-act="importPick"${state.caps.db ? "" : " disabled"}>Sicherung einspielen</button><input type="file" id="importFile" accept="application/json,.json" hidden></div></div>
   <div class="sec"><h3>Papierkorb</h3><div class="card">${trashHtml(state.ui.trash)}</div></div>
@@ -236,7 +250,7 @@ export function detailView(state, today) {
   const ui = state.ui;
   const c = ui.compose;
   const t = countTouches(acts);
-  const lost = l.status === "kein-interesse";
+  const lost = l.status === "disqualifiziert";
   const btn = (href, label) => `<a class="btn" ${href ? `href="${esc(href)}" target="_blank" rel="noopener"` : 'aria-disabled="true"'}>${label}</a>`;
   const clamp = (key, txt) => {
     const long = (txt || "").length > 220 || (txt || "").split("\n").length > 4;
@@ -253,7 +267,7 @@ export function detailView(state, today) {
     compose = `<div class="card compose">
     <h3 style="font-size:1.05rem;margin-bottom:10px">${c.direction === "out" ? "Nachricht schreiben" : "Antwort eintragen"}</h3>
     ${c.direction === "out" ? `<label>Vorlage<select id="cTpl"><option value="">Ohne Vorlage</option>${state.data.templates.map((x) => `<option value="${esc(x.id)}"${x.id === c.templateId ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>` : ""}
-    <div class="two"><label>Kanal<select id="cCh">${options(CHANNELS, c.channel)}</select></label><label>Datum<input type="date" id="cDate" value="${esc(c.date)}"></label></div>
+    <div class="two"><label>Kanal<select id="cCh">${options(CHANNELS, c.channel)}</select></label><label>Datum<input type="date" id="cDate" value="${esc(c.date)}" max="${esc(today)}"></label></div>
     <textarea id="cText" placeholder="${c.direction === "out" ? "Nachricht" : "Was haben sie geantwortet?"}">${esc(c.text)}</textarea>
     ${c.missing?.length ? `<p class="hint">Noch leer: ${esc(c.missing.map((m) => "{" + m + "}").join(", "))}. Erg\xE4nze den Betrieb oder passe den Text an.</p>` : ""}
     ${gmail ? `<label>Betreff<input id="cSubj" value="${esc(c.subject)}"></label>` : ""}
@@ -265,8 +279,9 @@ export function detailView(state, today) {
   return `<div class="bar"><button class="link" data-act="back">\u2039 Zur\xFCck</button><h2>${esc(l.name)}</h2><button class="link" data-act="edit">Bearbeiten</button></div>
 <div class="wrap sub">
   <div class="card hero">
-    <div class="line"><span class="pill${lost ? " lost" : ""}">${esc(STAGE_LABEL[l.status])}${lost && l.lostReason ? " \xB7 " + esc(l.lostReason) : ""}</span><span class="touch">${esc(touchTxt)}</span></div>
-    ${isOpen(l) ? `<label style="margin:12px 0 10px">N\xE4chster Schritt<input id="nextStep" value="${esc(l.nextStep || "")}" placeholder="${esc(nextActionHint({ ...l, nextStep: "" }, acts) || "z. B. Di vor 15 Uhr anrufen")}"></label>
+    <div class="line"><span class="pill${lost ? " lost" : ""}">${esc(STAGE_LABEL[l.status])}${lost ? " \xB7 " + esc(l.lostReason) : ""}</span><span class="touch">${esc(touchTxt)}</span></div>
+    <p class="note" style="margin:8px 0 0">${l.contactedAt ? "Kontaktiert seit " + esc(fmtDate(l.contactedAt)) : "Nie kontaktiert"}</p>
+    ${takesFollowUp(l) ? `<label style="margin:12px 0 10px">N\xE4chster Schritt<input id="nextStep" value="${esc(l.nextStep || "")}" placeholder="${esc(nextActionHint({ ...l, nextStep: "" }, acts) || "z. B. Di vor 15 Uhr anrufen")}"></label>
     <label style="margin:0">Nachfassen am</label>
     <div class="furow" style="margin-top:4px"><input type="date" id="fu" value="${esc(l.followUp || "")}" aria-label="Nachfassen am"><button data-fu="3">+3 T</button><button data-fu="7">+1 Wo</button><button data-fu="clear">Keins</button></div>
     ${isDue(l, today) ? `<p class="note" style="color:var(--due);font-weight:600">F\xE4llig ${esc(relDate(l.followUp, today))}</p>` : ""}
@@ -275,9 +290,9 @@ export function detailView(state, today) {
   ${l.optOutAt ? `<div class="card sec optout"><p style="margin:0;font-weight:600">M\xF6chte keine Nachrichten mehr</p><p class="note" style="margin:2px 0 8px">Opt-out seit ${esc(fmtDate(l.optOutAt))}. Keine Mails, DMs oder Anrufe. Nur aufheben, wenn der Betrieb sich selbst wieder meldet.</p><button class="more" data-act="clearOptOut">Opt-out aufheben</button></div>` : ""}
   ${c ? `<div class="sec">${compose}</div>` : l.optOutAt ? `<div class="sec"><button class="full" data-act="composeIn">Eingehende Nachricht eintragen</button></div>` : `<div class="two sec"><button class="primary" data-act="composeOut">Nachricht schreiben</button><button data-act="composeIn">Antwort eintragen</button></div>`}
   <div class="sec"><div class="quick">${btn(channelLink(l, "Telefon"), "Anrufen")}${btn(channelLink(l, "E-Mail"), "E-Mail")}${btn(instagramProfile(l), "Instagram")}${btn(l.website, "Website")}</div></div>
-  <div class="sec"><h3>Status</h3><div class="chips">${STAGES.map(([k, v]) => `<button class="chip${k === "kein-interesse" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}">${v}</button>`).join("")}</div>
+  <div class="sec"><h3>Status</h3><div class="chips">${STAGES.map(([k, v]) => `<button class="chip${k === "disqualifiziert" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}">${v}</button>`).join("")}</div>
     ${l.optOutAt ? "" : `<button class="danger full" style="margin-top:12px" data-act="optOut">Keine Nachrichten mehr (Opt-out)</button>`}
-    ${ui.lostPick || lost && !l.lostReason ? `<div class="card" style="margin-top:10px"><p style="margin:0 0 8px;font-weight:600">Warum kein Interesse?</p><div class="chips">${LOST_REASONS.map((r) => `<button class="chip lostc" data-lost="${esc(r)}" aria-pressed="${l.lostReason === r}">${esc(r)}</button>`).join("")}</div></div>` : lost ? `<button class="more" data-act="lostPick">Grund \xE4ndern</button>` : ""}
+    ${ui.lostPick ? `<div class="card" style="margin-top:10px"><p style="margin:0 0 8px;font-weight:600">Warum disqualifiziert?</p><div class="chips">${LOST_REASONS.map((r) => `<button class="chip lostc" data-lost="${esc(r)}" aria-pressed="${l.lostReason === r}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="lostCancel">Abbrechen</button></div>` : lost && !l.optOutAt ? `<button class="more" data-act="lostPick">Grund \xE4ndern</button>` : ""}
   </div>
   <div class="sec"><h3>Infos <small>zum Bearbeiten antippen</small></h3><dl class="card facts qe">${factsHtml}</dl></div>
   <div class="sec"><h3>Notizen</h3>${ui.editField === "notes" ? `<div class="card"><textarea id="qe" data-field="notes" rows="10">${esc(l.notes || "")}</textarea><div class="qe-actions"><button data-act="qeCancel">Abbrechen</button><button class="primary" data-act="qeSave">Speichern</button></div></div>` : `<div class="card qe-click" data-edit="notes" role="button" tabindex="0">${l.notes ? clamp("notes", l.notes) : `<span class="qe-empty">+ Notiz hinzuf\xFCgen</span>`}</div>`}</div>
@@ -287,7 +302,7 @@ export function detailView(state, today) {
 }
 export function leadEditView(state) {
   const l = state.ui.leadId ? currentLead(state) : null;
-  const d = l || { status: "recherchiert", fit: 2, currentTool: "unbekannt", type: "Restaurant" };
+  const d = l || { status: "neu", fit: 2, currentTool: "unbekannt", type: "Restaurant" };
   const f = (n, lab, ph = "", type = "text") => `<label>${lab}<input name="${n}" type="${type}" value="${esc(d[n] || "")}" placeholder="${esc(ph)}"></label>`;
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>${l ? "Bearbeiten" : "Neuer Betrieb"}</h2><button class="link" data-act="saveLead">Sichern</button></div>
 <form class="wrap sub" id="form">
@@ -295,6 +310,7 @@ export function leadEditView(state) {
   <div class="two">${f("city", "Ort")}<label>Art<select name="type">${options(BUSINESS_TYPES, d.type)}</select></label></div>
   <label>Region<select name="region">${options([["", "automatisch aus Ort" + (d.city ? " (" + regionOf(d) + ")" : "")], ...REGIONS], d.region || "")}</select></label>
   <div class="two"><label>Status<select name="status">${options(STAGES, d.status)}</select></label><label>ICP-Fit<select name="fit">${options([[3, "\u2605\u2605\u2605 sehr gut"], [2, "\u2605\u2605 passt"], [1, "\u2605 fraglich"]], d.fit)}</select></label></div>
+  <label id="lostReasonField"${d.status === "disqualifiziert" ? "" : " hidden"}>Grund *<select name="lostReason">${options([["", "Grund w\xE4hlen \u2026"], ...LOST_REASONS], d.lostReason || "")}</select></label>
   ${f("instagram", "Instagram", "@handle")}
   ${f("phone", "Telefon", "+43 \u2026", "tel")}
   ${f("email", "E-Mail", "name@betrieb.at", "email")}

@@ -17,11 +17,14 @@ export const options = (arr, sel) => arr.map((v) => {
   const [k, l] = Array.isArray(v) ? v : [v, v];
   return `<option value="${esc(k)}"${String(k) === String(sel) ? " selected" : ""}>${esc(l)}</option>`;
 }).join("");
-export const FIELD_LABEL = { name: "Name", city: "Ort", type: "Art", region: "Region", status: "Status", fit: "ICP-Fit", instagram: "Instagram", phone: "Telefon", email: "E-Mail", website: "Website", person: "Ansprechperson", currentTool: "Reserviert aktuell \xFCber", hook: "Aufh\xE4nger", notes: "Notizen", nextStep: "N\xE4chster Schritt", followUp: "Nachfassen am", lostReason: "Grund", optOutAt: "Opt-out seit" };
+// Statuses before 1.4.0, still in the history of versions written then.
+const LEGACY_STAGE_LABEL = { recherchiert: "Recherchiert", antwort: "Antwort", demo: "Gespr\xE4ch/Demo", onboarding: "Onboarding", "kein-interesse": "Kein Interesse" };
+const STATUS_LABEL = { ...LEGACY_STAGE_LABEL, ...STAGE_LABEL };
+export const FIELD_LABEL = { name: "Name", city: "Ort", type: "Art", region: "Region", status: "Status", fit: "ICP-Fit", instagram: "Instagram", phone: "Telefon", email: "E-Mail", website: "Website", person: "Ansprechperson", currentTool: "Reserviert aktuell \xFCber", hook: "Aufh\xE4nger", notes: "Notizen", nextStep: "N\xE4chster Schritt", followUp: "Nachfassen am", lostReason: "Grund", optOutAt: "Opt-out seit", contactedAt: "Erstkontakt" };
 const shown = (key, v) => {
   if (v == null || v === "") return "\u2013";
-  if (key === "status") return STAGE_LABEL[v] || v;
-  if (key === "followUp" || key === "optOutAt") return fmtDate(v);
+  if (key === "status") return STATUS_LABEL[v] || v;
+  if (key === "followUp" || key === "optOutAt" || key === "contactedAt") return fmtDate(v);
   const t = String(v).replace(/\s+/g, " ");
   return t.length > 60 ? t.slice(0, 59) + "\u2026" : t;
 };

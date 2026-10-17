@@ -38,14 +38,14 @@ test("an opt-out blocks outgoing contact, reopening and direct edits on every wr
 
   await rejects(uc.logActivity(id, { direction: "out", channel: "E-Mail", text: "Nochmal" }), "optOutAt");
   await rejects(uc.changeStatus(id, "kontaktiert"), "status");
-  await rejects(uc.updateLead(id, { status: "demo" }), "status");
-  await rejects(uc.updateField(id, "status", "antwort"), "status");
+  await rejects(uc.updateLead(id, { status: "qualifiziert" }), "status");
+  await rejects(uc.updateField(id, "status", "neu"), "status");
   await rejects(uc.sendEmail(id, { subject: "Hi", text: "x" }), "optOutAt");
   await rejects(uc.draftEmail(id, { subject: "Hi", text: "x" }), "optOutAt");
   assert.equal(mailer.sent.length, 0);
 
   const lead = await store.get("leads", id);
-  assert.equal(lead.status, "kein-interesse");
+  assert.equal(lead.status, "disqualifiziert");
   assert.equal(lead.optOutAt, "2026-10-15");
   // An incoming message is still allowed: the business may write back.
   await uc.logActivity(id, { direction: "in", channel: "E-Mail", text: "Doch Interesse" });
@@ -77,7 +77,7 @@ test("drafts are created but never logged as sent", async () => {
   const id = await uc.addLead({ name: "Draft Wirt", email: "wirt@example.at" });
   assert.deepEqual(await uc.draftEmail(id, { subject: "S", text: "T" }), { draftId: "d1" });
   assert.equal((await store.activitiesOf(id)).length, 0);
-  assert.equal((await store.get("leads", id)).status, "recherchiert");
+  assert.equal((await store.get("leads", id)).status, "neu");
 });
 
 test("without Gmail, sending fails before anything happens", async () => {
@@ -105,7 +105,7 @@ test("importing a backup adds new records, normalized, and is safe to repeat", a
     format: "bookete-crm-backup",
     schemaVersion: 2,
     data: {
-      leads: [{ id: "L1", name: "Alt", status: "kontaktiert", fit: '"><img src=x onerror=alert(1)>' }],
+      leads: [{ id: "L1", name: "Alt", status: "kontaktiert", schemaVersion: 3, fit: '"><img src=x onerror=alert(1)>' }],
       activities: [{ id: "A1", leadId: "L1", date: "2026-10-01", channel: "Instagram", direction: "out", text: "Hi" }],
       templates: [],
       settings: [{ id: "icp", fit: ["Gasthaus"], noFit: [] }],
@@ -118,6 +118,8 @@ test("importing a backup adds new records, normalized, and is safe to repeat", a
   assert.equal(lead.followUp, null);
   assert.deepEqual((await store.get("settings", "icp")).fit, ["Gasthaus"]);
   await rejects(uc.importBackup({ format: "other" }), "backup");
+  // A lead from before 1.4.0 is refused even where its status still exists: only the browser can upgrade it, with its activities.
+  await rejects(uc.importBackup({ format: "bookete-crm-backup", data: { leads: [{ id: "L2", name: "Alt", status: "kontaktiert", schemaVersion: 2 }] } }), "backup");
 });
 
 test("an import can neither clear an opt-out nor bring back a deleted lead", async () => {
@@ -148,16 +150,16 @@ test("when Gmail fails, nothing is logged", async () => {
   const id = await uc.addLead({ name: "Fail", email: "f@example.at" });
   await rejects(uc.sendEmail(id, { subject: "S", text: "T" }), "gmail");
   assert.equal((await store.activitiesOf(id)).length, 0);
-  assert.equal((await store.get("leads", id)).status, "recherchiert");
+  assert.equal((await store.get("leads", id)).status, "neu");
 });
 
 test("a status with an invalid reason changes nothing", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Halb" });
-  await rejects(uc.changeStatus(id, "kunde", "Sonstiges"), "lostReason");
-  assert.equal((await store.get("leads", id)).status, "recherchiert");
-  await uc.changeStatus(id, "kein-interesse", "Sonstiges");
-  assert.equal((await store.get("leads", id)).lostReason, "Sonstiges");
+  await rejects(uc.changeStatus(id, "kunde", "Zu klein"), "lostReason");
+  assert.equal((await store.get("leads", id)).status, "neu");
+  await uc.changeStatus(id, "disqualifiziert", "Zu klein");
+  assert.equal((await store.get("leads", id)).lostReason, "Zu klein");
 });
 
 test("every write records who made it", async () => {

@@ -9,7 +9,7 @@ import { lastChannel } from '../domain/activity.js';
 import { relDate } from './format.js';
 import { tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "toggleEmail", "back", "edit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
 /**
  * A form's fields by name. With `onlyChanged`, only those whose value differs from what the form showed when
  * it opened, so saving cannot undo someone else's edit to a field this user never touched.
@@ -31,6 +31,10 @@ export async function saveLeadForm(uc, leadId, elements) {
   if (!leadId) return uc.addLead(formInput(elements, false));
   await uc.updateLead({ id: leadId }, formInput(elements, true));
   return leadId;
+}
+/** A reason picked in the lead view: disqualifies with it in one write, or changes the reason of a lead already disqualified. */
+export function pickLostReason(uc, lead, reason) {
+  return lead.status === "disqualifiziert" ? uc.setLostReason(lead, reason) : uc.changeStatus(lead, "disqualifiziert", reason);
 }
 export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
   let uc = null;
@@ -228,7 +232,7 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
       const g = (id2) => root.querySelector("#" + id2).value;
       const id = await run(() => uc.addLead({ name: g("qaName"), city: g("qaCity"), instagram: g("qaIg"), hook: g("qaHook") }), "Hinzugef\xFCgt");
       if (id) {
-        ui({ quick: false, seg: "offen" });
+        ui({ quick: false, status: "offen" });
         render();
       }
     },
@@ -260,16 +264,16 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
       ui({ lostPick: true });
       render();
     },
+    lostCancel: () => {
+      ui({ lostPick: false });
+      render();
+    },
     qeCancel: () => {
       ui({ editField: null });
       render();
     },
     qeSave: () => saveQuickEdit(),
     toSearch: () => openSearch(S().ui.q),
-    toggleEmail: () => {
-      ui({ onlyEmail: !S().ui.onlyEmail });
-      render();
-    },
     async optOut() {
       const lead = currentLead(S());
       if (!confirm(`\u201E${lead.name}\u201C m\xF6chte keine Nachrichten mehr?
@@ -355,18 +359,6 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
     if (d.tab) return d.tab === st.ui.tab ? window.scrollTo(0, 0) : goTab(d.tab);
     if (d.open) return openLead(d.open);
     if (d.tpl) return openView("editTemplate", { templateId: d.tpl });
-    if (d.seg) {
-      ui({ seg: d.seg });
-      return render();
-    }
-    if (d.region) {
-      ui({ region: d.region });
-      return render();
-    }
-    if (d.tool) {
-      ui({ tool: d.tool });
-      return render();
-    }
     if (d.edit) {
       if (st.ui.editField === d.edit) return;
       ui({ editField: d.edit });
@@ -398,12 +390,14 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
     const lead = currentLead(st);
     if (d.status) {
       if (lead.status === d.status) return;
-      ui({ lostPick: d.status === "kein-interesse" });
+      // Disqualifiziert needs a reason: the picker asks for it, and the reason picked writes both at once.
+      ui({ lostPick: d.status === "disqualifiziert" });
+      if (d.status === "disqualifiziert") return render();
       return run(() => uc.changeStatus(lead, d.status), "Status: " + STAGE_LABEL[d.status]);
     }
     if (d.lost) {
       ui({ lostPick: false });
-      return run(() => uc.setLostReason(lead, d.lost), "Grund gespeichert");
+      return run(() => pickLostReason(uc, lead, d.lost), lead.status === "disqualifiziert" ? "Grund gespeichert" : "Status: " + STAGE_LABEL.disqualifiziert);
     }
     if (d.fu) {
       const v = d.fu === "clear" ? "" : addDays(clock.today(), +d.fu);
@@ -451,6 +445,15 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
     }
     if (t.id === "cDate" && c) return ui({ compose: { ...c, date: t.value } });
     if (t.id === "qe" && t.tagName === "SELECT") return saveQuickEdit();
+    if (t.dataset.filter) {
+      ui({ [t.dataset.filter]: t.value });
+      return render();
+    }
+    // The edit form asks for a reason only with Disqualifiziert.
+    if (t.name === "status" && t.form?.id === "form") {
+      root.querySelector("#lostReasonField").hidden = t.value !== "disqualifiziert";
+      return;
+    }
     if (t.id === "sort") {
       ui({ sort: t.value });
       return render();
@@ -465,7 +468,7 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
         return toast("Keine g\xFCltige JSON-Datei");
       }
       t.value = "";
-      if (confirm("Sicherung einspielen? Nur Eintr\xE4ge, die das CRM noch nie hatte, kommen dazu; bestehende bleiben unver\xE4ndert.")) await run(() => uc.importBackup(backup), (n) => `${n} neue Eintr\xE4ge eingespielt`);
+      if (confirm("Sicherung einspielen? Nur Eintr\xE4ge, die das CRM noch nie hatte, kommen dazu; bestehende bleiben unver\xE4ndert.")) await run(() => uc.importBackup(backup, clock.today()), (n) => `${n} neue Eintr\xE4ge eingespielt`);
     }
   });
   render();
