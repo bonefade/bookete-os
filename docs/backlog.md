@@ -23,7 +23,6 @@ or overwriting data by mistake, not about outside access.
 ## P1
 
 - CRM: drop the read-time `upgradeLead` in `crm/src/server/store.js` once migration 0003 has run in production (1.4.1). Keep it in `chunkBackup` for old backups. First count leads with a status outside the five, at any schemaVersion: the read-time upgrade is what covers a 1.3 write after 0003.
-- CRM: a call script on the lead page and weekly numbers (calls, reached, appointments, customers, top reasons for no) (release 3).
 - CRM: email tracking like HubSpot, and an unsubscribe link for recipients (owner, 2026-10-17). Open tracking needs consent (TKG §165, GDPR); the unsubscribe link is a public endpoint and gets `/second-review`.
 
 - CRM: tasks as their own records (due date, optional time, done), replacing the overloaded `nextStep` and the single `followUp`. Owner decided 2026-10-16: one owner per lead, so a lead gets an `owner` and Todos shows "mine" first.

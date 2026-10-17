@@ -70,7 +70,7 @@ const TOOLS = {
       if (nextStep !== undefined) await uc.setNextStep(leadId, nextStep);
       return { ok: true };
     }],
-  list_templates: ["Message templates with placeholders {Betrieb} {Ort} {Aufhänger} {Person}, and the ideal customer profile.",
+  list_templates: ["Message templates with placeholders {Betrieb} {Ort} {Aufhänger} {Person}, and the ideal customer profile. A template with purpose \"leitfaden\" is a call script: never use it for a message.",
     z.object({}),
     async (_, { store }) => ({ templates: await store.list("templates"), icp: await store.get("settings", "icp") })],
   render_template: ["Fill a template for a lead. Returns the text and any placeholders the lead has no value for.",
@@ -78,6 +78,7 @@ const TOOLS = {
     async ({ id: leadId, templateId }, { store }) => {
       const [lead, template] = await Promise.all([store.get("leads", leadId), store.get("templates", templateId)]);
       if (!lead || !template) throw new ValidationError("id", "Betrieb oder Vorlage nicht gefunden");
+      if (template.purpose === "leitfaden") throw new ValidationError("templateId", "Ein Gespr\xE4chsleitfaden ist keine Nachricht");
       return fillTemplate(template.body, lead);
     }],
   create_gmail_draft: ["Create a Gmail draft to the lead's email address in the signed-in user's mailbox. Nothing is sent or logged; a person reviews and sends it.",

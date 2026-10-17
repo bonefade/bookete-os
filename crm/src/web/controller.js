@@ -4,12 +4,12 @@ import { actsOf, currentLead, icpOf, isReady, callList } from './selectors.js';
 import { addDays } from '../domain/dates.js';
 import { copyText, channelLink, mailSubject, saveFile } from './platform.js';
 import { createBackup } from '../domain/backup.js';
-import { fillTemplate, defaultTemplate } from '../domain/template.js';
+import { fillTemplate, defaultTemplate, DEFAULT_SCRIPT } from '../domain/template.js';
 import { lastChannel } from '../domain/activity.js';
 import { relDate } from './format.js';
 import { TABS, tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "callCancel", "meetingCancel", "callStart", "callNext", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "callCancel", "meetingCancel", "callStart", "callNext", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -398,6 +398,12 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
       ui({ calling: { seen } });
       go(routeOf({ view: "detail", leadId: next.id }), { replace: true });
     },
+    scriptToggle: () => {
+      ui({ script: !S().ui.script });
+      render();
+    },
+    /** The default call script as a template, to adapt under Vorlagen; the lead page shows it from the next sync. */
+    scriptTemplate: () => run(() => uc.saveTemplate(null, { name: "Gespr\xE4chsleitfaden", purpose: "leitfaden", body: DEFAULT_SCRIPT }), "Vorlage angelegt \xB7 unter Vorlagen anpassen"),
     closeWithoutReply: () => run(() => uc.closeWithoutReply(currentLead(S())), "Abgeschlossen"),
     lostPick: () => {
       ui({ lostPick: true });

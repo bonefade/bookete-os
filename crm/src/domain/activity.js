@@ -30,7 +30,7 @@ export function assertHappened(activity, today) {
 }
 export const byTimeline = (a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.createdAt || "") < (b.createdAt || "") ? -1 : 1;
 /** They answered: a message from them, or a call in which we spoke to them. */
-const isReply = (a) => a.direction === "in" || (!!a.outcome && a.outcome !== "nicht-erreicht");
+export const isReply = (a) => a.direction === "in" || (!!a.outcome && a.outcome !== "nicht-erreicht");
 export function countTouches(acts) {
   const days = new Set();
   for (const a of [...acts].sort(byTimeline)) {

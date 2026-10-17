@@ -44,6 +44,15 @@ test("MCP writes go through the use cases and their rules", async () => {
   assert.equal(bad.result.isError, true);
 });
 
+test("an agent cannot fill a call script as a message", async () => {
+  const context = mcpContext();
+  const id = await context.uc.addLead({ name: "Agent Wirt" });
+  const templateId = await context.uc.saveTemplate(null, { name: "Leitfaden", purpose: "leitfaden", body: "Gr\xFC\xDF Gott, {Betrieb}" });
+  const res = await call(context, "tools/call", { name: "render_template", arguments: { id, templateId } });
+  assert.equal(res.result.isError, true);
+  assert.match(res.result.content[0].text, /keine Nachricht/);
+});
+
 test("an agent whose write keeps losing races gets the conflict as a tool error, not a crash", async () => {
   const context = mcpContext();
   const id = await context.uc.addLead({ name: "Agent Wirt" });

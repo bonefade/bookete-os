@@ -2,6 +2,13 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.8.0 (2026-10-17)
+
+### Added
+- **Gesprächsleitfaden** on the Anruf card, folded: an opener, two questions (how they take reservations today, how many a week) and answers to the usual objections, with the business's name filled in. "Als Vorlage anlegen" saves it as a template of the new kind "Gesprächsleitfaden", to adapt under Vorlagen; the oldest such template is then shown instead. The compose form does not offer it as a message template, MCP `list_templates` names it a call script and `render_template` refuses to fill it.
+- **Diese Woche** on Heute, Monday to today: calls, calls we got through, appointments made, new customers, and the most common reasons for Kein Interesse.
+- A business now remembers the day it became Kunde. Customers from before 1.8.0 have no such day and are not counted; a Kunde set back to another status loses it.
+
 ## 1.7.0 (2026-10-17)
 
 ### Added

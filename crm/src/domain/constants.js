@@ -24,6 +24,7 @@ export const TEMPLATE_PURPOSES = [
   ["followup1", "Follow-up 1"],
   ["followup2", "Follow-up 2 und weitere"],
   ["antwort", "Auf Antwort"],
+  ["leitfaden", "Gespr\xE4chsleitfaden"],
   ["sonstiges", "Sonstiges"]
 ];
 export const PURPOSE_LABEL = Object.fromEntries(TEMPLATE_PURPOSES);

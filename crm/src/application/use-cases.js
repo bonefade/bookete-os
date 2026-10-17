@@ -210,7 +210,8 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
         leads: (r) => {
           // The browser upgrades an old backup whole, with its activities (chunkBackup); one chunk alone could not.
           if (!(r.schemaVersion >= SCHEMA_VERSION)) throw new ValidationError("backup", "Format vor 1.4.0 \u2013 bitte die App neu laden und erneut importieren");
-          return { ...normalizeLead(r, LEAD_FIELDS, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
+          // Normalized against its own status: a record brought back is no status change, so it keeps its wonAt.
+          return { ...normalizeLead(r, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
         },
         activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),

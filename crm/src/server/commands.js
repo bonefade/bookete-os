@@ -12,7 +12,7 @@ export const Reason = z.enum(LOST_REASONS);
 // lostReason takes "" from the form's empty option; normalizeLead then asks for a reason where one is needed.
 const FIELD = { fit: z.coerce.number().int().min(1).max(3), followUp: date.nullable(), contactedAt: date.nullable(), status: Status, lostReason: z.union([Reason, z.literal("")]).nullable() };
 // optOutAt is not writable here: it is set by optOut or by picking the opt-out reason, and cleared only by clearOptOut.
-export const LeadInput = z.object(Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt").map((k) => [k, FIELD[k] ?? text.nullable()]))).partial().strict();
+export const LeadInput = z.object(Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt" && k !== "wonAt").map((k) => [k, FIELD[k] ?? text.nullable()]))).partial().strict();
 // The Kundenakte, part by part; normalizeAccount checks values. Strict, so no field for a password can be added.
 // Choices and dates also take "" from the form's empty option and empty date field.
 const str = (max) => z.string().max(max).nullish();

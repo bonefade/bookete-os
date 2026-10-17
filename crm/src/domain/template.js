@@ -26,3 +26,28 @@ export function defaultTemplate(lead, acts, templates) {
   const p = purposeFor(lead, acts);
   return templates.find((t) => t.purpose === p) || null;
 }
+/** The call script until one is saved as a template (purpose leitfaden). */
+export const DEFAULT_SCRIPT = `Einstieg
+Gr\xFC\xDF Gott, hier ist \u2026 von bookete. Spreche ich mit der Chefin oder dem Chef von {Betrieb}?
+Ganz kurz: Wir helfen Gasth\xE4usern und Restaurants, Tischreservierungen online anzunehmen, damit im Service nicht st\xE4ndig das Telefon l\xE4utet.
+
+Zwei Fragen
+1. Wie nehmt ihr Reservierungen heute an?
+2. Wie viele sind das pro Woche, ungef\xE4hr?
+
+Ziel: ein Termin
+Darf ich es euch in 15 Minuten zeigen, vor Ort oder per Video? Passt euch eher Mittwoch oder Donnerstag?
+
+Typische Einw\xE4nde
+\u201EWir haben schon ein System.\u201C \u2013 Was gef\xE4llt euch daran, und was fehlt euch?
+\u201EDas Telefon reicht uns.\u201C \u2013 Wie oft l\xE4utet es, wenn im Service gerade viel los ist?
+\u201EKeine Zeit.\u201C \u2013 Verstehe. Wann passt es besser? Ich rufe gern zur\xFCck.
+\u201ESchicken Sie mir was per Mail.\u201C \u2013 Mache ich gern. An welche Adresse? Und darf ich n\xE4chste Woche kurz nachfragen?`;
+/**
+ * The script for a call to this lead: the oldest leitfaden template, else the default, filled with the lead's fields.
+ * The oldest, so every device shows the same one whatever order its templates arrived in.
+ */
+export function callScript(lead, templates) {
+  const template = templates.filter((t) => t.purpose === "leitfaden").sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0] || null;
+  return { template, text: fillTemplate(template ? template.body : DEFAULT_SCRIPT, lead).text };
+}

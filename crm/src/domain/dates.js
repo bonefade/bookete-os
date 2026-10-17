@@ -13,3 +13,5 @@ export function daysBetween(a, b) {
 export const isDate = (s) => typeof s === "string" && DATE_RE.test(s);
 /** 2026-10-20 as 20.10.2026, for text that is stored. */
 export const dayLabel = (s) => s.split("-").reverse().join(".");
+/** The Monday of the week a day is in. */
+export const weekStart = (s) => addDays(s, -((parse(s).getDay() + 6) % 7));

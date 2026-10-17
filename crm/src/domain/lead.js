@@ -25,8 +25,10 @@ export const LEAD_FIELDS = {
   // optional override; empty = inferred from city (see region.js)
   optOutAt: null,
   // date the business asked not to be contacted again (revocation of contact)
-  contactedAt: null
+  contactedAt: null,
   // date of the first contact either way; null exactly while the lead is neu (a disqualified lead may have either)
+  wonAt: null
+  // date the lead became kunde; null on any other status, and on a customer from before 1.8.0
 };
 /** Trimmed text, "" for none; `max` caps its length. */
 export const str = (v, max = Infinity) => (v == null ? "" : String(v).trim()).slice(0, max);
@@ -66,6 +68,8 @@ export function normalizeLead(input, base = LEAD_FIELDS, today) {
     out.status = "kontaktiert";
   }
   if (out.status !== "neu" && out.status !== "disqualifiziert" && !out.contactedAt) out.contactedAt = today;
+  // Dated by the change to Kunde, so a status tapped by mistake and set back is not counted as won.
+  out.wonAt = out.status !== "kunde" ? null : base.status === "kunde" ? (isDate(out.wonAt) ? out.wonAt : null) : today;
   if (out.instagram && !out.instagram.startsWith("@")) out.instagram = "@" + out.instagram;
   if (out.email && !isEmail(out.email)) throw new ValidationError("email", "E-Mail ung\xFCltig");
   if (out.website && !/^https?:\/\//.test(out.website)) out.website = "https://" + out.website;

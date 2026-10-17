@@ -6,7 +6,8 @@ import { countTouches, hasReply, sequenceExhausted, nextActionHint, meetingDue }
 import { esc, fmtDate, fmtDateWithYear, relDate, options, describeChange, actorName, fmtTime, FIELD_LABEL } from './format.js';
 import { fold, searchTokens, searchLeads, markRanges, markHtml, snippetHtml } from './search.js';
 import { isPipeline, takesFollowUp, isDue } from '../domain/lead.js';
-import { outreachStats, lostBreakdown, templateUsage } from '../domain/stats.js';
+import { outreachStats, lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
+import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
 
@@ -64,11 +65,15 @@ export function todayView(state, today) {
   const list = (arr, empty) => arr.length ? rowsOf(state, arr, today) : `<div class="empty">${empty}</div>`;
   const date = (new Date(today + "T12:00:00")).toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long" });
   const withMail = fresh.filter((l) => l.email).length;
+  const w = weekNumbers(leads, leads.flatMap((l) => actsOf(state, l.id)), today);
+  const week = `<div class="sec"><h3>Diese Woche <small>seit ${esc(fmtDate(w.from))}</small></h3>
+  <div class="stats">${[[w.calls, "Anrufe"], [w.reached, "erreicht"], [w.meetings, "Termine"], [w.customers, "neue Kunden"]].map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join("")}</div>
+  ${w.reasons.length ? `<p class="note">H\xE4ufigste Gr\xFCnde f\xFCr Kein Interesse: ${w.reasons.map(([r, n]) => `${esc(r)} (${n})`).join(", ")}</p>` : ""}</div>`;
   return `<div class="wrap wide">
   <div class="head"><div><h1>Heute</h1><p>${esc(date)}${state.ui.region !== "alle" ? " \xB7 " + esc(state.ui.region) : ""}</p></div></div>
   ${filterBar(state)}
   <div class="stats"><div class="stat"><b>${s.contacted}</b><span>kontaktiert</span></div><div class="stat"><b>${s.replied}</b><span>Antworten</span></div><div class="stat"><b>${s.replyRate == null ? "\u2013" : Math.round(s.replyRate * 100) + " %"}</b><span>Antwortquote</span></div><div class="stat"><b>${withMail}</b><span>bereit per Mail</span></div></div>
-  ${loadingOr(state, `
+  ${loadingOr(state, `${week}
   <div class="sec"><h3>N\xE4chste 7 Tage <small>${soon.length}</small></h3>${list(soon, "Keine Termine diese Woche.")}</div>
   <div class="sec"><h3>Bereit zum Anschreiben <small>${fresh.length}</small></h3>${list(fresh, "Keine neuen Betriebe in dieser Auswahl.")}</div>`)}
 </div>`;
@@ -273,7 +278,7 @@ export function detailView(state, today) {
     const gmail = c.direction === "out" && c.channel === "E-Mail" && !!l.email && state.caps.gmail;
     compose = `<div class="card compose">
     <h3 style="font-size:1.05rem;margin-bottom:10px">${c.direction === "out" ? "Nachricht schreiben" : "Antwort eintragen"}</h3>
-    ${c.direction === "out" ? `<label>Vorlage<select id="cTpl"><option value="">Ohne Vorlage</option>${state.data.templates.map((x) => `<option value="${esc(x.id)}"${x.id === c.templateId ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>` : ""}
+    ${c.direction === "out" ? `<label>Vorlage<select id="cTpl"><option value="">Ohne Vorlage</option>${state.data.templates.filter((x) => x.purpose !== "leitfaden").map((x) => `<option value="${esc(x.id)}"${x.id === c.templateId ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>` : ""}
     <div class="two"><label>Kanal<select id="cCh">${options(CHANNELS, c.channel)}</select></label><label>Datum<input type="date" id="cDate" value="${esc(c.date)}" max="${esc(today)}"></label></div>
     <textarea id="cText" placeholder="${c.direction === "out" ? "Nachricht" : "Was haben sie geantwortet?"}">${esc(c.text)}</textarea>
     ${c.missing?.length ? `<p class="hint">Noch leer: ${esc(c.missing.map((m) => "{" + m + "}").join(", "))}. Erg\xE4nze den Betrieb oder passe den Text an.</p>` : ""}
@@ -294,7 +299,7 @@ export function detailView(state, today) {
     ${isDue(l, today) ? `<p class="note" style="color:var(--due);font-weight:600">F\xE4llig ${esc(relDate(l.followUp, today))}</p>` : ""}
     ${sequenceExhausted(l, acts) ? `<button class="danger full" style="margin-top:10px" data-act="closeWithoutReply">Ohne Antwort abschlie\xDFen</button>` : ""}` : ""}
   </div>
-  ${calls ? callHtml(l, ui, today) : meetingDue(l, today) ? meetingHtml(ui, today) : ""}
+  ${calls ? callHtml(l, ui, today, state.data.templates) : meetingDue(l, today) ? meetingHtml(ui, today) : ""}
   ${ui.calling ? `<div class="sec"><button class="full" data-act="callNext">N\xE4chster \u203A</button></div>` : ""}
   ${l.optOutAt ? `<div class="card sec optout"><p style="margin:0;font-weight:600">M\xF6chte keine Nachrichten mehr</p><p class="note" style="margin:2px 0 8px">Opt-out seit ${esc(fmtDate(l.optOutAt))}. Keine Mails, DMs oder Anrufe. Nur aufheben, wenn der Betrieb sich selbst wieder meldet.</p><button class="more" data-act="clearOptOut">Opt-out aufheben</button></div>` : ""}
   ${c ? `<div class="sec">${compose}</div>` : l.optOutAt ? `<div class="sec"><button class="full" data-act="composeIn">Eingehende Nachricht eintragen</button></div>` : `<div class="two sec"><button class="primary" data-act="composeOut">Nachricht schreiben</button><button data-act="composeIn">Antwort eintragen</button></div>`}
@@ -315,12 +320,16 @@ const agreedFields = (today) => `<div class="two"><label>Datum<input type="date"
 const reasonField = (label) => `<label>${label}<select id="agReason"><option value="">Grund w\xE4hlen \u2026</option>${options(SPOKEN_REASONS)}</select></label>`;
 const formEnd = (cancel, save) => `<div class="two" style="margin-top:8px"><button data-act="${cancel}">Abbrechen</button><button class="primary" data-act="${save}">Eintragen</button></div>`;
 /** A call from the lead page: dial, then one tap for how it ended. */
-function callHtml(l, ui, today) {
+function callHtml(l, ui, today, templates) {
   const c = ui.call;
+  const script = callScript(l, templates);
+  const scriptHtml = `<button class="link" data-act="scriptToggle" aria-expanded="${ui.script}">Gespr\xE4chsleitfaden ${ui.script ? "\u25B4" : "\u25BE"}</button>
+    ${ui.script ? `<div class="t" style="white-space:pre-wrap;margin:6px 0 4px">${esc(script.text)}</div>${script.template ? "" : `<button class="link" data-act="scriptTemplate">Als Vorlage anlegen, um ihn anzupassen</button>`}` : ""}`;
   const tel = channelLink(l, "Telefon");
   const form = !c ? "" : `<div style="margin-top:10px">${c.outcome === "kein-interesse" ? reasonField("Warum kein Interesse?") : agreedFields(today)}<label>Notiz <small>optional</small><input id="agNote"></label>${formEnd("callCancel", "callSave")}</div>`;
   return `<div class="sec"><h3>Anruf</h3><div class="card">
-    ${tel ? `<a class="btn full" href="${esc(tel)}">${esc(l.phone)} anrufen</a>` : `<p class="note" style="margin:0">Keine Telefonnummer hinterlegt.</p>`}
+    ${scriptHtml}
+    ${tel ? `<a class="btn full" style="margin-top:10px" href="${esc(tel)}">${esc(l.phone)} anrufen</a>` : `<p class="note" style="margin:0">Keine Telefonnummer hinterlegt.</p>`}
     <div class="chips" style="margin-top:10px">${CALL_OUTCOMES.map(([k, label]) => `<button class="chip${k === "kein-interesse" ? " lostc" : ""}" data-call="${k}" aria-pressed="${c?.outcome === k}">${label}</button>`).join("")}</div>
     ${form}
   </div></div>`;
