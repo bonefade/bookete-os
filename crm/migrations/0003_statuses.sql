@@ -1,8 +1,7 @@
 -- Contract step of 1.4.0's five statuses: rewrites the leads stored before it (schemaVersion below 3) by the rule
--- of upgradeLead in src/domain/lead.js, which 1.4.0 already applies on read. Deployed code reads both shapes, so
--- nothing that runs reads what this removes. test/migration.test.js holds SQL, upgradeLead and the first 1.4.0
--- write to the same result; where the upgrade finds no day, SQL stores what that write stores. An erased lead ('{}')
--- stays a tombstone.
+-- of upgradeLead in src/domain/lead.js, which 1.4.0 applied on read (until 1.9.2). Deployed code read both shapes, so
+-- nothing that ran read what this removes. test/migration.test.js holds SQL and upgradeLead to the same result; where
+-- the upgrade finds no day, SQL stores today, as normalizeLead does on a write. An erased lead ('{}') stays a tombstone.
 
 -- One new seq per live lead rewritten, so every client gets the change through /api/sync.
 UPDATE counter SET seq = seq + (

@@ -17,7 +17,7 @@ function setup() {
   const store = createStore(db);
   let n = 0;
   const uc = createUseCases({ store, clock, ids: { newId: () => `id${++n}` }, actor: "jo@bookete.com (test)" });
-  return { db, store, uc };
+  return { store, uc };
 }
 const rejects = (promise, field) => assert.rejects(promise, (e) => e instanceof ValidationError && e.field === field);
 const mcp = async (context, name, args) => (await (await handleMcp(new Request("https://crm/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) }), context)).json()).result;
@@ -163,18 +163,12 @@ test("picking the opt-out reason is an opt-out: no more outgoing contact", async
   assert.deepEqual([l.status, l.lostReason, l.optOutAt], ["kontaktiert", null, null]);
 });
 
-test("a contact on an opted-out lead dates its first contact too, on a new and on an old row", async () => {
-  const { db, store, uc } = setup();
+test("a contact on an opted-out lead dates its first contact too", async () => {
+  const { store, uc } = setup();
   const id = await uc.addLead({ name: "Will nicht" });
   await uc.changeStatus(id, "disqualifiziert", "Keine Kontaktaufnahme gew\xFCnscht");
   await uc.logActivity(id, { direction: "in", channel: "Telefon", text: "Hat nochmal angerufen", date: "2026-10-12" });
   assert.deepEqual([(await store.get("leads", id)).contactedAt, (await store.get("leads", id)).optOutAt], ["2026-10-12", "2026-10-15"]);
-  await db.batch([
-    db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', '{"name":"Alt","status":"kein-interesse","lostReason":"Keine Kontaktaufnahme gew\xFCnscht","schemaVersion":2,"createdAt":"2026-09-24T08:00:00Z","updatedAt":"2026-10-01T08:00:00Z"}', 100)`),
-    db.prepare("UPDATE counter SET seq = 100"),
-  ]);
-  await uc.logActivity("L1", { direction: "in", channel: "E-Mail", text: "Antwort", date: "2026-10-03" });
-  assert.equal((await store.get("leads", "L1")).contactedAt, "2026-10-03");
 });
 
 test("the opt-out message is a contact: it dates the first contact, which lifting the opt-out keeps", async () => {
@@ -267,99 +261,10 @@ test("updateField checks the value by its field at the boundary", () => {
   assert.deepEqual([parse("status", "kontaktiert"), parse("lostReason", "Zu klein"), parse("fit", "2"), parse("notes", "Ja"), parse("followUp", null)], [true, true, true, true, true]);
 });
 
-test("until migration 0003 has run, old rows read as 1.4.0 leads and writes keep the rules", async () => {
-  const { db, store, uc } = setup();
-  await db.batch([db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', '{"name":"Alt","status":"kein-interesse","lostReason":"Sonstiges","schemaVersion":2,"createdAt":"2026-09-24T08:00:00Z"}', 1)`)]);
-  const l = await store.get("leads", "L1");
-  assert.deepEqual([l.status, l.lostReason], ["neu", null]);
-  assert.equal((await store.changes(0)).changes[0].record.status, "neu");
-  await uc.updateLead("L1", { notes: "Neu notiert" });
-  await uc.changeStatus("L1", "disqualifiziert", "Nicht unsere Zielgruppe");
-  const after = await store.get("leads", "L1");
-  assert.deepEqual([after.status, after.lostReason, after.notes], ["disqualifiziert", "Nicht unsere Zielgruppe", "Neu notiert"]);
-});
-
-test("the first write to an old row stores the upgraded fields, so nothing derived is lost before 0003", async () => {
-  const { db, store, uc } = setup();
-  await db.batch([db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', '{"name":"Alt","status":"kein-interesse","lostReason":"Keine Kontaktaufnahme gew\xFCnscht","schemaVersion":2,"createdAt":"2026-09-24T08:00:00Z","updatedAt":"2026-10-01T08:00:00Z"}', 1)`)]);
-  await uc.updateLead("L1", { notes: "Nur eine Notiz" });
-  const stored = JSON.parse((await db.prepare("SELECT data FROM docs WHERE id = 'L1'").first()).data);
-  assert.deepEqual([stored.status, stored.lostReason, stored.optOutAt, stored.schemaVersion], ["disqualifiziert", "Keine Kontaktaufnahme gew\xFCnscht", "2026-10-01", 2]);
-  await uc.changeStatus("L1", "kunde");
-  assert.equal((await store.get("leads", "L1")).optOutAt, "2026-10-01");
-});
-
-test("an old row with a timestamp that is not ISO gets no date cut from it, so it stays writable", async () => {
-  const { db, store, uc } = setup();
-  await db.batch([
-    db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', '{"name":"Alt","status":"kontaktiert","schemaVersion":2,"createdAt":"16.03.2026 08:00"}', 1)`),
-    db.prepare("UPDATE counter SET seq = 1"),
-  ]);
-  assert.equal((await store.get("leads", "L1")).contactedAt, null);
-  await uc.updateLead("L1", { notes: "Geht" });
-  assert.equal((await store.get("leads", "L1")).contactedAt, "2026-10-15");
-});
-
-test("the first contact logged on an old row is dated by its earliest logged contact, not today", async () => {
-  const { db, store, uc } = setup();
-  await db.batch([
-    db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', '{"name":"Alt","status":"kein-interesse","lostReason":"Hat schon ein Tool","schemaVersion":2,"createdAt":"2026-09-01T08:00:00Z"}', 1)`),
-    db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('activities', 'A1', '{"leadId":"L1","direction":"out","channel":"E-Mail","date":"2026-09-10","text":"Hallo"}', 2)`),
-    db.prepare("UPDATE counter SET seq = 2"),
-  ]);
-  assert.equal((await store.get("leads", "L1")).status, "neu");
-  await uc.logActivity("L1", { direction: "out", channel: "Telefon", text: "Angerufen", date: "2026-10-15" });
-  const l = await store.get("leads", "L1");
-  assert.deepEqual([l.status, l.contactedAt], ["kontaktiert", "2026-09-10"]);
-});
-
-test("an activity an old row has dated after today is no first contact, so the lead stays writable", async () => {
-  const { db, store, uc } = setup();
-  await db.batch([
-    db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', '{"name":"Alt","status":"recherchiert","schemaVersion":2,"createdAt":"2026-09-01T08:00:00Z"}', 1)`),
-    db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('activities', 'A1', '{"leadId":"L1","direction":"out","channel":"Telefon","date":"2026-11-05","text":"Anrufen"}', 2)`),
-    db.prepare("UPDATE counter SET seq = 2"),
-  ]);
-  await uc.setNextStep("L1", "Anrufen");
-  const l = await store.get("leads", "L1");
-  assert.deepEqual([l.status, l.contactedAt, l.nextStep], ["neu", null, "Anrufen"]);
+test("an activity an old backup has dated after today is no first contact", () => {
   const old = { format: "bookete-crm-backup", data: { leads: [{ id: "B1", name: "Alt", status: "recherchiert", schemaVersion: 2 }], activities: [{ id: "A9", leadId: "B1", direction: "out", channel: "Telefon", date: "2026-11-05", text: "Anrufen" }] } };
   const [leads] = chunkBackup(old, "2026-10-15");
   assert.deepEqual([leads.data.leads[0].status, leads.data.leads[0].contactedAt], ["neu", null]);
-});
-
-// Every write that patches a lead, each on an old row it applies to. The row has a reply logged before our
-// messages, and not as its first activity: the first contact is that reply's date, whatever the write.
-const OLD_ROW_WRITES = [
-  ["updateField", { status: "kontaktiert" }, (uc) => uc.updateField("L1", "notes", "Notiz")],
-  ["updateLead", { status: "recherchiert" }, (uc) => uc.updateLead("L1", { notes: "Notiz" })],
-  ["changeStatus", { status: "recherchiert" }, (uc) => uc.changeStatus("L1", "qualifiziert")],
-  ["setLostReason", { status: "kein-interesse", lostReason: "Zu wenig Reservierungen" }, (uc) => uc.setLostReason("L1", "Kein Bedarf")],
-  ["setFollowUp", { status: "demo" }, (uc) => uc.setFollowUp("L1", "2026-11-02")],
-  ["setNextStep", { status: "antwort" }, (uc) => uc.setNextStep("L1", "Angebot schicken")],
-  ["closeWithoutReply", { status: "kontaktiert" }, (uc) => uc.closeWithoutReply("L1")],
-  ["logActivity", { status: "recherchiert" }, (uc) => uc.logActivity("L1", { direction: "out", channel: "Telefon", text: "Angerufen", date: "2026-10-15" })],
-  ["optOut", { status: "kontaktiert" }, (uc) => uc.optOut("L1")],
-  ["clearOptOut", { status: "kein-interesse", lostReason: "Keine Kontaktaufnahme gew\xFCnscht" }, (uc) => uc.clearOptOut("L1")],
-];
-
-test("every lead write on an old row stores its earliest logged contact, either way, as the first contact", async () => {
-  for (const [name, old, write] of OLD_ROW_WRITES) {
-    const { db, uc } = setup();
-    const row = { name: "Alt", schemaVersion: 2, createdAt: "2026-09-01T08:00:00Z", updatedAt: "2026-09-02T08:00:00Z", ...old };
-    const act = (id, direction, date, seq) => db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('activities', ?, ?, ${seq})`)
-      .bind(id, JSON.stringify({ leadId: "L1", direction, channel: "E-Mail", date, text: "Hallo" }));
-    await db.batch([
-      db.prepare("INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', ?, 1)").bind(JSON.stringify(row)),
-      act("A1", "out", "2026-09-10", 2),
-      act("A2", "in", "2026-09-05", 3),
-      act("A3", "out", "2026-09-12", 4),
-      db.prepare("UPDATE counter SET seq = 4"),
-    ]);
-    await write(uc);
-    const stored = JSON.parse((await db.prepare("SELECT data FROM docs WHERE id = 'L1'").first()).data);
-    assert.equal(stored.contactedAt, "2026-09-05", name);
-  }
 });
 
 test("an old backup is upgraded in the browser with its activities; the server refuses an old lead", async () => {
@@ -382,18 +287,14 @@ test("an old backup is upgraded in the browser with its activities; the server r
   assert.deepEqual([b2.status, b2.contactedAt], ["kontaktiert", "2026-09-27"]);
 });
 
-test("a backup taken before 0003 has run is upgraded again on import, with its activities", async () => {
-  const before = setup();
-  await before.db.batch([
-    before.db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('leads', 'L1', '{"name":"Alt","status":"recherchiert","schemaVersion":2,"createdAt":"2026-09-24T08:00:00Z"}', 1)`),
-    before.db.prepare(`INSERT INTO docs (collection, id, data, seq) VALUES ('activities', 'A1', '{"leadId":"L1","direction":"in","channel":"Telefon","date":"2026-09-27","text":"Hat angerufen"}', 2)`),
-  ]);
-  // The store reads the old row without its activities: Neu, and still marked as not yet upgraded.
-  const read = await before.store.list("leads");
-  assert.deepEqual([read[0].status, read[0].schemaVersion], ["neu", 2]);
-  const backup = JSON.parse(JSON.stringify({ format: "bookete-crm-backup", data: { leads: read, activities: await before.store.list("activities") } }));
-  const after = setup();
-  for (const chunk of chunkBackup(backup, "2026-10-15")) await after.uc.importBackup(chunk);
-  const l = await after.store.get("leads", "L1");
+test("a backup taken before 0003 had run is upgraded again on import, with its activities", async () => {
+  // 1.4.0 read the old row without its activities, so its backup holds it as Neu and still marked as not yet upgraded.
+  const backup = { format: "bookete-crm-backup", data: {
+    leads: [{ id: "L1", name: "Alt", status: "neu", contactedAt: null, schemaVersion: 2, createdAt: "2026-09-24T08:00:00Z" }],
+    activities: [{ id: "A1", leadId: "L1", direction: "in", channel: "Telefon", date: "2026-09-27", text: "Hat angerufen" }],
+  } };
+  const { store, uc } = setup();
+  for (const chunk of chunkBackup(backup, "2026-10-15")) await uc.importBackup(chunk);
+  const l = await store.get("leads", "L1");
   assert.deepEqual([l.status, l.contactedAt, l.schemaVersion], ["kontaktiert", "2026-09-27", 3]);
 });

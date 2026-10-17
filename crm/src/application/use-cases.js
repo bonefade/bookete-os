@@ -1,7 +1,7 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
-import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, firstContactUntil, callActivity, planAfterCall, meetingPatch } from "../domain/activity.js";
-import { normalizeLead, LEAD_FIELDS, STORED, upgradeLead, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink } from "../domain/lead.js";
+import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch } from "../domain/activity.js";
+import { normalizeLead, LEAD_FIELDS, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
@@ -34,14 +34,11 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
    * Every change to a stored lead's fields goes through here (the Kundenakte has its own rules, normalizeAccount,
    * and saveAccount writes it with the same guard): the patch runs through normalizeLead on the read lead and
    * every field that differs is written, so what the rules derive (a cleared reason, contactedAt, an opt-out)
-   * holds on every path. The diff is against the lead as stored: on a row from before 1.4.0 that the store
-   * upgraded on read, the first write stores the upgraded fields too. Its schemaVersion stays until 0003 rewrites
-   * the row, so the store upgrades it on read again, to the same lead. Empty when nothing changes.
+   * holds on every path. Empty when nothing changes.
    */
   const leadDiff = (l, patch) => {
     const next = normalizeLead(patch, l, clock.today());
-    const stored = l[STORED] || l;
-    return Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(stored[k] ?? null)));
+    return Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
   };
   // `l` itself is the base: its version symbol is not copied by a spread.
   const patchOp = (l, diff) => ({ type: "patch", collection: "leads", id: l.id, base: l, data: touch(diff) });
@@ -55,9 +52,6 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
   async function lead(id) {
     const found = await store.get("leads", id);
     if (!found) throw new ValidationError("id", "Betrieb nicht gefunden");
-    // The store upgrades a row from before 1.4.0 without its activities; its first contact is the earliest of them.
-    // Upgraded again in place, so the lead keeps the store's version symbol, which the write guard checks.
-    if (found[STORED]) Object.assign(found, upgradeLead(found[STORED], firstContactUntil(await store.activitiesOf(id), clock.today())));
     return found;
   }
   // The lead is always written (at least updatedAt), so a concurrent opt-out, status change or delete is never missed.

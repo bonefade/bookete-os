@@ -3,8 +3,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createD1 } from "./d1.js";
 import { upgradeLead, LEAD_FIELDS } from "../src/domain/lead.js";
-import { createStore } from "../src/server/store.js";
-import { createUseCases } from "../src/application/use-cases.js";
 
 const MIGRATION_0003 = readFileSync(new URL("../migrations/0003_statuses.sql", import.meta.url), "utf8");
 const OPT_OUT = "Keine Kontaktaufnahme gew\xFCnscht";
@@ -156,7 +154,7 @@ test("0003 rewrites every pre-1.4.0 lead to the five statuses, as written by han
   for (const id of UNTOUCHED) assert.deepEqual(leads[id].data, LEADS[id], id);
 });
 
-test("0003 gives the same leads as upgradeLead, the rule 1.4.0 applies on read and import", async () => {
+test("0003 gives the same leads as upgradeLead, the rule an old backup is upgraded by", async () => {
   const db = await seeded();
   await migrate(db);
   const leads = leadsOf(await rows(db));
@@ -168,26 +166,9 @@ test("0003 gives the same leads as upgradeLead, the rule 1.4.0 applies on read a
   for (const id of leadIds.filter((id) => id !== "l30")) assert.deepEqual(leads[id].data, upgradeLead({ status: LEAD_FIELDS.status, ...LEADS[id] }, firstContact(id)), id);
 });
 
-// The live write rule, not only the read-time upgrade: where 0003 has not run, a write through the use cases
-// reads the lead's activities and stores the upgrade. Both must store the same lead.
-test("0003 stores what the first 1.4.0 write to an old lead stores", async () => {
-  const db = await seeded();
-  await migrate(db);
-  const migrated = leadsOf(await rows(db));
-  const unmigrated = await seeded();
-  const clock = { today: () => "2026-10-17", now: () => "2026-10-17T10:00:00.000Z" };
-  const uc = createUseCases({ store: createStore(unmigrated), clock, ids: { newId: () => "unused" }, actor: ACTOR });
-  const live = Object.keys(EXPECTED).filter((id) => !TRASHED.has(id));
-  for (const id of live) await uc.setNextStep(id, "Anrufen");
-  const written = leadsOf(await rows(unmigrated));
-  // As the store reads them: a key the write left out reads as its LEAD_FIELDS default.
-  const rule = (l) => ["status", "lostReason", "contactedAt", "optOutAt", "followUp"].map((k) => ({ ...LEAD_FIELDS, ...l })[k] ?? null);
-  for (const id of live) assert.deepEqual(rule(written[id].data), rule(migrated[id].data), id);
-});
-
 // An old import stored timestamps in another format, and no contact is logged: the upgrade finds no date where a
-// 1.4.0 lead needs one. The first 1.4.0 write then dates it today (normalizeLead); 0003 must store the same.
-test("0003 dates a first contact or an opt-out it finds no day for today, as the first 1.4.0 write does", async () => {
+// 1.4.0 lead needs one. 0003 dates it today, as normalizeLead does on a write.
+test("0003 dates a first contact or an opt-out it finds no day for today", async () => {
   const broken = { createdAt: "16.03.2026 08:00", updatedAt: "01.10.2026 08:00" };
   const extra = {
     x1: { ...old(47, { status: "kontaktiert" }), ...broken },
@@ -197,14 +178,9 @@ test("0003 dates a first contact or an opt-out it finds no day for today, as the
   const db = await seeded(extra);
   await migrate(db);
   const migrated = leadsOf(await rows(db));
-  const unmigrated = await seeded(extra);
-  const uc = createUseCases({ store: createStore(unmigrated), clock: { today: () => today, now: () => `${today}T10:00:00.000Z` }, ids: { newId: () => "unused" }, actor: ACTOR });
-  for (const id of Object.keys(extra)) await uc.setNextStep(id, "Anrufen");
-  const written = leadsOf(await rows(unmigrated));
   const rule = (l) => ["status", "lostReason", "contactedAt", "optOutAt"].map((k) => l[k] ?? null);
   assert.deepEqual(rule(migrated.x1.data), ["kontaktiert", null, today, null]);
   assert.deepEqual(rule(migrated.x2.data), ["disqualifiziert", OPT_OUT, null, today]);
-  for (const id of Object.keys(extra)) assert.deepEqual(rule(written[id].data), rule(migrated[id].data), id);
 });
 
 test("0003: live leads get new seqs in their old order and a history row, trashed ones keep theirs, a second run changes nothing", async () => {

@@ -23,7 +23,6 @@ or overwriting data by mistake, not about outside access.
 ## P1
 
 - CRM: a backup import adds an activity the CRM never held even when its lead is in the Papierkorb or erased; on an erased lead that brings text back after the erase, and an import landing during an erase leaves its activity live and without history, because `purgeLead` guards only the lead row. Decide whether an import may add to a trashed lead, and refuse it for an erased one (second review of 1.9.0, 2026-10-17).
-- CRM: drop the read-time `upgradeLead` in `crm/src/server/store.js` once migration 0003 has run in production (1.4.1). Keep it in `chunkBackup` for old backups. First count leads with a status outside the five, at any schemaVersion: the read-time upgrade is what covers a 1.3 write after 0003.
 - CRM: open and click tracking like HubSpot (owner, 2026-10-17): owner's decision, not built. A tracking pixel or rewritten links read the recipient's device without consent (§165 (3) TKG 2021, Art. 5 (3) ePrivacy, GDPR). "Detect replies" below tells us who answered without that.
 - CRM: "Kopieren & E-Mail öffnen" (a mailto link) sends the compose text without the unsubscribe link, also when Gmail is connected. Add the link there too, or offer only "Per Gmail senden" once Gmail is connected.
 - CRM: an opt-out belongs to the lead, not to the email address. The same business added again under a new id (a new scrape, a duplicate) can be mailed again. A suppression list by address would close that.
@@ -55,7 +54,7 @@ or overwriting data by mistake, not about outside access.
 - CRM: the Kundenakte's free-text fields (`access`, notes, a system's `what`) may still hold a password; nothing detects one, only the form and the MCP description say not to (unenforced; found in the 1.6.0 review).
 - Rule gap: behaviour only a browser shows (history, scroll, focus) has no committed check; 1.5.0 was checked with a local Playwright script (unenforced; found in the 1.5.0 review).
 - Rule gap: a test named for a regression is checked against that regression by mutation before merge: break the code that way, see the test go red, revert. 1.5.0's navigation test first stayed green under both mutations it was named for (unenforced; found in the 1.5.0 review).
-- Rule gap: a rule derived from history (activities) must either be read with that history by the read-time upgrade or recomputed from it on write; 1.4.0's first-contact date missed this once (found in the 1.4.0 review). Mechanism: `crm/test/statuses.test.js` runs every lead write on old rows with activities and checks the stored first contact; a new history-derived rule adds its check there.
+- Rule gap: a rule derived from history (activities) must either be read with that history by a read-time upgrade or recomputed from it on write; 1.4.0's first-contact date missed this once (found in the 1.4.0 review). Its test went with the read-time upgrade in 1.9.2; the next read-time upgrade needs one again (unenforced).
 - Rule gap: a migration that rewrites stored records chooses its rows by the stored format version (`schemaVersion`), not by a value the old and new formats share (unenforced; found in the 1.4 plan review).
 
 ## P3

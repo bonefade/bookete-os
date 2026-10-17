@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.9.2 (2026-10-17)
+
+### Changed
+- Leads are read as stored. Since 1.4.0 the server translated a lead still on the old statuses each time it read it; migration 0003 (1.4.1) has rewritten them all, so that step is gone. An old backup is still upgraded on import, with its activities.
+
 ## 1.9.1 (2026-10-17)
 
 ### Changed

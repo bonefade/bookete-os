@@ -122,13 +122,11 @@ const CONTACTED_BEFORE = new Set(["kontaktiert", "antwort", "demo", "onboarding"
 // The UTC day of a timestamp, as migration 0003 cuts it; a timestamp an old import stored in another format gives none.
 const dayOf = (iso) => (typeof iso === "string" && isDate(iso.slice(0, 10)) ? iso.slice(0, 10) : null);
 
-/** On an upgraded lead: the lead as stored. Writes diff against it, so the first write stores the whole upgrade. */
-export const STORED = Symbol("stored");
-
 /**
  * Turns a lead stored before 1.4.0 into a 1.4.0 lead; a current one comes back as it is. `firstContact` is the date
  * of the lead's earliest activity, either way, where known. Runs on a lead that 1.4.0 already wrote parts of, too:
- * a status from the new list and a stored contactedAt are kept. Migration 0003 applies the same rule in SQL.
+ * a status from the new list and a stored contactedAt are kept. Migration 0003 applied the same rule in SQL to the
+ * stored leads; this now upgrades the leads of an old backup, with their activities (chunkBackup).
  */
 export function upgradeLead(lead, firstContact = null) {
   // A status outside the five is a 1.3 write after 0003 (a deploy out of order, or a rollback): upgraded all the same.
@@ -141,11 +139,10 @@ export function upgradeLead(lead, firstContact = null) {
   if (optOutAt && status !== "kunde") status = "disqualifiziert";
   if (status === "neu" && contactedAt) status = "kontaktiert";
   const closed = status === "disqualifiziert";
-  const upgraded = {
+  return {
     ...lead, status, contactedAt, optOutAt: optOutAt || null,
     lostReason: closed ? (optOutAt ? OPT_OUT_REASON : reason) : null,
     followUp: closed ? null : lead.followUp ?? null,
     schemaVersion: SCHEMA_VERSION,
   };
-  return Object.defineProperty(upgraded, STORED, { value: lead });
 }
