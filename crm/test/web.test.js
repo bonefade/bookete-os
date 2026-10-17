@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createStore, initialState } from "../src/web/store.js";
-import { tabBar, todayView, todosView, leadsView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar } from "../src/web/views.js";
+import { TABS, tabBar, todayView, todosView, leadsView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar } from "../src/web/views.js";
 import { LEAD_FIELDS } from "../src/domain/lead.js";
 import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
 import { describeChange, fmtDate } from "../src/web/format.js";
@@ -444,6 +444,8 @@ test("Mehr counts the disqualified leads by their reason", () => {
 test("every screen has an address, and the address opens that screen", () => {
   const screens = [
     [{ tab: "betriebe", view: null }, "#/betriebe"],
+    // Suche has no tab, and its address still opens it: old links and the browser's Back land there.
+    [{ tab: "suche", view: null }, "#/suche"],
     [{ tab: "heute", view: "detail", leadId: "L 1/ä" }, "#/betrieb/L%201%2F%C3%A4"],
     [{ tab: "heute", view: "editLead", leadId: "L1" }, "#/betrieb/L1/bearbeiten"],
     [{ tab: "vorlagen", view: "editTemplate", templateId: "T1" }, "#/vorlage/T1"],
@@ -460,9 +462,11 @@ test("every screen has an address, and the address opens that screen", () => {
 });
 
 test("entering an address resets what belongs to the screen left, and keeps the rest", () => {
-  const ui = { ...initialState().ui, tab: "betriebe", q: "krone", quick: true, compose: { text: "x" }, lostPick: true, trash: [{}], scroll: { betriebe: 300 } };
+  const ui = { ...initialState().ui, tab: "betriebe", q: "krone", quick: true, icpEdit: true, compose: { text: "x" }, lostPick: true, trash: [{}], scroll: { betriebe: 300 } };
   const lead = enterRoute(ui, parseRoute("#/betrieb/L1"));
   assert.deepEqual([lead.view, lead.leadId, lead.tab, lead.compose, lead.lostPick, lead.q], ["detail", "L1", "betriebe", null, false, "krone"]);
+  // The quick-add form and the ICP form show on their own tab only, so any address closes them.
+  assert.deepEqual([lead.quick, lead.icpEdit], [false, false]);
   // Back from the edit form to the same lead keeps its open compose box.
   const again = enterRoute({ ...ui, view: "editLead", leadId: "L1" }, parseRoute("#/betrieb/L1"));
   assert.deepEqual(again.compose, { text: "x" });
@@ -586,17 +590,21 @@ function fakeBrowser(hash, store, uc) {
   const on = {};
   // What the test typed into the Kundenakte form, by field name; a checkbox takes true or false.
   const typed = {};
+  // The search screen's result list, which typing in the top bar's field fills.
+  const results = { innerHTML: "" };
   const root = {
     innerHTML: "",
     addEventListener() {},
     contains: () => false,
     querySelector: (sel) => {
+      if (sel === "#sres") return root.innerHTML.includes('id="sres"') ? results : null;
       if (!root.innerHTML.includes("<form")) return null;
       // The Kundenakte form with its drawn fields; any other form with none: the use case fakes take whatever it holds.
       if (sel === "#aform") return { elements: formElements(root.innerHTML, typed) };
       return sel === "form" || sel === "#form" ? { elements: [] } : null;
     },
-    querySelectorAll: () => [],
+    // The rows of the result list, which the field's arrow keys and Enter go through.
+    querySelectorAll: (sel) => sel === "#sres .srow" ? [...results.innerHTML.matchAll(/class="srow[^"]*" data-open="([^"]+)"/g)].map(([, open]) => ({ dataset: { open }, classList: { toggle() {} }, scrollIntoView() {} })) : [],
   };
   Object.assign(globalThis, {
     history: h.history,
@@ -606,10 +614,17 @@ function fakeBrowser(hash, store, uc) {
     confirm: () => true,
   });
   const toastEl = { classList: { add() {}, remove() {} } };
-  const app = mountApp({ root, tabsEl: {}, toastEl, store, clock: { today: () => "2026-10-15" } });
+  // The search field in the top bar, outside the screen; focus() fires a focus handler if there is one, as a browser does.
+  const field = { value: "", disabled: false, on: {}, addEventListener(type, f) { field.on[type] = f; }, focus() { field.on.focus?.(); }, select() {}, blur() {} };
+  const app = mountApp({ root, tabsEl: {}, searchEl: field, toastEl, store, clock: { today: () => "2026-10-15" } });
   app.connect(uc);
   const click = (dataset) => on.click({ target: { closest: () => ({ dataset }) } });
-  return { h, root, app, click, typed, toastEl };
+  const type = (text) => {
+    field.value = text;
+    field.on.input();
+  };
+  const press = (key, mods = {}) => on.keydown({ key, target: { tagName: "BODY" }, preventDefault() {}, ...mods });
+  return { h, root, app, click, press, typed, toastEl, field, type, results };
 }
 /** A drawn form's fields as form.elements holds them, by position and by name, with what the test typed over them. */
 function formElements(html, typed = {}) {
@@ -673,6 +688,195 @@ test("the app's buttons and the browser's Back and Forward move through the addr
     ready(later, "Krone neu");
     reload.app.onDataChanged();
     assert.doesNotMatch(reload.root.innerHTML, /Krone neu/);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("five tabs at the bottom, and the one search field in the top bar", () => {
+  assert.deepEqual([...tabBar(initialState(), "2026-10-15").matchAll(/data-tab="(\w+)"/g)].map(([, k]) => k), ["heute", "todos", "betriebe", "vorlagen", "mehr"]);
+  const page = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.match(page, new RegExp(`\\.tabs \\.in\\{[^}]*repeat\\(${TABS.length},1fr\\)`));
+  assert.match(page, /<header class="brandbar">[^]*<input type="search" id="gq"[^]*<\/header>/);
+  // The top bar stays in view while results scroll; a lead page's or form's own bar sticks right under it.
+  assert.match(page, /\.brandbar\{position:sticky;top:0;[^}]*background:var\(--bg\);height:calc\(env\(safe-area-inset-top,0px\) \+ var\(--topbar\)\)/);
+  assert.match(page, /\.bar\{position:sticky;top:calc\(env\(safe-area-inset-top,0px\) \+ var\(--topbar\)\)/);
+  assert.doesNotMatch(searchView(initialState(), "2026-10-15"), /<input/);
+  // The Betriebe list's own field filters that list, so it says so and does not read as a second search.
+  const placeholder = (html, id) => html.match(new RegExp(`id="${id}" placeholder="([^"]*)"`))[1];
+  assert.deepEqual([placeholder(page, "gq"), placeholder(leadsView(initialState(), "2026-10-15"), "q")], ["Suchen …", "Liste filtern …"]);
+});
+
+test("the top bar's field opens the search on any screen, first with the recently changed leads", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  const lead = (id, name, updatedAt) => ({ ...LEAD_FIELDS, id, name, status: "kontaktiert", updatedAt });
+  const ready = (store) => {
+    store.data("leads", [lead("L1", "Krone", "2026-10-14T09:00:00.000Z"), lead("L2", "Linde", "2026-10-15T09:00:00.000Z")]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+  };
+  try {
+    const store = createStore(initialState());
+    ready(store);
+    const { h, root, app, click, field, type, results } = fakeBrowser("#/betriebe", store, {});
+    // Focus alone, as by Tab or on coming back to the window, stays on the screen.
+    field.focus();
+    assert.equal(h.location.hash, "#/betriebe");
+    field.on.click();
+    assert.equal(h.location.hash, "#/suche");
+    assert.match(root.innerHTML, /Zuletzt bearbeitet[^]*data-open="L2"[^]*data-open="L1"/);
+    type("krone");
+    assert.match(results.innerHTML, /1 Treffer[^]*data-open="L1"/);
+    assert.doesNotMatch(results.innerHTML, /data-open="L2"/);
+    // A click into the field on the results keeps the query, also through the next redraw.
+    field.on.click();
+    app.onDataChanged();
+    assert.deepEqual([field.value, store.get().ui.gq], ["krone", "krone"]);
+    // A result opens its lead, and the field empties; Back shows the results again, with the query.
+    await click({ open: "L1" });
+    assert.deepEqual([h.location.hash, field.value], ["#/betrieb/L1", ""]);
+    h.history.go(-1);
+    h.land();
+    assert.deepEqual([h.location.hash, field.value], ["#/suche", "krone"]);
+    // From another screen it starts over.
+    await click({ tab: "heute" });
+    field.on.click();
+    assert.deepEqual([h.location.hash, field.value], ["#/suche", ""]);
+    assert.match(root.innerHTML, /Zuletzt bearbeitet/);
+    // Typing into the field while another screen shows, as after Back, opens the search with what is typed.
+    await click({ tab: "heute" });
+    type("lin");
+    assert.deepEqual([h.location.hash, field.value], ["#/suche", "lin"]);
+    assert.match(root.innerHTML, /1 Treffer[^]*data-open="L2"/);
+    // A form holds unsaved input, so search is shut there.
+    await click({ open: "L2" });
+    assert.equal(field.disabled, false);
+    await click({ act: "edit" });
+    assert.equal(field.disabled, true);
+    // An old link to Suche opens it.
+    const later = createStore(initialState());
+    ready(later);
+    assert.match(fakeBrowser("#/suche", later, {}).root.innerHTML, /Zuletzt bearbeitet/);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("the field's keys: the arrows pick a result and Enter opens it; Escape empties the field, then leaves it", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const store = createStore(initialState());
+    store.data("leads", ["Krone", "Kronenhof", "Linde"].map((name, i) => ({ ...LEAD_FIELDS, id: `L${i + 1}`, name, status: "kontaktiert" })));
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const { h, field, type, results } = fakeBrowser("#/heute", store, {});
+    let blurs = 0;
+    field.blur = () => blurs++;
+    const key = (k) => field.on.keydown({ key: k, preventDefault() {} });
+    field.on.click();
+    // Only spaces typed: the recently changed leads show, and Enter opens none of them.
+    type("  ");
+    assert.match(results.innerHTML, /Zuletzt bearbeitet[^]*data-open/);
+    key("Enter");
+    assert.equal(h.location.hash, "#/suche");
+    type("kron");
+    const rows = [...results.innerHTML.matchAll(/data-open="([^"]+)"/g)].map(([, id]) => id);
+    assert.equal(rows.length, 2);
+    key("ArrowDown");
+    assert.equal(store.get().ui.sIdx, 1);
+    key("ArrowUp");
+    assert.equal(store.get().ui.sIdx, 0);
+    key("ArrowDown");
+    key("Enter");
+    assert.deepEqual([h.location.hash, blurs], [`#/betrieb/${rows[1]}`, 1]);
+    h.history.go(-1);
+    h.land();
+    key("Escape");
+    assert.deepEqual([field.value, store.get().ui.gq, blurs], ["", "", 1]);
+    assert.match(results.innerHTML, /Zuletzt bearbeitet/);
+    key("Escape");
+    assert.deepEqual([h.location.hash, blurs], ["#/suche", 2]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("while the lead page holds unsaved input the field is shut, and it opens again once the lead is left", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const store = createStore(initialState());
+    store.data("leads", [
+      { ...LEAD_FIELDS, id: "L1", name: "Krone", phone: "+43 1 234", status: "kontaktiert", contactedAt: "2026-10-01" },
+      { ...LEAD_FIELDS, id: "L2", name: "Linde", status: "qualifiziert", contactedAt: "2026-10-01", followUp: "2026-10-15", nextStep: "Termin 10 Uhr" },
+    ]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const { h, click, press, field } = fakeBrowser("#/heute", store, {});
+    // The outcome forms of a call and of an appointment take a typed date, time, reason or note.
+    await click({ open: "L1" });
+    await click({ call: "rueckruf" });
+    assert.equal(field.disabled, true);
+    await click({ act: "callCancel" });
+    assert.equal(field.disabled, false);
+    await click({ edit: "notes" });
+    assert.equal(field.disabled, true);
+    await click({ act: "qeCancel" });
+    assert.equal(field.disabled, false);
+    await click({ act: "back" });
+    h.land();
+    await click({ open: "L2" });
+    await click({ meeting: "neuer-termin" });
+    assert.equal(field.disabled, true);
+    await click({ act: "back" });
+    h.land();
+    await click({ open: "L1" });
+    await click({ act: "composeOut" });
+    assert.equal(field.disabled, true);
+    // Nor do / and Ctrl+K jump into it.
+    for (const [key, mods] of [["/"], ["k", { ctrlKey: true }]]) {
+      press(key, mods);
+      assert.deepEqual([h.location.hash, field.disabled], ["#/betrieb/L1", true], key);
+    }
+    // Zurück leaves the lead and its message, so the field and / work on every screen after it.
+    await click({ act: "back" });
+    h.land();
+    assert.deepEqual([h.location.hash, field.disabled], ["#/heute", false]);
+    await click({ tab: "vorlagen" });
+    assert.equal(field.disabled, false);
+    press("/");
+    assert.equal(h.location.hash, "#/suche");
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("the quick-add form on Betriebe and the ICP form on Mehr shut the field while they show", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const store = createStore(initialState());
+    store.data("leads", [{ ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-01" }]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const { h, root, click, field } = fakeBrowser("#/betriebe", store, {});
+    await click({ act: "quick" });
+    assert.equal(field.disabled, true);
+    await click({ act: "quickCancel" });
+    assert.equal(field.disabled, false);
+    // A lead opened from the list while the form is open has nothing to lose, and Back shows the list without the form.
+    await click({ act: "quick" });
+    await click({ open: "L1" });
+    assert.deepEqual([h.location.hash, field.disabled], ["#/betrieb/L1", false]);
+    h.history.go(-1);
+    h.land();
+    assert.deepEqual([h.location.hash, field.disabled], ["#/betriebe", false]);
+    assert.doesNotMatch(root.innerHTML, /id="qaName"/);
+    await click({ tab: "mehr" });
+    await click({ act: "icpEdit" });
+    assert.equal(field.disabled, true);
+    await click({ act: "icpCancel" });
+    assert.equal(field.disabled, false);
+    // Another tab closes the ICP form, so the field is open there, and back on Mehr the form is closed.
+    await click({ act: "icpEdit" });
+    await click({ tab: "heute" });
+    assert.equal(field.disabled, false);
+    await click({ tab: "mehr" });
+    assert.doesNotMatch(root.innerHTML, /id="icpFit"/);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }
@@ -874,10 +1078,12 @@ test("a write asked for again while it is on its way is sent once; a different o
   }
 });
 
-test("a call session lasts while moving between leads and ends on a tab; an open outcome form belongs to its lead", () => {
+test("a call session lasts while moving between leads and ends on a tab; an open outcome form belongs to its lead and ends with it", () => {
   const ui = { ...initialState().ui, view: "detail", leadId: "L1", call: { outcome: "termin" }, meeting: { result: "kunde" }, calling: { seen: ["L0"] } };
   const next = enterRoute(ui, parseRoute("#/betrieb/L2"));
   assert.deepEqual([next.call, next.meeting, next.calling], [null, null, { seen: ["L0"] }]);
   assert.deepEqual(enterRoute(ui, parseRoute("#/betrieb/L1/bearbeiten")).call, { outcome: "termin" });
   assert.equal(enterRoute(next, parseRoute("#/todos")).calling, null);
+  const left = enterRoute(ui, parseRoute("#/todos"));
+  assert.deepEqual([left.call, left.meeting], [null, null]);
 });

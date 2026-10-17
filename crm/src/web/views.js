@@ -13,14 +13,13 @@ import { REGIONS, regionOf } from '../domain/region.js';
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
 
 export const ICONS = {
-  suche: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>',
   todos: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
   heute: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
   betriebe: '<svg viewBox="0 0 24 24"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/></svg>',
   vorlagen: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>',
   mehr: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>'
 };
-export const TABS = [["heute", "Heute"], ["todos", "Todos"], ["betriebe", "Betriebe"], ["suche", "Suche"], ["vorlagen", "Vorlagen"], ["mehr", "Mehr"]];
+export const TABS = [["heute", "Heute"], ["todos", "Todos"], ["betriebe", "Betriebe"], ["vorlagen", "Vorlagen"], ["mehr", "Mehr"]];
 export function tabBar(state, today) {
   const due = state.data.leads.filter((l) => isDue(l, today)).length;
   return `<div class="in">${TABS.map(([k, v]) => `<button class="tab" data-tab="${k}" ${state.ui.tab === k ? 'aria-current="page"' : ""}>${ICONS[k]}<span>${v}</span>${k === "todos" && due ? `<span class="badge">${due}</span>` : ""}</button>`).join("")}</div>`;
@@ -137,7 +136,7 @@ export function leadsView(state, today) {
   ${quickForm}
   ${filterBar(state, own)}
   <div class="toolbar">
-    <input type="search" id="q" placeholder="Suchen \u2026" value="${esc(q)}" aria-label="Suchen">
+    <input type="search" id="q" placeholder="Liste filtern \u2026" value="${esc(q)}" aria-label="Liste filtern">
     <select id="sort" aria-label="Sortierung">${options([["prio", "\u2195 Fit"], ["nachfassen", "\u2195 Nachfassen"], ["status", "\u2195 Status"], ["name", "\u2195 Name"]], sort)}</select>
   </div>
   <p class="note count">${list.length} Betriebe${list.length ? ` \xB7 ${list.filter((l) => l.email).length} mit E-Mail` : ""}${hidden ? ` \xB7 <button class="more" data-act="toSearch">${hidden} weitere Treffer au\xDFerhalb der Filter</button>` : ""}</p>
@@ -174,11 +173,10 @@ export function searchResultsHtml(state, today) {
   return `<p class="note count">${res.length} Treffer${res.length > SEARCH_LIMIT ? ` \xB7 die ersten ${SEARCH_LIMIT} – Suche verfeinern` : ""}</p>
   <ul class="ltable">${shown.map((r, i) => searchRow(state, r, i, tokens, today)).join("")}</ul>`;
 }
+/** The search screen: the results for the search field in the top bar (#gq in index.html). */
 export function searchView(state, today) {
   return `<div class="wrap wide">
-  <div class="head"><div><h1>Suche</h1><p>Alle Betriebe – unabh\xE4ngig von Region, System, Kontakt und Status</p></div></div>
-  <div class="sbox"><div class="sfield">${ICONS.suche}<input type="search" id="gq" value="${esc(state.ui.gq)}" placeholder="Name, Ort, Person, Telefon, Notiz …" aria-label="Alle Betriebe durchsuchen" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></div>
-  <p class="note">Findet auch Notizen und den gesamten Verlauf. Umlaute egal, mehrere W\xF6rter grenzen ein.<span class="skeys"> \xB7 <kbd>↑</kbd><kbd>↓</kbd> w\xE4hlen, <kbd>Enter</kbd> \xF6ffnet \xB7 von \xFCberall: <kbd>/</kbd> oder <kbd>Strg K</kbd></span></p></div>
+  <p class="note">Alle Betriebe, unabh\xE4ngig von Region, System, Kontakt und Status. Findet auch Notizen und den gesamten Verlauf. Umlaute egal, mehrere W\xF6rter grenzen ein.<span class="skeys"> \xB7 <kbd>↑</kbd><kbd>↓</kbd> w\xE4hlen, <kbd>Enter</kbd> \xF6ffnet \xB7 von \xFCberall: <kbd>/</kbd> oder <kbd>Strg K</kbd></span></p>
   <div id="sres">${searchResultsHtml(state, today)}</div>
 </div>`;
 }

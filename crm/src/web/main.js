@@ -9,6 +9,7 @@ const store = createStore(initialState());
 const app = mountApp({
   root: document.getElementById("app"),
   tabsEl: document.getElementById("tabs"),
+  searchEl: document.getElementById("gq"),
   toastEl: document.getElementById("toast"),
   store,
   clock: systemClock

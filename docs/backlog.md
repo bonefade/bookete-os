@@ -61,6 +61,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
 
+- CRM 1.13.0: the search field sits in the top bar on every screen, the Suche tab is gone (owner, 2026-10-17).
 - CRM 1.12.0: a short random wait between write retries (`retryPause`, `crm/src/adapters/system.js`).
 - CRM 1.11.2: field labels in forms, search, the lead page and the Betriebe list come from `FIELD_LABEL` (`crm/src/domain/constants.js`).
 - CRM 1.11.1: with Gmail connected, mail that gets the Abmeldelink goes out only by Gmail; no mailto in the compose sheet or the quick bar (owner: "Gmail only when connected").

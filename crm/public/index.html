@@ -15,7 +15,7 @@
   --bg:#F3F5F2; --surface:#FFFFFF; --ink:#1C2B25; --muted:#5E6E67; --line:#D9E0DB;
   --pine:#2F5D50; --pine-soft:#E2ECE7; --due:#B5412E; --due-soft:#F7E4DF; --brass:#9A7424; --brand:#013E37;
   box-sizing:border-box;
-  padding-top:env(safe-area-inset-top,0px);
+  --topbar:60px;
   color-scheme:light;
 }
 @media (prefers-color-scheme: dark){
@@ -29,7 +29,7 @@
   --pine:#7FB7A3; --pine-soft:#223630; --due:#EE8A76; --due-soft:#3A2520; --brass:#D6B266; --brand:#FFEEB3; color-scheme:dark;
 }
 *,*::before,*::after{box-sizing:inherit}
-html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 64px);-webkit-text-size-adjust:100%}
+html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + var(--topbar) + 64px);-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif}
 h1,h2,h3{font-family:"Bricolage Grotesque","Source Sans 3",system-ui,sans-serif;margin:0;line-height:1.15}
 a{color:var(--pine)}
@@ -53,13 +53,13 @@ label>input,label>select,label>textarea{margin-top:4px}
 .head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:4px 0 16px}
 .head h1{font-size:1.9rem}
 .head p{margin:2px 0 0;color:var(--muted);font-size:.95rem}
-.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.bar{position:sticky;top:calc(env(safe-area-inset-top,0px) + var(--topbar));z-index:5;background:var(--bg);display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)}
 .bar h2{flex:1;font-size:1.1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
 .bar button{min-width:84px}
 
 /* bottom tabs */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
-.tabs .in{display:grid;grid-template-columns:repeat(4,1fr);width:100%;max-width:680px}
+.tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:680px}
 .tab{border:none;border-radius:0;background:none;color:var(--muted);flex-direction:column;gap:0;padding:8px 4px 6px;min-height:56px;font-size:.8rem;position:relative}
 .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tab[aria-current="page"]{color:var(--pine);font-weight:600}
@@ -192,8 +192,9 @@ label.drop>input{width:20px;min-height:20px;flex:none;margin:0;padding:0}
 .t-who{grid-area:who;font-size:.85rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .t-when{grid-area:when;font-size:.82rem;color:var(--due);font-weight:600;white-space:nowrap}
 /* brand: the Connected Circles mark from the bookete app (public/brand/), colors as there */
-.brandbar{max-width:1280px;margin:0 auto;padding:12px 16px 0}
-.brand{display:inline-flex;align-items:center;gap:8px;color:var(--brand)}
+/* The top bar stays in view, so the search field does while results scroll; it holds the safe area above it. */
+.brandbar{position:sticky;top:0;z-index:6;background:var(--bg);height:calc(env(safe-area-inset-top,0px) + var(--topbar));padding:env(safe-area-inset-top,0px) max(16px,calc(50% - 624px)) 0;display:flex;align-items:center;gap:12px}
+.brand{display:inline-flex;align-items:center;gap:8px;color:var(--brand);flex:none}
 .brand svg{height:24px;aspect-ratio:5/3}
 .brand .wm{font:500 1.15rem/1 Manrope,system-ui,sans-serif;letter-spacing:-.02em}
 .brand .sub{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
@@ -202,11 +203,10 @@ label.drop>input{width:20px;min-height:20px;flex:none;margin:0;padding:0}
 :root{--mark:#F3DFA2}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--mark:#5B4A1C}}
 :root[data-theme="dark"]{--mark:#5B4A1C}
-.tabs .in{grid-template-columns:repeat(6,1fr)}
-.sbox{position:sticky;top:env(safe-area-inset-top,0px);z-index:4;background:var(--bg);padding:4px 0 8px}
-.sfield{position:relative}
+.sfield{position:relative;flex:1 1 auto;min-width:0;max-width:520px}
 .sfield svg{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:20px;height:20px;stroke:var(--muted);fill:none;stroke-width:2;stroke-linecap:round;pointer-events:none}
-.sfield input{padding-left:44px;min-height:52px;font-size:1.05rem;border-radius:14px}
+.sfield input{padding-left:44px;font-size:1.05rem;border-radius:14px}
+.sfield input:disabled{opacity:.45}
 .sfield input:focus{border-color:var(--pine);outline:none;box-shadow:0 0 0 3px var(--pine-soft)}
 .srow{display:block;width:100%;text-align:left;border:none;border-radius:0;background:transparent;padding:10px 14px;min-height:52px}
 .srow:hover,.srow.act{background:var(--pine-soft)}
@@ -230,7 +230,8 @@ kbd{font:inherit;font-size:.8rem;border:1px solid var(--line);border-radius:5px;
 <defs><mask id="bm-l"><rect width="160" height="96" fill="white"/><circle cx="104" cy="48" r="40" fill="black"/></mask>
 <mask id="bm-r"><rect width="160" height="96" fill="white"/><circle cx="56" cy="48" r="40" fill="black"/></mask></defs>
 <circle cx="56" cy="48" r="40" fill="#FFEEB3" mask="url(#bm-l)"/><circle cx="104" cy="48" r="40" fill="currentColor" mask="url(#bm-r)"/>
-</svg><span class="wm">bookete</span><span class="sub">CRM</span></span></header>
+</svg><span class="wm">bookete</span><span class="sub">CRM</span></span>
+<div class="sfield" role="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg><input type="search" id="gq" placeholder="Suchen …" aria-label="Alle Betriebe durchsuchen" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></div></header>
 <div id="app"></div>
 <nav class="tabs" id="tabs" aria-label="Hauptnavigation"></nav>
 <div class="toast" id="toast" role="status"></div>

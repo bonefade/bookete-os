@@ -34,18 +34,23 @@ export function parseRoute(hash) {
   if (a === "betrieb" && b) return { view: { bearbeiten: "editLead", kunde: "editAccount" }[c] || "detail", leadId: b };
   // A template belongs to Vorlagen, so one opened from a link or a reload goes back there.
   if (a === "vorlage" && b) return { view: "editTemplate", templateId: b === "neu" ? null : b, tab: "vorlagen" };
-  return { view: null, tab: TABS.some(([k]) => k === a) ? a : "heute" };
+  // Suche has no tab: the search field in the top bar opens it.
+  return { view: null, tab: a === "suche" || TABS.some(([k]) => k === a) ? a : "heute" };
 }
 const LEAD_VIEWS = new Set(["detail", "editLead", "editAccount"]);
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
-/** The UI state for an address: a lead other than the one open starts fresh, and Mehr starts with the Papierkorb closed so it is never shown stale. */
+/** A screen holding input not yet saved: search stays shut there, so that it cannot leave the screen by accident. */
+const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call || u.meeting || u.quick || u.icpEdit);
+/**
+ * The UI state for an address. What a lead page has open lasts only while that lead is on screen: leaving it, or
+ * opening another, starts fresh. The quick-add and ICP forms close on any address, as they show on their tab only.
+ * Mehr starts with the Papierkorb closed so it is never shown stale.
+ */
 export function enterRoute(ui, route) {
-  if (LEAD_VIEWS.has(route.view)) {
-    const sameLead = LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
-    return { ...ui, ...route, ...(!sameLead && { compose: null, lostPick: false, call: null, meeting: null, editField: null, changes: null, expanded: new Set() }) };
-  }
-  if (route.view) return { ...ui, ...route };
-  return { ...ui, ...route, quick: false, calling: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
+  const sameLead = LEAD_VIEWS.has(route.view) && LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
+  const next = { ...ui, ...route, quick: false, icpEdit: false, ...(!sameLead && { compose: null, lostPick: false, call: null, meeting: null, editField: null, changes: null, expanded: new Set() }) };
+  if (route.view) return next;
+  return { ...next, calling: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
 }
 /** A screen whose record is not there once the data has loaded: a deleted lead or template, or a wrong address. */
 export function recordMissing(st) {
@@ -133,7 +138,7 @@ export function pickLostReason(uc, lead, reason) {
 const confirmOptOut = (lead) => confirm(`\u201E${lead.name}\u201C m\xF6chte keine Nachrichten mehr?
 
 Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`);
-export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
+export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock }) {
   let uc = null;
   const S = () => store2.get();
   const ui = (p) => store2.ui(p);
@@ -162,6 +167,9 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     const view = st.ui.view;
     if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
     tabsEl.hidden = !!view;
+    // The field shows the query on the search screen only, so another screen never looks filtered by it.
+    searchEl.value = !view && st.ui.tab === "suche" ? st.ui.gq : "";
+    searchEl.disabled = holdsInput(st.ui);
     root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, suche: searchView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     if (!view) tabsEl.innerHTML = tabBar(st, today);
     if (st.ui.quick && !view && st.ui.tab === "betriebe") setTimeout(() => root.querySelector("#qaName")?.focus(), 30);
@@ -208,17 +216,20 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
   history.scrollRestoration = "manual";
   window.addEventListener("popstate", landed);
   const goTab = (tab) => go(routeOf({ tab }));
-  const focusSearch = () => {
-    const n = root.querySelector("#gq");
-    if (!n) return;
-    n.focus();
-    n.select();
+  const onSearch = () => !S().ui.view && S().ui.tab === "suche";
+  /** Opens the search screen; coming from another screen it starts over: with `q`, or with the recently changed leads. */
+  const showSearch = (q = "") => {
+    if (onSearch()) return;
+    ui({ gq: q, sIdx: 0 });
+    goTab("suche");
   };
   const openSearch = (q) => {
-    if (q != null) ui({ gq: q, sIdx: 0 });
-    if (S().ui.tab !== "suche" || S().ui.view) goTab("suche");
-    focusSearch();
+    showSearch(q);
+    searchEl.focus();
+    searchEl.select();
   };
+  // A click opens it, focus alone does not: Tab, or coming back to the window, lands on the field without meaning to search.
+  searchEl.addEventListener("click", () => showSearch());
   const refreshResults = () => {
     const box = root.querySelector("#sres");
     if (box) box.innerHTML = searchResultsHtml(S(), clock.today());
@@ -238,7 +249,7 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     const slash = ev.key === "/" && !typing && !ev.metaKey && !ev.ctrlKey && !ev.altKey;
     if (!cmdK && !slash) return;
     const u = S().ui;
-    if (FORM_VIEWS.has(u.view) || u.compose || u.editField) return;
+    if (holdsInput(u)) return;
     ev.preventDefault();
     openSearch();
   });
@@ -288,29 +299,37 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     ui({ editField: null });
     render();
   }
+  searchEl.addEventListener("keydown", (ev) => {
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      moveSelection(ev.key === "ArrowDown" ? 1 : -1);
+    } else if (ev.key === "Enter") {
+      ev.preventDefault();
+      const row = root.querySelectorAll("#sres .srow")[S().ui.sIdx];
+      if (row && searchEl.value.trim()) {
+        searchEl.blur();
+        openLead(row.dataset.open);
+      }
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      if (searchEl.value) {
+        searchEl.value = "";
+        ui({ gq: "", sIdx: 0 });
+        refreshResults();
+      } else searchEl.blur();
+    }
+  });
+  searchEl.addEventListener("input", () => {
+    ui({ gq: searchEl.value, sIdx: 0 });
+    // Typing on another screen, as after Back with the field still focused, opens the search with what is typed.
+    if (onSearch()) refreshResults();
+    else goTab("suche");
+  });
   root.addEventListener("keydown", (ev) => {
     const t = ev.target;
     if (t.dataset && t.dataset.edit && (ev.key === "Enter" || ev.key === " ")) {
       ev.preventDefault();
       t.click();
-      return;
-    }
-    if (t.id === "gq") {
-      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-        ev.preventDefault();
-        moveSelection(ev.key === "ArrowDown" ? 1 : -1);
-      } else if (ev.key === "Enter") {
-        ev.preventDefault();
-        const row = root.querySelectorAll("#sres .srow")[S().ui.sIdx];
-        if (row && t.value.trim()) openLead(row.dataset.open);
-      } else if (ev.key === "Escape") {
-        ev.preventDefault();
-        if (t.value) {
-          t.value = "";
-          ui({ gq: "", sIdx: 0 });
-          refreshResults();
-        } else t.blur();
-      }
       return;
     }
     if (t.id !== "qe") return;
@@ -507,7 +526,6 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     if (!el) return;
     const d = el.dataset;
     const st = S();
-    if (d.tab === "suche") return openSearch();
     if (d.tab) return d.tab === st.ui.tab ? window.scrollTo(0, 0) : goTab(d.tab);
     if (d.open) return openLead(d.open);
     if (d.tpl) return openTemplate(d.tpl);
@@ -572,11 +590,6 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
   root.addEventListener("input", (ev) => {
     const t = ev.target;
     const c = S().ui.compose;
-    if (t.id === "gq") {
-      ui({ gq: t.value, sIdx: 0 });
-      refreshResults();
-      return;
-    }
     if (t.id === "q") {
       const pos = t.selectionStart;
       ui({ q: t.value.trim() });

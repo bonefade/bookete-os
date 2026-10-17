@@ -2,6 +2,12 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.13.0 (2026-10-18)
+
+### Changed
+- **Search in the top bar:** the search field now sits next to the logo, on every screen, and stays in view while the page scrolls. Clicking into it first shows the recently changed businesses; typing searches all businesses as before. The Suche tab is gone; the bottom bar keeps five: Heute, Todos, Betriebe, Vorlagen, Mehr. Old links to the search, Back and Forward still work; `/` and Ctrl K still jump into the field. The field above the Betriebe list, which filters only that list, now says "Liste filtern …".
+- While an edit form, the "+ Neu" form on Betriebe or the ICP form on Mehr is open, or a business's page has a message, a call or appointment outcome or a quick edit open, the search field is locked, so nothing typed there is lost. The ICP form now closes when Mehr is left, as the "+ Neu" form already did.
+
 ## 1.12.0 (2026-10-18)
 
 ### Changed
