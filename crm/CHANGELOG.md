@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.9.1 (2026-10-17)
+
+### Changed
+- Built and tested on Node 26. Nothing changes in the app.
+
 ## 1.9.0 (2026-10-17)
 
 ### Added

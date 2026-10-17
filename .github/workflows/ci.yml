@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: crm/package-lock.json
       - run: npm ci --prefix crm
@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
       - run: npm ci --prefix crm
       # Both steps are blocking. Dry run first: the log shows which migrations the deploy is about to
       # apply to production, and a failed API call stops the deploy before anything is applied.
