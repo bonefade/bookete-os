@@ -184,6 +184,7 @@ export function templatesView(state) {
 }
 export function templateEditView(state) {
   const id = state.ui.templateId;
+  if (id && !isReady(state)) return loadingOr(state, "");
   const t = state.data.templates.find((x) => x.id === id) || { name: "", purpose: "followup1", body: "" };
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>${id ? "Vorlage" : "Neue Vorlage"}</h2><button class="link" data-act="tplSave">Sichern</button></div>
 <form class="wrap sub" id="tform">
@@ -245,6 +246,7 @@ export function quickField(l, f, editing) {
   return `<div class="fact qe-click" data-edit="${f.key}" role="button" tabindex="0"><dt>${FIELD_LABEL[f.key]}</dt><dd>${shown ? esc(shown) : `<span class="qe-empty">+ hinzuf\xFCgen</span>`}</dd></div>`;
 }
 export function detailView(state, today) {
+  if (!isReady(state)) return loadingOr(state, "");
   const l = currentLead(state);
   const acts = actsOf(state, l.id);
   const ui = state.ui;
@@ -301,6 +303,7 @@ export function detailView(state, today) {
 </div>`;
 }
 export function leadEditView(state) {
+  if (state.ui.leadId && !isReady(state)) return loadingOr(state, "");
   const l = state.ui.leadId ? currentLead(state) : null;
   const d = l || { status: "neu", fit: 2, currentTool: "unbekannt", type: "Restaurant" };
   const f = (n, lab, ph = "", type = "text") => `<label>${lab}<input name="${n}" type="${type}" value="${esc(d[n] || "")}" placeholder="${esc(ph)}"></label>`;

@@ -11,10 +11,13 @@ const SCOPES = "openid email profile https://www.googleapis.com/auth/gmail.compo
 const cookie = (name, value, maxAge) => `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
 const readCookie = (request, name) => request.headers.get("Cookie")?.match(new RegExp(`(?:^|; )${name}=([^;]*)`))?.[1] ?? null;
 const redirect = (location, headers = {}) => new Response(null, { status: 302, headers: { Location: location, ...headers } });
-/** A path on this site only: anything that resolves to another origin (`//x`, `/\\x`) becomes "/". */
+/**
+ * A path on this site only: anything that resolves to another origin (`//x`, `/\\x`) becomes "/". So does a path
+ * that would only after resolving start with `//` (`/.//x`), which a browser reads as another origin.
+ */
 export function safeNext(next, base) {
   const url = new URL(next || "/", base);
-  return url.origin === new URL(base).origin ? url.pathname + url.search : "/";
+  return url.origin === new URL(base).origin && !url.pathname.startsWith("//") ? url.pathname + url.search + url.hash : "/";
 }
 
 /**

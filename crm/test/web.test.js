@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { initialState } from "../src/web/store.js";
+import { createStore, initialState } from "../src/web/store.js";
 import { tabBar, todayView, todosView, leadsView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar } from "../src/web/views.js";
 import { LEAD_FIELDS } from "../src/domain/lead.js";
-import { formInput, saveLeadForm, pickLostReason } from "../src/web/controller.js";
+import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
 import { describeChange } from "../src/web/format.js";
 import { scoped } from "../src/web/selectors.js";
 import { createApi } from "../src/web/api.js";
@@ -100,6 +100,7 @@ test("Änderungen leaves out entries with nothing visible, such as a logged cont
   const state = initialState();
   const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert" };
   state.data = { leads: [lead], activities: [], templates: [], settings: [] };
+  state.status = { ...state.status, leads: true, activities: true };
   const entry = (after) => ({ seq: 2, at: "2026-10-15T10:00:00.000Z", actor: "jo@bookete.com (web)", deleted: false, wasDeleted: false, before: lead, after });
   state.ui = { ...state.ui, leadId: "L1", changes: { leadId: "L1", rows: [entry({ ...lead, updatedAt: "later" })] } };
   assert.match(detailView(state, "2026-10-15"), /Noch keine \xC4nderungen aufgezeichnet/);
@@ -241,4 +242,225 @@ test("Mehr counts the disqualified leads by their reason", () => {
   ]));
   assert.match(html, /Warum disqualifiziert[^]*<dt>Zu klein<\/dt><dd>2<\/dd>[^]*<dt>Kein Bedarf<\/dt><dd>1<\/dd>/);
   assert.doesNotMatch(html, /ohne Grund/);
+});
+
+test("every screen has an address, and the address opens that screen", () => {
+  const screens = [
+    [{ tab: "betriebe", view: null }, "#/betriebe"],
+    [{ tab: "heute", view: "detail", leadId: "L 1/ä" }, "#/betrieb/L%201%2F%C3%A4"],
+    [{ tab: "heute", view: "editLead", leadId: "L1" }, "#/betrieb/L1/bearbeiten"],
+    [{ tab: "vorlagen", view: "editTemplate", templateId: "T1" }, "#/vorlage/T1"],
+    [{ tab: "vorlagen", view: "editTemplate", templateId: null }, "#/vorlage/neu"],
+  ];
+  for (const [ui, hash] of screens) {
+    assert.equal(routeOf(ui), hash);
+    // A lead keeps the tab it was opened from; a template belongs to Vorlagen.
+    const { tab, ...rest } = ui;
+    assert.deepEqual(parseRoute(hash), !ui.view ? { view: null, tab } : ui.view === "editTemplate" ? ui : rest);
+  }
+  // A bare start, an unknown tab and a broken escape all open Heute.
+  for (const hash of ["", "#", "#/", "#/gibts-nicht", "#/betrieb/%E0"]) assert.deepEqual(parseRoute(hash), { view: null, tab: "heute" }, hash);
+});
+
+test("entering an address resets what belongs to the screen left, and keeps the rest", () => {
+  const ui = { ...initialState().ui, tab: "betriebe", q: "krone", quick: true, compose: { text: "x" }, lostPick: true, trash: [{}], scroll: { betriebe: 300 } };
+  const lead = enterRoute(ui, parseRoute("#/betrieb/L1"));
+  assert.deepEqual([lead.view, lead.leadId, lead.tab, lead.compose, lead.lostPick, lead.q], ["detail", "L1", "betriebe", null, false, "krone"]);
+  // Back from the edit form to the same lead keeps its open compose box.
+  const again = enterRoute({ ...ui, view: "editLead", leadId: "L1" }, parseRoute("#/betrieb/L1"));
+  assert.deepEqual(again.compose, { text: "x" });
+  const mehr = enterRoute(ui, parseRoute("#/mehr"));
+  assert.deepEqual([mehr.view, mehr.tab, mehr.quick, mehr.trash], [null, "mehr", false, null]);
+  assert.deepEqual(enterRoute({ ...ui, tab: "mehr" }, parseRoute("#/mehr")).trash, [{}]);
+});
+
+test("the in-app back button goes to the screen above", () => {
+  assert.equal(backRoute({ tab: "todos", view: "detail", leadId: "L1" }), "#/todos");
+  assert.equal(backRoute({ tab: "todos", view: "editLead", leadId: "L1" }), "#/betrieb/L1");
+  assert.equal(backRoute({ tab: "vorlagen", view: "editTemplate", templateId: "T1" }), "#/vorlagen");
+  // A template opened from a link or after a reload, where the app starts on Heute.
+  for (const hash of ["#/vorlage/T1", "#/vorlage/neu"]) assert.equal(backRoute(enterRoute({ ...initialState().ui, tab: "heute" }, parseRoute(hash))), "#/vorlagen", hash);
+});
+
+test("a lead page opened from an address waits for the data instead of falling back", () => {
+  const state = initialState();
+  state.ui = { ...state.ui, view: "detail", leadId: "L1" };
+  assert.match(detailView(state, "2026-10-15"), /Lade Daten/);
+  state.ui.view = "editLead";
+  assert.match(leadEditView(state), /Lade Daten/);
+  // A form filled in here, before the data arrives, would be saved over the real template.
+  state.ui = { ...state.ui, view: "editTemplate", templateId: "T1" };
+  assert.match(templateEditView(state), /Lade Daten/);
+  assert.doesNotMatch(leadEditView(state) + templateEditView(state), /<form/);
+});
+
+test("a lead or template address whose record is gone falls back once the data is there", () => {
+  const state = { ...initialState(), status: { leads: true, activities: true, templates: true, settings: true, failed: "" } };
+  state.data = { ...state.data, leads: [{ ...LEAD_FIELDS, id: "L1", name: "Krone" }], templates: [{ id: "T1", name: "Erst", purpose: "", body: "x" }] };
+  const at = (ui) => recordMissing({ ...state, ui: { ...state.ui, ...ui } });
+  for (const view of ["detail", "editLead"]) assert.deepEqual([at({ view, leadId: "L1" }), at({ view, leadId: "GONE" })], [false, true], view);
+  assert.deepEqual([at({ view: "editTemplate", templateId: "T1" }), at({ view: "editTemplate", templateId: "GONE" })], [false, true]);
+  // New records and the tabs have none to miss; before the data arrives nothing is missing yet.
+  assert.deepEqual([at({ view: "editLead", leadId: null }), at({ view: "editTemplate", templateId: null }), at({ view: null })], [false, false, false]);
+  assert.equal(recordMissing({ ...initialState(), ui: { ...state.ui, view: "detail", leadId: "GONE" } }), false);
+});
+
+// The browser's history, as far as the app uses it: entries with a state, and steps back or forward that land
+// later, as history.go does, each firing popstate.
+function fakeHistory(first) {
+  const entries = [{ state: null, url: first }];
+  let i = 0;
+  const queued = [];
+  const onPop = [];
+  const history = {
+    get state() { return entries[i].state; },
+    pushState(state, _, url) { entries.splice(++i, Infinity, { state, url }); },
+    replaceState(state, _, url) { entries[i] = { state, url }; },
+    go(n) { queued.push(n); },
+  };
+  const location = { get hash() { return entries[i].url; } };
+  return {
+    history,
+    location,
+    onPop: (f) => onPop.push(f),
+    land() {
+      while (queued.length) {
+        i += queued.shift();
+        onPop.forEach((f) => f());
+      }
+    },
+    // Every entry with the depth it carries, and the current one.
+    seen: () => ({ at: i, entries: entries.map((e) => [e.url, e.state?.crm ?? null]) }),
+  };
+}
+
+test("leaving a screen steps back through the app's own entries and never leaves a copy behind", () => {
+  const h = fakeHistory("#/betriebe");
+  const shown = [];
+  const nav = createNavigation(h.history, h.location, () => shown.push(h.location.hash));
+  h.onPop(nav.landed);
+  nav.go("#/betrieb/L1");
+  nav.go("#/betrieb/L1/bearbeiten");
+  const opened = [["#/betriebe", null], ["#/betrieb/L1", 1], ["#/betrieb/L1/bearbeiten", 2]];
+  assert.deepEqual(h.seen(), { at: 2, entries: opened });
+  // Saving the edit: back to the lead page, which stays the only one.
+  nav.leave("#/betrieb/L1");
+  h.land();
+  assert.deepEqual([h.seen(), shown.at(-1)], [{ at: 1, entries: opened }, "#/betrieb/L1"]);
+  // Deleting from the edit form: past the lead page, back to the tab.
+  nav.go("#/betrieb/L1/bearbeiten");
+  assert.deepEqual(h.seen(), { at: 2, entries: opened });
+  nav.leave("#/betriebe", 2);
+  h.land();
+  assert.deepEqual([h.seen(), shown.at(-1)], [{ at: 0, entries: opened }, "#/betriebe"]);
+
+  // Opened from a link: no entry of ours to step back to, so the screen up takes this entry's place.
+  const link = fakeHistory("#/betrieb/L1/bearbeiten");
+  const deep = createNavigation(link.history, link.location, () => {});
+  deep.leave("#/betrieb/L1");
+  assert.deepEqual(link.seen(), { at: 0, entries: [["#/betrieb/L1", null]] });
+  // One entry of ours is not enough to step two back.
+  deep.go("#/betrieb/L1/bearbeiten");
+  assert.deepEqual(link.seen(), { at: 1, entries: [["#/betrieb/L1", null], ["#/betrieb/L1/bearbeiten", 1]] });
+  deep.leave("#/betriebe", 2);
+  assert.deepEqual(link.seen(), { at: 1, entries: [["#/betrieb/L1", null], ["#/betriebe", 1]] });
+});
+
+test("a double click on Zurück steps back once", () => {
+  const h = fakeHistory("#/betriebe");
+  const nav = createNavigation(h.history, h.location, () => {});
+  h.onPop(nav.landed);
+  nav.go("#/betrieb/L1");
+  nav.go("#/betrieb/L1/bearbeiten");
+  nav.leave("#/betrieb/L1");
+  nav.leave("#/betrieb/L1");
+  h.land();
+  assert.equal(h.seen().at, 1);
+  // Once landed, the next Zurück works again.
+  nav.leave("#/betriebe");
+  h.land();
+  assert.equal(h.seen().at, 0);
+});
+
+// mountApp in a fake browser: just enough of document, window and the screen's root for the app to draw into
+// and for a test to click its buttons.
+function fakeBrowser(hash, store, uc) {
+  const h = fakeHistory(hash);
+  const on = {};
+  const root = {
+    innerHTML: "",
+    addEventListener() {},
+    contains: () => false,
+    // A drawn form, with no fields: the use case fakes take whatever the form holds.
+    querySelector: (sel) => (sel === "form" || sel === "#form") && root.innerHTML.includes("<form") ? { elements: [] } : null,
+    querySelectorAll: () => [],
+  };
+  Object.assign(globalThis, {
+    history: h.history,
+    location: h.location,
+    window: { scrollY: 0, scrollTo() {}, addEventListener: (type, f) => type === "popstate" && h.onPop(f) },
+    document: { activeElement: null, addEventListener: (type, f) => (on[type] = f) },
+    confirm: () => true,
+  });
+  const app = mountApp({ root, tabsEl: {}, toastEl: { classList: { add() {}, remove() {} } }, store, clock: { today: () => "2026-10-15" } });
+  app.connect(uc);
+  const click = (dataset) => on.click({ target: { closest: () => ({ dataset }) } });
+  return { h, root, app, click };
+}
+
+test("the app's buttons and the browser's Back and Forward move through the addresses", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert" };
+  const ready = (store, name) => {
+    store.data("leads", [{ ...lead, name }]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+  };
+  const uc = { updateLead: async () => {}, deleteLead: async () => {} };
+  try {
+    const store = createStore(initialState());
+    ready(store, "Krone");
+    const { h, click } = fakeBrowser("#/betriebe", store, uc);
+    await click({ open: "L1" });
+    await click({ act: "edit" });
+    const opened = [["#/betriebe", null], ["#/betrieb/L1", 1], ["#/betrieb/L1/bearbeiten", 2]];
+    // Saving the edit steps back to the lead page instead of adding another one.
+    await click({ act: "saveLead" });
+    h.land();
+    assert.deepEqual([h.seen(), store.get().ui.view], [{ at: 1, entries: opened }, "detail"]);
+    // Deleting from the edit form steps back past the lead page to the tab.
+    await click({ act: "edit" });
+    await click({ act: "deleteLead" });
+    h.land();
+    assert.deepEqual([h.seen(), store.get().ui.view, store.get().ui.tab], [{ at: 0, entries: opened }, null, "betriebe"]);
+    // The browser's Forward shows the lead page again.
+    h.history.go(1);
+    h.land();
+    assert.equal(store.get().ui.view, "detail");
+
+    // An edit form opened after a reload waits for the data, is drawn once it arrives, and then stays as it is.
+    const later = createStore(initialState());
+    const reload = fakeBrowser("#/betrieb/L1/bearbeiten", later, uc);
+    assert.doesNotMatch(reload.root.innerHTML, /<form/);
+    ready(later, "Krone");
+    reload.app.onDataChanged();
+    assert.match(reload.root.innerHTML, /<form[^]*value="Krone"/);
+    ready(later, "Krone neu");
+    reload.app.onDataChanged();
+    assert.doesNotMatch(reload.root.innerHTML, /Krone neu/);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("a sign-in asked for by the server comes back to the same screen", async () => {
+  const [realFetch, realLocation] = [globalThis.fetch, globalThis.location];
+  const went = [];
+  globalThis.fetch = async () => new Response("{}", { status: 401 });
+  globalThis.location = { pathname: "/", hash: "#/betrieb/L2", assign: (u) => went.push(u) };
+  try {
+    await createApi(() => {}).changeStatus({ id: "L2" }, "kontaktiert").catch(() => {});
+  } finally {
+    [globalThis.fetch, globalThis.location] = [realFetch, realLocation];
+  }
+  assert.deepEqual(went, ["/auth/login?next=%2F%23%2Fbetrieb%2FL2"]);
 });

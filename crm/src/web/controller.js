@@ -1,15 +1,86 @@
 import { STAGE_LABEL } from '../domain/constants.js';
 import { ValidationError } from '../domain/errors.js';
-import { actsOf, currentLead, icpOf } from './selectors.js';
+import { actsOf, currentLead, icpOf, isReady } from './selectors.js';
 import { addDays } from '../domain/dates.js';
 import { copyText, channelLink, mailSubject, saveFile } from './platform.js';
 import { createBackup } from '../domain/backup.js';
 import { fillTemplate, defaultTemplate } from '../domain/template.js';
 import { lastChannel } from '../domain/activity.js';
 import { relDate } from './format.js';
-import { tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView } from './views.js';
+import { TABS, tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView } from './views.js';
 
 export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
+/**
+ * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
+ * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
+ * screen has open on top (compose, reason picker, quick edit) stays out of it.
+ */
+export function routeOf({ tab, view, leadId, templateId }) {
+  const id = (x) => encodeURIComponent(x);
+  if (view === "detail") return `#/betrieb/${id(leadId)}`;
+  if (view === "editLead") return `#/betrieb/${id(leadId)}/bearbeiten`;
+  if (view === "editTemplate") return templateId ? `#/vorlage/${id(templateId)}` : "#/vorlage/neu";
+  return `#/${tab}`;
+}
+export function parseRoute(hash) {
+  let parts;
+  try {
+    parts = hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
+  } catch {
+    parts = [];
+  }
+  const [a, b, c] = parts;
+  if (a === "betrieb" && b) return { view: c === "bearbeiten" ? "editLead" : "detail", leadId: b };
+  // A template belongs to Vorlagen, so one opened from a link or a reload goes back there.
+  if (a === "vorlage" && b) return { view: "editTemplate", templateId: b === "neu" ? null : b, tab: "vorlagen" };
+  return { view: null, tab: TABS.some(([k]) => k === a) ? a : "heute" };
+}
+/** The UI state for an address: a lead other than the one open starts fresh, and Mehr starts with the Papierkorb closed so it is never shown stale. */
+export function enterRoute(ui, route) {
+  if (route.view === "detail" || route.view === "editLead") {
+    const sameLead = (ui.view === "detail" || ui.view === "editLead") && ui.leadId === route.leadId;
+    return { ...ui, ...route, ...(!sameLead && { compose: null, lostPick: false, editField: null, changes: null, expanded: new Set() }) };
+  }
+  if (route.view) return { ...ui, ...route };
+  return { ...ui, ...route, quick: false, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
+}
+/** A screen whose record is not there once the data has loaded: a deleted lead or template, or a wrong address. */
+export function recordMissing(st) {
+  if (!isReady(st)) return false;
+  const { view, leadId, templateId } = st.ui;
+  if (view === "detail" || view === "editLead" && leadId) return !currentLead(st);
+  if (view === "editTemplate" && templateId) return !st.data.templates.some((t) => t.id === templateId);
+  return false;
+}
+/**
+ * Moving between addresses. Our own history entries carry how many of ours lead up to them (the page's first entry
+ * carries none), so leaving a screen steps back through them instead of adding a second copy of the screen before.
+ */
+export function createNavigation(history, location, applyRoute) {
+  const depth = () => history.state?.crm || 0;
+  // history.go lands later; until then the state is still this screen's, so a second leave would step back again.
+  let leaving = false;
+  /** A new history entry, or with `replace` one in place of the current entry, which keeps its depth. */
+  const go = (route, { replace = false } = {}) => {
+    if (route !== location.hash) replace ? history.replaceState(history.state, "", route) : history.pushState({ crm: depth() + 1 }, "", route);
+    applyRoute();
+  };
+  /** Leaves this screen for the one `steps` up: back through our own entries when they are there, else in place of this one. */
+  const leave = (route, steps = 1) => {
+    if (leaving) return;
+    if (depth() < steps) return go(route, { replace: true });
+    leaving = true;
+    history.go(-steps);
+  };
+  /** The browser's popstate: a step back of ours, or the browser's own Back and Forward, has landed. */
+  const landed = () => {
+    leaving = false;
+    applyRoute();
+  };
+  return { go, leave, landed };
+}
+/** Where the in-app Zurück leads when there is no earlier screen of ours to go back to: the screen above. */
+export const backRoute = (ui) => ui.view === "editLead" ? routeOf({ view: "detail", leadId: ui.leadId }) : routeOf({ tab: ui.tab });
 /**
  * A form's fields by name. With `onlyChanged`, only those whose value differs from what the form showed when
  * it opened, so saving cannot undo someone else's edit to a field this user never touched.
@@ -58,30 +129,29 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     }
   }
   let pending = false;
+  /** Draws the current screen; false when there was none to draw and it went to the tab instead. */
   function render() {
     const st = S();
     const today = clock.today();
     const view = st.ui.view;
-    if (view === "detail" && !currentLead(st)) {
-      ui({ view: null });
-      return;
-    }
+    if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
     tabsEl.hidden = !!view;
     root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, suche: searchView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     if (!view) tabsEl.innerHTML = tabBar(st, today);
     if (st.ui.quick && !view && st.ui.tab === "betriebe") setTimeout(() => root.querySelector("#qaName")?.focus(), 30);
+    return true;
   }
   function safeRender() {
     const a = document.activeElement;
     const v = S().ui.view;
-    if (v === "editLead" || v === "editTemplate") return;
+    // An open form is never redrawn under the user; one still waiting for its data is.
+    if ((v === "editLead" || v === "editTemplate") && root.querySelector("form")) return;
     if (a && root.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) {
       pending = true;
       return;
     }
     const y = window.scrollY;
-    render();
-    window.scrollTo(0, y);
+    if (render()) window.scrollTo(0, y);
   }
   // App forms are saved by their buttons' actions; only forms with an action (sign-out) really submit.
   // No inline onsubmit: the Content-Security-Policy blocks inline handlers.
@@ -100,14 +170,18 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
   };
   const show = (patch, y = 0) => {
     store2.ui(patch);
-    render();
-    window.scrollTo(0, y);
+    if (render()) window.scrollTo(0, y);
   };
-  const goTab = (tab) => {
+  /** Shows the screen of the current address; also runs on the browser's Back and Forward. */
+  function applyRoute() {
     saveScroll();
-    // The Papierkorb is loaded on demand; coming back to Mehr starts closed, so it is never shown stale.
-    show({ tab, view: null, quick: false, ...(tab === "mehr" && { trash: null }) }, S().ui.scroll[tab] || 0);
-  };
+    const next = enterRoute(S().ui, parseRoute(location.hash));
+    show(next, next.view ? 0 : next.scroll[next.tab] || 0);
+  }
+  const { go, leave, landed } = createNavigation(history, location, applyRoute);
+  history.scrollRestoration = "manual";
+  window.addEventListener("popstate", landed);
+  const goTab = (tab) => go(routeOf({ tab }));
   const focusSearch = () => {
     const n = root.querySelector("#gq");
     if (!n) return;
@@ -142,16 +216,9 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     ev.preventDefault();
     openSearch();
   });
-  const openView = (view, patch = {}) => {
-    saveScroll();
-    show({ view, ...patch });
-  };
-  const back = () => {
-    const u = S().ui;
-    if (u.view === "editLead" && u.leadId && currentLead(S())) return openView("detail");
-    show({ view: null }, u.scroll[u.tab] || 0);
-  };
-  const openLead = (id) => openView("detail", { leadId: id, compose: null, lostPick: false, editField: null, changes: null, expanded: new Set() });
+  const back = () => leave(backRoute(S().ui));
+  const openLead = (id) => go(routeOf({ view: "detail", leadId: id }));
+  const openTemplate = (id) => go(routeOf({ view: "editTemplate", templateId: id }));
   const loadTrash = () => run(async () => {
     ui({ trash: await uc.trash() });
     render();
@@ -219,7 +286,7 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
   });
   const actions = {
     back,
-    edit: () => openView("editLead"),
+    edit: () => go(routeOf({ view: "editLead", leadId: S().ui.leadId })),
     quick: () => {
       ui({ quick: !S().ui.quick });
       render();
@@ -288,24 +355,30 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
       await run(() => uc.clearOptOut(lead), "Opt-out aufgehoben");
     },
     async saveLead() {
-      const id = await run(() => saveLeadForm(uc, S().ui.leadId, root.querySelector("#form").elements), "Gespeichert");
-      if (id) openLead(id);
+      const { leadId } = S().ui;
+      const id = await run(() => saveLeadForm(uc, leadId, root.querySelector("#form").elements), "Gespeichert");
+      // An edit goes back to its lead page; a new lead's form becomes the new lead's page.
+      if (id) leadId ? back() : go(routeOf({ view: "detail", leadId: id }), { replace: true });
     },
     async deleteLead() {
       const lead = currentLead(S());
       if (!lead) return toast("Betrieb nicht gefunden");
       if (!confirm(`\u201E${lead.name}\u201C l\xF6schen? Er kommt in den Papierkorb (unter Mehr) und l\xE4sst sich von dort wiederherstellen.`)) return;
-      if (await run(() => uc.deleteLead(lead).then(() => true), "Im Papierkorb")) show({ view: null, trash: null });
+      if (await run(() => uc.deleteLead(lead).then(() => true), "Im Papierkorb")) {
+        ui({ trash: null });
+        // From the edit form, past the lead's page too.
+        leave(routeOf({ tab: S().ui.tab }), 2);
+      }
     },
-    tplNew: () => openView("editTemplate", { templateId: null }),
+    tplNew: () => openTemplate(null),
     async tplSave() {
       const f = root.querySelector("#tform");
       const id = await run(() => uc.saveTemplate(S().ui.templateId, { name: f.elements.name.value, purpose: f.elements.purpose.value, body: f.elements.body.value }), "Vorlage gespeichert");
-      if (id) show({ view: null });
+      if (id) back();
     },
     async tplDelete() {
       if (!confirm("Vorlage l\xF6schen?")) return;
-      if (await run(() => uc.deleteTemplate(S().ui.templateId).then(() => true), "Gel\xF6scht")) show({ view: null });
+      if (await run(() => uc.deleteTemplate(S().ui.templateId).then(() => true), "Gel\xF6scht")) back();
     },
     icpEdit: () => {
       ui({ icpEdit: true });
@@ -358,7 +431,7 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
     if (d.tab === "suche") return openSearch();
     if (d.tab) return d.tab === st.ui.tab ? window.scrollTo(0, 0) : goTab(d.tab);
     if (d.open) return openLead(d.open);
-    if (d.tpl) return openView("editTemplate", { templateId: d.tpl });
+    if (d.tpl) return openTemplate(d.tpl);
     if (d.edit) {
       if (st.ui.editField === d.edit) return;
       ui({ editField: d.edit });
@@ -471,7 +544,7 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
       if (confirm("Sicherung einspielen? Nur Eintr\xE4ge, die das CRM noch nie hatte, kommen dazu; bestehende bleiben unver\xE4ndert.")) await run(() => uc.importBackup(backup, clock.today()), (n) => `${n} neue Eintr\xE4ge eingespielt`);
     }
   });
-  render();
+  applyRoute();
   return {
     connect(useCases) {
       uc = useCases;

@@ -39,8 +39,11 @@ test("a session counts only while unexpired and while the email is allowlisted",
 test("after login only same-site paths are followed", () => {
   const base = "https://crm.bookete.com";
   assert.equal(safeNext("/authorize?client_id=https%3A%2F%2Fclaude.ai%2Fx.json", base), "/authorize?client_id=https%3A%2F%2Fclaude.ai%2Fx.json");
-  for (const evil of ["//evil.com", "/\\evil.com", "https://evil.com/", "/\\evil%2Ecom"]) assert.equal(safeNext(evil, base), "/", evil);
+  for (const evil of ["//evil.com", "/\\evil.com", "https://evil.com/", "/\\evil%2Ecom", "/.//evil.com", "/..//evil.com", "/%2e//evil.com"]) assert.equal(safeNext(evil, base), "/", evil);
   assert.equal(safeNext(null, base), "/");
+  // The screen the user was on: the browser never sends the fragment, so the web app puts it into `next`.
+  assert.equal(safeNext("/#/betrieb/L1", base), "/#/betrieb/L1");
+  assert.equal(safeNext("https://evil.com/#/betrieb/L1", base), "/");
 });
 
 function stubGoogle(profile) {

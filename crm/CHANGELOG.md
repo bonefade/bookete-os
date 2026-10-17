@@ -2,6 +2,15 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.5.0 (2026-10-17)
+
+### Added
+- **Every screen has its own address:** a business (`#/betrieb/…`), its edit form, a template and each tab. The browser's Back button goes back one screen, a reload stays where you are, and a link opens that business. After signing in again you land on the screen you were on.
+- An address of a business or template that no longer exists goes to the tab. Zurück, Abbrechen, saving and deleting go one screen up, also on a double click; from a template that is Vorlagen, also when it was opened from a link. Back then does not show the same screen twice.
+
+### Security
+- The sign-in redirect refuses a path that resolves to another site (`/.//…`) on its own, not only through the second check after Google.
+
 ## 1.4.1 (2026-10-17)
 
 ### Changed

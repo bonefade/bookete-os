@@ -1,7 +1,7 @@
 import { ValidationError } from '../domain/errors.js';
 import { chunkBackup } from '../domain/backup.js';
 
-const toLogin = () => location.assign("/auth/login?next=" + encodeURIComponent(location.pathname));
+const toLogin = () => location.assign("/auth/login?next=" + encodeURIComponent(location.pathname + location.hash));
 
 async function call(url, init) {
   const res = await fetch(url, init);
