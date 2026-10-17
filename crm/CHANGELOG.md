@@ -2,6 +2,12 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.10.0 (2026-10-17)
+
+### Changed
+- **Agents search in pages:** MCP `search_leads` answers at most 50 businesses at a time (30 unless asked for more) and says where the next page starts (`offset`, `nextOffset`), so a long list no longer arrives as one 50 KB answer. With no search words it lists them by name.
+- Each business in the answer is a short summary to choose by: name, Ort, status, fit, follow-up date, whether it is due, the next step, whether it has an e-mail address or phone number, and whether it opted out. Region, first contact date and the e-mail address itself are no longer in it; `get_lead` still gives everything, with the Verlauf.
+
 ## 1.9.3 (2026-10-17)
 
 ### Changed

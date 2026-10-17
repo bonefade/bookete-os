@@ -54,6 +54,45 @@ test("MCP writes go through the use cases and their rules", async () => {
   assert.equal(bad.result.isError, true);
 });
 
+test("search_leads answers pages of short summaries, in the same order on every call; get_lead has the rest", async () => {
+  const context = mcpContext();
+  // Added out of name order, so pages in store order would not line up with the names below.
+  const ids = {};
+  for (const name of ["Zum Hirschen", "Brauhaus", "Alpenblick", "Café Anna", "Dorfwirt"])
+    ids[name] = await context.uc.addLead({ name, city: "Graz", email: name === "Brauhaus" ? "b@example.at" : "", phone: name === "Brauhaus" ? "0316 1" : "", notes: "x".repeat(2000) });
+  await context.uc.optOut(ids["Dorfwirt"]);
+  const search = async (args) => {
+    const res = await call(context, "tools/call", { name: "search_leads", arguments: args });
+    return res.result.isError ? res.result.content[0].text : JSON.parse(res.result.content[0].text);
+  };
+  const pages = [await search({ limit: 2 }), await search({ limit: 2, offset: 2 }), await search({ limit: 2, offset: 4 })];
+  assert.deepEqual(pages.map((p) => [p.total, p.nextOffset]), [[5, 2], [5, 4], [5, undefined]]);
+  assert.deepEqual(pages.flatMap((p) => p.leads.map((l) => l.name)), ["Alpenblick", "Brauhaus", "Café Anna", "Dorfwirt", "Zum Hirschen"]);
+  // A page that ends on the last lead says no next page, or an agent would fetch an empty one.
+  const whole = await search({ limit: 5 });
+  assert.deepEqual([whole.leads.length, whole.nextOffset], [5, undefined]);
+  const [, brauhaus, , dorfwirt] = pages.flatMap((p) => p.leads);
+  assert.deepEqual(brauhaus, { id: ids["Brauhaus"], name: "Brauhaus", city: "Graz", status: "neu", fit: 2, followUp: null, due: false, next: "Erstkontakt", hasEmail: true, hasPhone: true, optOut: false });
+  assert.deepEqual(dorfwirt, { id: ids["Dorfwirt"], name: "Dorfwirt", city: "Graz", status: "disqualifiziert", fit: 2, followUp: null, due: false, hasEmail: false, hasPhone: false, optOut: true });
+  assert.deepEqual((await search({ query: "graz", status: "neu" })).leads.map((l) => l.name), ["Alpenblick", "Brauhaus", "Café Anna", "Zum Hirschen"]);
+  await context.uc.setFollowUp(ids["Zum Hirschen"], "2026-10-15");
+  assert.deepEqual((await search({ dueOnly: true })).leads.map((l) => [l.name, l.due]), [["Zum Hirschen", true]]);
+  assert.match(await search({ limit: 51 }), /limit/);
+  const full = await call(context, "tools/call", { name: "get_lead", arguments: { id: ids["Brauhaus"] } });
+  assert.equal(JSON.parse(full.result.content[0].text).lead.notes, "x".repeat(2000));
+});
+
+test("search_leads pages two businesses of the same name by id, whatever order the store reads them in", async () => {
+  const context = mcpContext();
+  await context.uc.addLead({ name: "Gasthof Post" });
+  await context.uc.addLead({ name: "Gasthof Post" });
+  // D1 promises no row order without ORDER BY: one page call may read the rows reversed against the next.
+  const reversed = { ...context, store: { ...context.store, list: async (c) => (await context.store.list(c)).reverse() } };
+  const page = async (ctx, offset) => JSON.parse((await call(ctx, "tools/call", { name: "search_leads", arguments: { query: "post", limit: 1, offset } })).result.content[0].text).leads.map((l) => l.id);
+  assert.deepEqual([...await page(context, 0), ...await page(reversed, 1)], ["id1", "id2"]);
+  assert.deepEqual([...await page(reversed, 0), ...await page(context, 1)], ["id1", "id2"]);
+});
+
 test("an agent cannot fill a call script as a message", async () => {
   const context = mcpContext();
   const id = await context.uc.addLead({ name: "Agent Wirt" });

@@ -4,7 +4,6 @@ import { STAGES, CHANNELS, LOST_REASONS, OPT_OUT_REASON } from "../domain/consta
 import { isDue, takesFollowUp } from "../domain/lead.js";
 import { nextActionHint, byTimeline } from "../domain/activity.js";
 import { fillTemplate } from "../domain/template.js";
-import { regionOf } from "../domain/region.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
 import { searchLeads } from "../domain/search.js";
 
@@ -17,22 +16,26 @@ A phone call is logged with log_call, which records its outcome and moves the le
 Agents cannot send email: create_gmail_draft puts a draft into the user's Gmail for a person to review and send. The CRM adds the lead's unsubscribe link at the end, except for a Kunde; do not write one yourself.`;
 
 const id = z.string().describe("Lead id");
+// Enough to choose a lead, and short, so a page of them stays small; get_lead reads one in full.
 const summary = (l, acts, today) => ({
-  id: l.id, name: l.name, city: l.city, region: regionOf(l), status: l.status, fit: l.fit, email: l.email || undefined,
-  followUp: l.followUp, contactedAt: l.contactedAt, due: isDue(l, today), optOut: !!l.optOutAt, next: takesFollowUp(l) ? nextActionHint(l, acts) : undefined,
+  id: l.id, name: l.name, city: l.city, status: l.status, fit: l.fit, followUp: l.followUp, due: isDue(l, today),
+  next: (takesFollowUp(l) && nextActionHint(l, acts)) || undefined, hasEmail: !!l.email, hasPhone: !!l.phone, optOut: !!l.optOutAt,
 });
 
 /** Tools: name → description, input schema, handler. Writes go through the same use cases as the web app. */
 const TOOLS = {
-  search_leads: ["Search leads by name, place, person, notes or history. Empty query lists all. Filter by status, or only those due for follow-up.",
-    z.object({ query: z.string().default(""), status: Status.optional(), dueOnly: z.boolean().default(false), limit: z.number().int().min(1).max(200).default(30) }),
-    async ({ query, status, dueOnly, limit }, { store, clock }) => {
-      const [leads, activities] = await Promise.all([store.list("leads"), store.list("activities")]);
+  search_leads: ["Search leads by name, place, person, notes or history, best match first. Empty query lists all, by name. Filter by status, or only those due for follow-up. Answers `total` and up to `limit` leads from `offset`, each a short summary; if more match, `nextOffset` is the offset of the next page. Read one lead in full, with its history, with get_lead.",
+    z.object({ query: z.string().default(""), status: Status.optional(), dueOnly: z.boolean().default(false), offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(50).default(30) }),
+    async ({ query, status, dueOnly, offset, limit }, { store, clock }) => {
+      const [stored, activities] = await Promise.all([store.list("leads"), store.list("activities")]);
+      // The store returns no set order; pages only line up if every call ranks the same leads the same way.
+      const leads = stored.sort((a, b) => a.name.localeCompare(b.name, "de") || a.id.localeCompare(b.id));
       const today = clock.today();
       const hits = query.trim() ? searchLeads({ data: { leads, activities } }, query).map((r) => r.lead) : leads;
       const actsOf = (lid) => activities.filter((a) => a.leadId === lid);
       const found = hits.filter((l) => (!status || l.status === status) && (!dueOnly || isDue(l, today)));
-      return { total: found.length, leads: found.slice(0, limit).map((l) => summary(l, actsOf(l.id), today)) };
+      const end = offset + limit;
+      return { total: found.length, leads: found.slice(offset, end).map((l) => summary(l, actsOf(l.id), today)), nextOffset: end < found.length ? end : undefined };
     }],
   get_lead: ["One lead with every field and its full contact history.",
     z.object({ id }),
