@@ -2,6 +2,13 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.10.1 (2026-10-17)
+
+### Changed
+- **An opt-out is the same everywhere:** "Keine Kontaktaufnahme gewünscht" as the reason, whether picked as the Grund, in the edit form, for a new business, as a call's Kein Interesse, as an appointment's Kein Abschluss or by an agent, now works like the Opt-out button: Disqualifiziert, no next step, and a Verlauf entry "Opt-out: möchte keine Nachrichten mehr." (for a call it is in the call itself). The entry counts as the first contact.
+- Picking "Keine Kontaktaufnahme gewünscht" as the Grund asks first, as the Opt-out button does.
+- A second opt-out on a business that already has one changes nothing (before: a new date and a second Verlauf entry).
+
 ## 1.10.0 (2026-10-17)
 
 ### Changed

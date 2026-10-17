@@ -1,7 +1,7 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch } from "../domain/activity.js";
-import { normalizeLead, LEAD_FIELDS, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink } from "../domain/lead.js";
+import { normalizeLead, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
@@ -13,6 +13,7 @@ import { ValidationError, ConflictError } from "../domain/errors.js";
 const lines = (a) => (a || []).map((s) => String(s).trim()).filter(Boolean);
 const normalizeIcp = (icp) => ({ fit: lines(icp.fit), noFit: lines(icp.noFit), note: String(icp.note || "") });
 const ATTEMPTS = 3;
+const OPT_OUT_TEXT = "Opt-out: m\xF6chte keine Nachrichten mehr.";
 /**
  * Read, decide, commit. A write that names its read as `base` fails with ConflictError if someone wrote the
  * record in between; then the whole step runs again on fresh state. After ATTEMPTS the ConflictError reaches the caller.
@@ -31,54 +32,60 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
   const touch = (patch) => ({ ...patch, updatedAt: clock.now() });
   const commit = (ops) => store.commit(ops, actor);
   /**
-   * Every change to a stored lead's fields goes through here (the Kundenakte has its own rules, normalizeAccount,
-   * and saveAccount writes it with the same guard): the patch runs through normalizeLead on the read lead and
-   * every field that differs is written, so what the rules derive (a cleared reason, contactedAt, an opt-out)
-   * holds on every path. Empty when nothing changes.
+   * Every change to a lead's fields goes through here, and every lead addLead creates; only importBackup writes a
+   * lead without it, one the CRM never held, through normalizeLead alone. The Kundenakte has its own rules
+   * (normalizeAccount), and saveAccount writes it with the same guard. The patch runs through normalizeLead on the
+   * read lead and every field that differs is written, so what the rules derive (a cleared reason, contactedAt, an
+   * opt-out) holds on every path. `isNew`: `l` is the empty lead addLead starts from, written whole. `activity` is
+   * a contact logged in the same write; with one, the lead is always written (at least updatedAt), so a concurrent
+   * opt-out, status change or delete is never missed. No ops when nothing changes.
+   *
+   * A patch that opts the lead out is the opt-out, whichever way it comes (the Opt-out button, the reason
+   * "Keine Kontaktaufnahme gewünscht" picked anywhere, a call, the link): it closes the lead as optOutPatch does
+   * and says in the Verlauf how the opt-out reached us (`optOutText`), unless the activity logged with it does (a call).
+   * That entry is their message, a contact like any other: it dates the first contact, as planAfterActivity does.
+   * `trashed`: the lead is in the Papierkorb; the entry goes there with it, so a restore brings both back.
    */
-  const leadDiff = (l, patch) => {
-    const next = normalizeLead(patch, l, clock.today());
-    return Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
-  };
+  function leadOps(l, patch, { activity = null, optOutText = OPT_OUT_TEXT, trashed = false, isNew = false } = {}) {
+    const today = clock.today();
+    let next = normalizeLead(patch, l, today);
+    if (next.optOutAt && !l.optOutAt) {
+      activity ||= newActivityRecord({ leadId: l.id, direction: "in", channel: "Sonstiges", date: today, text: optOutText }, { id: ids.newId(), now: clock.now(), today });
+      next = normalizeLead({ ...patch, ...optOutPatch(next.optOutAt, next), contactedAt: firstContactOf([activity], next.contactedAt) }, l, today);
+    }
+    const activityOps = activity ? [{ type: "put", collection: "activities", id: activity.id, data: activity, trashed }] : [];
+    if (isNew) return [...activityOps, { type: "put", collection: "leads", id: l.id, data: { ...l, ...next } }];
+    const diff = Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
+    return activity || Object.keys(diff).length ? [...activityOps, patchOp(l, diff)] : [];
+  }
   // `l` itself is the base: its version symbol is not copied by a spread.
   const patchOp = (l, diff) => ({ type: "patch", collection: "leads", id: l.id, base: l, data: touch(diff) });
-  /** The common shape: read the lead, compute a patch from it, write the diff only if the lead is still as read. Says whether anything changed. */
+  /** The common shape: read the lead, compute a patch from it, write it only if the lead is still as read. Says whether anything changed. */
   const changeLead = (id, compute) => retrying(async () => {
     const l = await lead(id);
-    const diff = leadDiff(l, compute(l));
-    if (Object.keys(diff).length) await commit([patchOp(l, diff)]);
-    return Object.keys(diff).length > 0;
+    const ops = leadOps(l, compute(l));
+    if (ops.length) await commit(ops);
+    return ops.length > 0;
   });
   async function lead(id) {
     const found = await store.get("leads", id);
     if (!found) throw new ValidationError("id", "Betrieb nicht gefunden");
     return found;
   }
-  // The lead is always written (at least updatedAt), so a concurrent opt-out, status change or delete is never missed.
   const logContact = (id, input, planOf) => retrying(async () => {
     const l = await lead(id);
     assertMayContact(l, input.direction);
     const activity = newActivityRecord({ ...input, leadId: id }, { id: ids.newId(), now: clock.now(), today: clock.today() });
     assertHappened(activity, clock.today());
     const plan = planOf(l, await store.activitiesOf(id), activity);
-    await commit([
-      { type: "put", collection: "activities", id: activity.id, data: activity },
-      patchOp(l, leadDiff(l, plan)),
-    ]);
+    await commit(leadOps(l, plan, { activity }));
     return { activity, plan };
   });
   const logActivity = (id, input) => logContact(id, input, planAfterActivity);
-  /** The opt-out, dated, and how it reached us in the Verlauf, in one write. */
-  /** `trashed`: the lead is in the Papierkorb; the entry goes there with it, so a restore brings both back. */
-  async function recordOptOut(l, text, { trashed = false } = {}) {
-    const date = clock.today();
-    const activity = newActivityRecord({ leadId: l.id, direction: "in", channel: "Sonstiges", date, text }, { id: ids.newId(), now: clock.now(), today: date });
-    // Their message is a contact like any other: it dates the first contact, as planAfterActivity does.
-    await commit([
-      patchOp(l, leadDiff(l, { ...optOutPatch(date, l), contactedAt: firstContactOf([activity], l.contactedAt) })),
-      { type: "put", collection: "activities", id: activity.id, data: activity, trashed }
-    ]);
-  }
+  /** The opt-out, dated today. Once is enough: a lead already opted out stays as it is. */
+  const recordOptOut = async (l, optOutText, trashed = false) => {
+    if (!l.optOutAt) await commit(leadOps(l, optOutPatch(clock.today(), l), { optOutText, trashed }));
+  };
   async function mailable(id) {
     if (!mailer) throw new ValidationError("gmail", "Gmail ist nicht verbunden. Bitte neu anmelden.");
     const l = await lead(id);
@@ -89,9 +96,10 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
 
   return {
     async addLead(input) {
-      const record = newLeadRecord(input, { id: ids.newId(), now: clock.now(), today: clock.today() });
-      await commit([{ type: "put", collection: "leads", id: record.id, data: record }]);
-      return record.id;
+      const now = clock.now();
+      const empty = { id: ids.newId(), schemaVersion: SCHEMA_VERSION, ...LEAD_FIELDS, createdAt: now, updatedAt: now };
+      await commit(leadOps(empty, input, { isNew: true }));
+      return empty.id;
     },
     /** Inline quick edit of a single field; same validation as the full form. */
     updateField: (id, key, value) => changeLead(id, () => ({ [key]: value })),
@@ -151,15 +159,15 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     /** A phone call and how it ended: logged, and the lead moved on by the outcome, in one write. */
     logCall: async (id, call) => logContact(id, callActivity(call, clock.today()), (l, acts, activity) => planAfterCall(l, acts, activity, call)),
     /** The business asked not to be contacted again: record it (dated) and close the lead. */
-    optOut: (id, note) => retrying(async () => recordOptOut(await lead(id), "Opt-out: m\xF6chte keine Nachrichten mehr." + (note ? " " + String(note).trim() : ""))),
+    optOut: (id, note) => retrying(async () => recordOptOut(await lead(id), OPT_OUT_TEXT + (note ? " " + String(note).trim() : ""))),
     /**
-     * The recipient used the link in a mail. Once is enough: a lead already opted out stays as it is.
-     * A lead in the Papierkorb is opted out there, so a restore cannot make it mailable again.
+     * The recipient used the link in a mail. A lead in the Papierkorb is opted out there, so a restore cannot
+     * make it mailable again.
      */
     unsubscribe: (id) => retrying(async () => {
       const live = await store.get("leads", id);
       const l = live || await store.getDeleted("leads", id);
-      if (l && !l.optOutAt) await recordOptOut(l, "Opt-out \xFCber den Abmeldelink in einer E-Mail.", { trashed: !live });
+      if (l) await recordOptOut(l, "Opt-out \xFCber den Abmeldelink in einer E-Mail.", !live);
     }),
     clearOptOut: (id) => changeLead(id, clearOptOutPatch),
     async saveTemplate(id, input) {

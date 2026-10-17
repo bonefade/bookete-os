@@ -163,6 +163,55 @@ test("picking the opt-out reason is an opt-out: no more outgoing contact", async
   assert.deepEqual([l.status, l.lostReason, l.optOutAt], ["kontaktiert", null, null]);
 });
 
+test("the opt-out reason records the opt-out as the Opt-out button does, on every write path", async () => {
+  const { store, uc } = setup();
+  const OPT_OUT = "Keine Kontaktaufnahme gew\xFCnscht", ENTRY = ["in", "Opt-out: m\xF6chte keine Nachrichten mehr."];
+  // Each path from a Neu lead with a next step and a follow-up date, or a new lead given the reason at once;
+  // the closed lead is the same whichever was taken.
+  const opened = (extra) => uc.addLead({ name: "Will nicht", nextStep: "Anrufen", followUp: "2026-10-20", ...extra });
+  const disqualified = async () => {
+    const id = await opened();
+    await uc.changeStatus(id, "disqualifiziert", "Zu klein");
+    return id;
+  };
+  const paths = {
+    button: [opened, (id) => uc.optOut(id)],
+    changeStatus: [opened, (id) => uc.changeStatus(id, "disqualifiziert", OPT_OUT)],
+    updateLead: [opened, (id) => uc.updateLead(id, { status: "disqualifiziert", lostReason: OPT_OUT })],
+    mcp: [opened, (id) => mcp({ store, clock, uc }, "change_status", { id, status: "disqualifiziert", lostReason: OPT_OUT })],
+    setLostReason: [disqualified, (id) => uc.setLostReason(id, OPT_OUT)],
+    updateField: [disqualified, (id) => uc.updateField(id, "lostReason", OPT_OUT)],
+    meeting: [() => opened({ status: "qualifiziert", nextStep: "Termin", followUp: "2026-10-15" }), (id) => uc.meetingOutcome(id, { result: "kein-abschluss", reason: OPT_OUT })],
+    call: [() => opened({ phone: "+43 1" }), (id) => uc.logCall(id, { outcome: "kein-interesse", reason: OPT_OUT })],
+    // A new lead created with the reason: from the new-lead form (its fields as the RPC takes them) and by an agent.
+    form: [() => COMMANDS.addLead[1](uc, COMMANDS.addLead[0].parse({ input: { name: "Will nicht", region: "", status: "disqualifiziert", fit: "2", lostReason: OPT_OUT, notes: "" } }))],
+    mcpCreate: [async () => JSON.parse((await mcp({ store, clock, uc }, "create_lead", { name: "Will nicht", nextStep: "Anrufen", followUp: "2026-10-20", status: "disqualifiziert", lostReason: OPT_OUT })).content[0].text).id],
+  };
+  for (const [name, [make, optOut = () => {}]] of Object.entries(paths)) {
+    const id = await make();
+    await optOut(id);
+    const l = await store.get("leads", id);
+    assert.deepEqual([l.status, l.lostReason, l.optOutAt, l.followUp, l.nextStep, l.contactedAt], ["disqualifiziert", OPT_OUT, "2026-10-15", null, "", "2026-10-15"], name);
+    // How it reached us is in the Verlauf once: the call says so itself.
+    const entries = (await store.activitiesOf(id)).map((a) => [a.direction, a.text]);
+    assert.deepEqual(entries, [name === "call" ? ["out", "Kein Interesse: " + OPT_OUT] : ENTRY], name);
+  }
+});
+
+test("a second opt-out, on a later day, changes nothing: the first date and its one Verlauf entry stay", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Will nicht" });
+  await uc.optOut(id);
+  const first = await store.get("leads", id);
+  let n = 0;
+  const later = createUseCases({ store, clock: { today: () => "2026-10-20", now: () => "2026-10-20T10:00:00.000Z" }, ids: { newId: () => `later${++n}` }, actor: "jo@bookete.com (test)" });
+  await later.optOut(id, "Nochmal per Mail");
+  await later.unsubscribe(id);
+  const l = await store.get("leads", id);
+  assert.deepEqual([l.optOutAt, l.updatedAt], ["2026-10-15", first.updatedAt]);
+  assert.equal((await store.activitiesOf(id)).length, 1);
+});
+
 test("a contact on an opted-out lead dates its first contact too", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Will nicht" });

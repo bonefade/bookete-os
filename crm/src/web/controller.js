@@ -1,4 +1,4 @@
-import { STAGE_LABEL } from '../domain/constants.js';
+import { STAGE_LABEL, OPT_OUT_REASON } from '../domain/constants.js';
 import { ValidationError } from '../domain/errors.js';
 import { actsOf, currentLead, icpOf, isReady, callList } from './selectors.js';
 import { addDays } from '../domain/dates.js';
@@ -130,6 +130,9 @@ export async function saveLeadForm(uc, leadId, elements) {
 export function pickLostReason(uc, lead, reason) {
   return lead.status === "disqualifiziert" ? uc.setLostReason(lead, reason) : uc.changeStatus(lead, "disqualifiziert", reason);
 }
+const confirmOptOut = (lead) => confirm(`\u201E${lead.name}\u201C m\xF6chte keine Nachrichten mehr?
+
+Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`);
 export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
   let uc = null;
   const S = () => store2.get();
@@ -421,9 +424,7 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     toSearch: () => openSearch(S().ui.q),
     async optOut() {
       const lead = currentLead(S());
-      if (!confirm(`\u201E${lead.name}\u201C m\xF6chte keine Nachrichten mehr?
-
-Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
+      if (!confirmOptOut(lead)) return;
       const note = prompt("Optional: Wie kam das Opt-out? (z. B. \u201Eper Mail: passt schon\u201C)", "") || "";
       await run(() => uc.optOut(lead, note), "Opt-out gespeichert");
     },
@@ -547,6 +548,8 @@ Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`)) return;
       return run(() => uc.changeStatus(lead, d.status), "Status: " + STAGE_LABEL[d.status]);
     }
     if (d.lost) {
+      // A tap on the opt-out reason records the opt-out, so it asks first, as the Opt-out button does.
+      if (d.lost === OPT_OUT_REASON && !lead.optOutAt && !confirmOptOut(lead)) return;
       ui({ lostPick: false });
       return run(() => pickLostReason(uc, lead, d.lost), lead.status === "disqualifiziert" ? "Grund gespeichert" : "Status: " + STAGE_LABEL.disqualifiziert);
     }

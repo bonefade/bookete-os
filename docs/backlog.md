@@ -34,7 +34,6 @@ or overwriting data by mistake, not about outside access.
 
 ## P2
 
-- CRM: picking the opt-out reason records the opt-out, but not as the Opt-out button does: no confirm, no "Opt-out" entry in the Verlauf, the next step kept. One use case for both (second review of 1.4.0).
 - Move the repo to stage `live` (`profiles/ai-factory/patterns/deploy-safety.md` §0): a `staging` branch, a staging Worker with its own D1, and branch protection. Owner decided 2026-10-16 to skip it for now; revisit when a third person or a second write path joins.
 - CRM: trash retention. Deleted leads stay in the Papierkorb until someone erases them; decide whether they should be erased on their own after a set time.
 - CRM: Papierkorb paging. It lists the newest 50 deleted leads; older ones show once those are restored or erased.
@@ -66,6 +65,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI on a push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), each checked against the live `app.js` before the next.
 
+- CRM 1.10.1: the opt-out reason, wherever it is set (a new lead too), records the opt-out as the Opt-out button does (`leadOps`, `crm/src/application/use-cases.js`).
 - CRM 1.10.0: MCP `search_leads` answers in pages (`offset`, `limit` up to 50) of short summaries (`crm/src/server/mcp.js`).
 - CRM 1.9.3: the search core moved to `crm/src/domain/search.js`; nothing outside `crm/src/web/` imports the web layer (`crm/test/boundaries.test.js`).
 - CRM 1.9.2: leads are read as stored; the read-time `upgradeLead` is gone from `crm/src/server/store.js` and the use cases, kept for old backups in `chunkBackup` (44153f2). Precondition count on production: no lead outside the five statuses or below schemaVersion 3.

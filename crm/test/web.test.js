@@ -672,6 +672,34 @@ test("Nächster opens the next on the call list in place of this page, past this
   }
 });
 
+test("the opt-out reason in the picker asks first, as the Opt-out button does; another reason does not", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  const OPT_OUT = "Keine Kontaktaufnahme gew\xFCnscht";
+  const calls = [];
+  const uc = { changeStatus: async (lead, status, reason) => calls.push(reason) };
+  try {
+    const store = createStore(initialState());
+    store.data("leads", [{ ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert" }]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const { click } = fakeBrowser("#/betrieb/L1", store, uc);
+    const asked = [];
+    let answer = false;
+    globalThis.confirm = (text) => (asked.push(text), answer);
+    await click({ status: "disqualifiziert" });
+    await click({ lost: OPT_OUT });
+    assert.deepEqual([calls, store.get().ui.lostPick], [[], true]);
+    answer = true;
+    await click({ lost: OPT_OUT });
+    await click({ status: "disqualifiziert" });
+    await click({ lost: "Zu klein" });
+    assert.deepEqual(calls, [OPT_OUT, "Zu klein"]);
+    assert.equal(asked.length, 2);
+    assert.match(asked[0], /^\u201EKrone\u201C m\xF6chte keine Nachrichten mehr\?/);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
 test("a write asked for again while it is on its way is sent once; a different one goes out at once", async () => {
   const realFetch = globalThis.fetch;
   const sent = [];

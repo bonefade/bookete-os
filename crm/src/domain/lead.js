@@ -75,9 +75,6 @@ export function normalizeLead(input, base = LEAD_FIELDS, today) {
   if (out.website && !/^https?:\/\//.test(out.website)) out.website = "https://" + out.website;
   return out;
 }
-export function newLeadRecord(input, { id, now, today }) {
-  return { id, schemaVersion: SCHEMA_VERSION, ...normalizeLead(input, LEAD_FIELDS, today), createdAt: now, updatedAt: now };
-}
 /** In the pipeline: neu, kontaktiert, qualifiziert. */
 export const isPipeline = (lead) => PIPELINE_STATUSES.has(lead.status);
 /** Everything but a disqualified lead can have a follow-up and a next step; a Kunde has onboarding to-dos. */
