@@ -28,7 +28,9 @@ export const LEAD_FIELDS = {
   contactedAt: null
   // date of the first contact either way; null exactly while the lead is neu (a disqualified lead may have either)
 };
-export const str = (v) => v == null ? "" : String(v).trim();
+/** Trimmed text, "" for none; `max` caps its length. */
+export const str = (v, max = Infinity) => (v == null ? "" : String(v).trim()).slice(0, max);
+export const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 /**
  * The one place the lead rules live: every write (web, MCP, import) runs the merged lead through here.
  * `today` dates a first contact that a status change implies.
@@ -65,7 +67,7 @@ export function normalizeLead(input, base = LEAD_FIELDS, today) {
   }
   if (out.status !== "neu" && out.status !== "disqualifiziert" && !out.contactedAt) out.contactedAt = today;
   if (out.instagram && !out.instagram.startsWith("@")) out.instagram = "@" + out.instagram;
-  if (out.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(out.email)) throw new ValidationError("email", "E-Mail ung\xFCltig");
+  if (out.email && !isEmail(out.email)) throw new ValidationError("email", "E-Mail ung\xFCltig");
   if (out.website && !/^https?:\/\//.test(out.website)) out.website = "https://" + out.website;
   return out;
 }

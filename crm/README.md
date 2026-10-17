@@ -5,7 +5,8 @@ Two people sign in with their `@bookete.com` Google accounts. Agents (Claude, Cl
 
 - **Web app:** leads, contact history, follow-ups, templates. Changes from the other person show up within seconds.
 - **Gmail:** "Per Gmail senden" in the compose sheet sends from your own mailbox and logs the message.
-- **MCP:** `https://crm.bookete.com/mcp`. Agents can search, create and update leads, log contacts and create Gmail drafts. They cannot send or delete.
+- **Kundenakte:** on each Qualifiziert or Kunde business, what we deliver (bookete, website, integration), its systems (domain and who owns it, DNS, hosting, e-mail, website, POS, each with the contact who runs it) and the people to reach, agencies included. Never passwords, only where the logins are kept.
+- **MCP:** `https://crm.bookete.com/mcp`. Agents can search, create and update leads, fill in the Kundenakte, log contacts and create Gmail drafts. They cannot send or delete.
 - **Rules on the server:** opt-outs, status changes and the follow-up cadence are enforced on every write, whoever writes.
 - **No lost edits:** a save changes only the fields you changed. A write based on data someone else changed in the meantime is redone on the fresh data, or refused with a message.
 

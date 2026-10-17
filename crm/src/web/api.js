@@ -12,11 +12,24 @@ async function call(url, init) {
   return body;
 }
 
-/** Same calls as the old in-browser use cases; the server now runs them. `onWrite` fires after each successful write. */
+/**
+ * Runs `run` one at a time. Calls made while it runs share one more run after it, so whoever awaits a call waits for
+ * a run that started after the call.
+ */
+export function coalesced(run) {
+  let running = null, next = null;
+  const start = () => (running = run().finally(() => (running = null)));
+  const after = () => ((next = null), start());
+  return () => next || (running ? (next = running.then(after, after)) : start());
+}
+/**
+ * Same calls as the old in-browser use cases; the server now runs them. After each successful write the call awaits
+ * `onWrite` (the sync), so the screen drawn next shows the write: a form reopened at once holds what was just saved.
+ */
 export function createApi(onWrite) {
   const rpc = async (name, args) => {
     const { result } = await call("/api/rpc/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(args) });
-    onWrite();
+    await onWrite();
     return result;
   };
   return {
@@ -41,6 +54,7 @@ export function createApi(onWrite) {
     saveTemplate: (id, input) => rpc("saveTemplate", { id, input }),
     deleteTemplate: (id) => rpc("deleteTemplate", { id }),
     saveIcp: (icp) => rpc("saveIcp", { icp: { fit: icp.fit, noFit: icp.noFit, note: icp.note } }),
+    saveAccount: (lead, account, before) => rpc("saveAccount", { id: lead.id, account, before }),
     sendEmail: (lead, msg) => rpc("sendEmail", { id: lead.id, ...msg }),
     async importBackup(backup, today) {
       let added = 0;

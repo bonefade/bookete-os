@@ -3,11 +3,12 @@ import { actsOf, currentLead, icpOf, isReady, scoped, regionCounts, toolCounts, 
 import { addDays } from '../domain/dates.js';
 import { channelLink, instagramProfile } from './platform.js';
 import { countTouches, hasReply, sequenceExhausted, nextActionHint } from '../domain/activity.js';
-import { esc, fmtDate, relDate, options, describeChange, actorName, fmtTime, FIELD_LABEL } from './format.js';
+import { esc, fmtDate, fmtDateWithYear, relDate, options, describeChange, actorName, fmtTime, FIELD_LABEL } from './format.js';
 import { fold, searchTokens, searchLeads, markRanges, markHtml, snippetHtml } from './search.js';
 import { isPipeline, takesFollowUp, isDue } from '../domain/lead.js';
 import { outreachStats, lostBreakdown, templateUsage } from '../domain/stats.js';
 import { REGIONS, regionOf } from '../domain/region.js';
+import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
 
 export const ICONS = {
   suche: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>',
@@ -296,17 +297,84 @@ export function detailView(state, today) {
     ${l.optOutAt ? "" : `<button class="danger full" style="margin-top:12px" data-act="optOut">Keine Nachrichten mehr (Opt-out)</button>`}
     ${ui.lostPick ? `<div class="card" style="margin-top:10px"><p style="margin:0 0 8px;font-weight:600">Warum disqualifiziert?</p><div class="chips">${LOST_REASONS.map((r) => `<button class="chip lostc" data-lost="${esc(r)}" aria-pressed="${l.lostReason === r}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="lostCancel">Abbrechen</button></div>` : lost && !l.optOutAt ? `<button class="more" data-act="lostPick">Grund \xE4ndern</button>` : ""}
   </div>
+  ${showsAccount(l) ? accountHtml(l) : ""}
   <div class="sec"><h3>Infos <small>zum Bearbeiten antippen</small></h3><dl class="card facts qe">${factsHtml}</dl></div>
   <div class="sec"><h3>Notizen</h3>${ui.editField === "notes" ? `<div class="card"><textarea id="qe" data-field="notes" rows="10">${esc(l.notes || "")}</textarea><div class="qe-actions"><button data-act="qeCancel">Abbrechen</button><button class="primary" data-act="qeSave">Speichern</button></div></div>` : `<div class="card qe-click" data-edit="notes" role="button" tabindex="0">${l.notes ? clamp("notes", l.notes) : `<span class="qe-empty">+ Notiz hinzuf\xFCgen</span>`}</div>`}</div>
   <div class="sec"><h3>Verlauf</h3>${acts.length ? [...acts].reverse().map((e) => `<div class="entry ${e.direction}"><div class="h"><span>${fmtDate(e.date)} \xB7 ${esc(e.channel)} \xB7 ${e.direction === "out" ? "wir \u2192 Betrieb" : "Betrieb \u2192 wir"}${e.templateId && tplName[e.templateId] ? " \xB7 " + esc(tplName[e.templateId]) : ""}</span><button data-copy="${esc(e.id)}">Kopieren</button></div>${clamp("a:" + e.id, e.text)}</div>`).join("") : `<p class="note">Noch keine Eintr\xE4ge.</p>`}</div>
   <div class="sec"><h3>\xC4nderungen</h3>${ui.changes?.leadId === l.id ? changesHtml(ui.changes) : `<button class="more" data-act="showChanges">Wer hat was ge\xE4ndert?</button>`}</div>
 </div>`;
 }
+const STATE_LABEL = Object.fromEntries(SERVICE_STATES);
+const OWNER_LABEL = Object.fromEntries(OWNERS);
+const fact = (label, html) => html ? `<div class="fact"><dt>${esc(label)}</dt><dd>${html}</dd></div>` : "";
+const dated = (label, d) => d ? `${label} ${esc(fmtDateWithYear(d))}` : "";
+/** The Kundenakte on the lead page: what we deliver, their systems and who runs them, the people to reach. */
+function accountHtml(l) {
+  const a = accountOf(l);
+  const who = Object.fromEntries(a.contacts.map((c) => [c.id, c.name]));
+  const services = a.services.map((s) => `<div class="fact"><dt>${esc(STATE_LABEL[s.state])}</dt><dd><b>${esc(s.kind)}</b>${s.price ? " \xB7 " + esc(s.price) : ""}${[dated("seit", s.since), dated("live", s.goLive), dated("Vertrag bis", s.contractEnd)].filter(Boolean).map((x) => " \xB7 " + x).join("")}${s.note ? `<br>${esc(s.note)}` : ""}</dd></div>`).join("");
+  const sys = a.systems;
+  // The domain's line also says who owns it and where it is registered.
+  const more = { domain: [sys.domainOwner !== "unbekannt" && `geh\xF6rt: ${OWNER_LABEL[sys.domainOwner]}`, sys.registrar] };
+  const systems = [
+    ...SYSTEMS.map(([k, label]) => {
+      const rest = [...(more[k] || []), sys[k].by && `betreut von ${who[sys[k].by]}`].filter(Boolean);
+      return fact(label, sys[k].what || rest.length ? esc([sys[k].what || "\u2013", ...rest].join(" \xB7 ")) : "");
+    }),
+    fact("Google-Profil", sys.googleProfile !== "unbekannt" ? "verwaltet: " + esc(OWNER_LABEL[sys.googleProfile]) : ""),
+    fact("Zug\xE4nge liegen", esc(sys.access)),
+  ].join("");
+  const contacts = a.contacts.map((c) => {
+    const tel = channelLink({ phone: c.phone }, "Telefon");
+    const handles = [c.handles, ...handledBy(a, c.id)].filter(Boolean).join(", ");
+    return `<div class="fact"><dt>${esc([c.company, c.role].filter(Boolean).join(" \xB7 ") || "Kontakt")}</dt><dd><b>${esc(c.name)}</b>${handles ? ` \xB7 ${esc(handles)}` : ""}${c.email ? `<br><a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ""}${tel ? `<br><a href="${esc(tel)}">${esc(c.phone)}</a>` : ""}${c.note ? `<br>${esc(c.note)}` : ""}</dd></div>`;
+  }).join("");
+  const part = (title, html, empty) => `<h4>${title}</h4>${html ? `<dl class="facts" style="padding:0">${html}</dl>` : `<p class="note">${empty}</p>`}`;
+  return `<div class="sec"><h3>Kundenakte <button class="link" data-act="accountEdit">Bearbeiten</button></h3><div class="card account">
+    ${part("Leistungen", services, "Noch keine Leistung eingetragen.")}${part("Systeme", systems, "Noch nichts zu Domain, Hosting oder Kasse.")}${part("Kontakte", contacts, "Noch keine Kontakte, etwa die Agentur.")}
+  </div></div>`;
+}
+/** A labelled one-line field of a form. */
+const textField = (name, value, label, type = "text", placeholder = "") => `<label>${label}<input name="${name}" type="${type}" value="${esc(value || "")}" placeholder="${esc(placeholder)}"></label>`;
+/** The Kundenakte form: every entry plus one empty row each to add to. The Kundenakte as shown goes along as `before`. */
+export function accountEditView(state) {
+  if (!isReady(state)) return loadingOr(state, "");
+  const l = currentLead(state);
+  const a = accountOf(l);
+  const blank = [["", "\u2013"]];
+  const note = (name, v) => `<label>Notiz<textarea name="${name}" rows="3">${esc(v || "")}</textarea></label>`;
+  const drop = (name, id) => id ? `<label class="drop"><input type="checkbox" name="${name}.drop" value="1"> Entfernen</label>` : "";
+  const services = [...a.services, {}].map((s, i) => `<div class="card"><input type="hidden" name="services.${i}.id" value="${esc(s.id || "")}">
+    <div class="two"><label>Leistung<select name="services.${i}.kind">${options(s.id ? SERVICE_KINDS : [...blank, ...SERVICE_KINDS], s.kind || "")}</select></label><label>Stand<select name="services.${i}.state">${options(s.id ? SERVICE_STATES : [...blank, ...SERVICE_STATES], s.state || "")}</select></label></div>
+    <div class="two">${textField(`services.${i}.since`, s.since, "Seit", "date")}${textField(`services.${i}.goLive`, s.goLive, "Live seit", "date")}</div>
+    <div class="two">${textField(`services.${i}.contractEnd`, s.contractEnd, "Vertrag bis", "date")}${textField(`services.${i}.price`, s.price, "Preis", "text", "z. B. 49 \u20AC/Monat")}</div>
+    ${note(`services.${i}.note`, s.note)}${drop(`services.${i}`, s.id)}</div>`).join("");
+  const people = [["", "\u2013"], ...a.contacts.map((c) => [c.id, c.name])];
+  const sys = a.systems;
+  const systems = `<div class="card">
+    <div class="two"><label>Domain geh\xF6rt<select name="systems.domainOwner">${options(OWNERS, sys.domainOwner)}</select></label>${textField("systems.registrar", sys.registrar, "Registriert bei", "text", "z. B. World4You")}</div>
+    ${SYSTEMS.map(([k, label]) => `<div class="two">${textField(`systems.${k}.what`, sys[k].what, label)}<label>betreut von<select name="systems.${k}.by">${options(people, sys[k].by || "")}</select></label></div>`).join("")}
+    <label>Google-Profil verwaltet<select name="systems.googleProfile">${options(OWNERS, sys.googleProfile)}</select></label>
+    ${textField("systems.access", sys.access, "Wo liegen die Zug\xE4nge? (keine Passw\xF6rter)", "text", "z. B. 1Password, Tresor Kunden")}
+    <p class="hint">\u201Ebetreut von\u201C w\xE4hlt aus den gespeicherten Kontakten. Einen neuen Kontakt erst sichern.</p></div>`;
+  const contacts = [...a.contacts, {}].map((c, i) => `<div class="card"><input type="hidden" name="contacts.${i}.id" value="${esc(c.id || "")}">
+    <div class="two">${textField(`contacts.${i}.name`, c.name, "Name")}${textField(`contacts.${i}.company`, c.company, "Firma", "text", "z. B. Webagentur")}</div>
+    <div class="two">${textField(`contacts.${i}.role`, c.role, "Rolle", "text", "Inhaberin, Agentur, IT")}${textField(`contacts.${i}.handles`, c.handles, "K\xFCmmert sich um", "text", "Domain, Website")}</div>
+    <div class="two">${textField(`contacts.${i}.email`, c.email, "E-Mail", "email")}${textField(`contacts.${i}.phone`, c.phone, "Telefon", "tel")}</div>
+    ${note(`contacts.${i}.note`, c.note)}${drop(`contacts.${i}`, c.id)}</div>`).join("");
+  return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>Kundenakte</h2><button class="link" data-act="accountSave">Sichern</button></div>
+<form class="wrap sub" id="aform"><input type="hidden" name="before" value="${esc(JSON.stringify(a))}">
+  <p class="note">${esc(l.name)}</p>
+  <div class="sec"><h3>Leistungen</h3>${services}</div>
+  <div class="sec"><h3>Systeme</h3>${systems}</div>
+  <div class="sec"><h3>Kontakte</h3>${contacts}</div>
+</form>`;
+}
 export function leadEditView(state) {
   if (state.ui.leadId && !isReady(state)) return loadingOr(state, "");
   const l = state.ui.leadId ? currentLead(state) : null;
   const d = l || { status: "neu", fit: 2, currentTool: "unbekannt", type: "Restaurant" };
-  const f = (n, lab, ph = "", type = "text") => `<label>${lab}<input name="${n}" type="${type}" value="${esc(d[n] || "")}" placeholder="${esc(ph)}"></label>`;
+  const f = (n, lab, ph = "", type = "text") => textField(n, d[n], lab, type, ph);
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>${l ? "Bearbeiten" : "Neuer Betrieb"}</h2><button class="link" data-act="saveLead">Sichern</button></div>
 <form class="wrap sub" id="form">
   ${f("name", "Name *")}

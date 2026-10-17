@@ -7,9 +7,9 @@ import { createBackup } from '../domain/backup.js';
 import { fillTemplate, defaultTemplate } from '../domain/template.js';
 import { lastChannel } from '../domain/activity.js';
 import { relDate } from './format.js';
-import { TABS, tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView } from './views.js';
+import { TABS, tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -19,6 +19,7 @@ export function routeOf({ tab, view, leadId, templateId }) {
   const id = (x) => encodeURIComponent(x);
   if (view === "detail") return `#/betrieb/${id(leadId)}`;
   if (view === "editLead") return `#/betrieb/${id(leadId)}/bearbeiten`;
+  if (view === "editAccount") return `#/betrieb/${id(leadId)}/kunde`;
   if (view === "editTemplate") return templateId ? `#/vorlage/${id(templateId)}` : "#/vorlage/neu";
   return `#/${tab}`;
 }
@@ -30,15 +31,17 @@ export function parseRoute(hash) {
     parts = [];
   }
   const [a, b, c] = parts;
-  if (a === "betrieb" && b) return { view: c === "bearbeiten" ? "editLead" : "detail", leadId: b };
+  if (a === "betrieb" && b) return { view: { bearbeiten: "editLead", kunde: "editAccount" }[c] || "detail", leadId: b };
   // A template belongs to Vorlagen, so one opened from a link or a reload goes back there.
   if (a === "vorlage" && b) return { view: "editTemplate", templateId: b === "neu" ? null : b, tab: "vorlagen" };
   return { view: null, tab: TABS.some(([k]) => k === a) ? a : "heute" };
 }
+const LEAD_VIEWS = new Set(["detail", "editLead", "editAccount"]);
+const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 /** The UI state for an address: a lead other than the one open starts fresh, and Mehr starts with the Papierkorb closed so it is never shown stale. */
 export function enterRoute(ui, route) {
-  if (route.view === "detail" || route.view === "editLead") {
-    const sameLead = (ui.view === "detail" || ui.view === "editLead") && ui.leadId === route.leadId;
+  if (LEAD_VIEWS.has(route.view)) {
+    const sameLead = LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
     return { ...ui, ...route, ...(!sameLead && { compose: null, lostPick: false, editField: null, changes: null, expanded: new Set() }) };
   }
   if (route.view) return { ...ui, ...route };
@@ -48,7 +51,7 @@ export function enterRoute(ui, route) {
 export function recordMissing(st) {
   if (!isReady(st)) return false;
   const { view, leadId, templateId } = st.ui;
-  if (view === "detail" || view === "editLead" && leadId) return !currentLead(st);
+  if (view === "detail" || view === "editAccount" || view === "editLead" && leadId) return !currentLead(st);
   if (view === "editTemplate" && templateId) return !st.data.templates.some((t) => t.id === templateId);
   return false;
 }
@@ -80,7 +83,27 @@ export function createNavigation(history, location, applyRoute) {
   return { go, leave, landed };
 }
 /** Where the in-app Zurück leads when there is no earlier screen of ours to go back to: the screen above. */
-export const backRoute = (ui) => ui.view === "editLead" ? routeOf({ view: "detail", leadId: ui.leadId }) : routeOf({ tab: ui.tab });
+export const backRoute = (ui) => ui.view === "editLead" || ui.view === "editAccount" ? routeOf({ view: "detail", leadId: ui.leadId }) : routeOf({ tab: ui.tab });
+/**
+ * The Kundenakte form as the parts of an account: rows by index, without those marked to remove and without a new
+ * row left empty.
+ */
+export function accountInput(elements) {
+  const rows = { services: [], contacts: [] };
+  const systems = {};
+  const dropped = new Set();
+  for (const el of elements) {
+    const [part, a, b] = (el.name || "").split(".");
+    if (part === "systems") {
+      if (b) (systems[a] ||= {})[b] = el.value;
+      else systems[a] = el.value;
+    } else if (rows[part] && b === "drop") {
+      if (el.checked) dropped.add(`${part}.${a}`);
+    } else if (rows[part] && b) (rows[part][a] ||= {})[b] = el.value;
+  }
+  const keep = (part) => rows[part].filter((r, i) => r && !dropped.has(`${part}.${i}`) && (r.id || Object.values(r).some((v) => v !== "")));
+  return { services: keep("services"), contacts: keep("contacts"), systems };
+}
 /**
  * A form's fields by name. With `onlyChanged`, only those whose value differs from what the form showed when
  * it opened, so saving cannot undo someone else's edit to a field this user never touched.
@@ -136,7 +159,7 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     const view = st.ui.view;
     if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
     tabsEl.hidden = !!view;
-    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, suche: searchView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
+    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, suche: searchView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     if (!view) tabsEl.innerHTML = tabBar(st, today);
     if (st.ui.quick && !view && st.ui.tab === "betriebe") setTimeout(() => root.querySelector("#qaName")?.focus(), 30);
     return true;
@@ -145,7 +168,7 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     const a = document.activeElement;
     const v = S().ui.view;
     // An open form is never redrawn under the user; one still waiting for its data is.
-    if ((v === "editLead" || v === "editTemplate") && root.querySelector("form")) return;
+    if (FORM_VIEWS.has(v) && root.querySelector("form")) return;
     if (a && root.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) {
       pending = true;
       return;
@@ -212,7 +235,7 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     const slash = ev.key === "/" && !typing && !ev.metaKey && !ev.ctrlKey && !ev.altKey;
     if (!cmdK && !slash) return;
     const u = S().ui;
-    if (u.view === "editLead" || u.view === "editTemplate" || u.compose || u.editField) return;
+    if (FORM_VIEWS.has(u.view) || u.compose || u.editField) return;
     ev.preventDefault();
     openSearch();
   });
@@ -233,7 +256,7 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
     render();
     root.querySelector("#cText")?.scrollIntoView({ block: "center" });
   }
-  let qeSaving = false;
+  let qeSaving = false, accountSaving = false;
   async function saveQuickEdit() {
     const x = root.querySelector("#qe");
     const lead = currentLead(S());
@@ -287,6 +310,17 @@ export function mountApp({ root, tabsEl, toastEl, store: store2, clock }) {
   const actions = {
     back,
     edit: () => go(routeOf({ view: "editLead", leadId: S().ui.leadId })),
+    accountEdit: () => go(routeOf({ view: "editAccount", leadId: S().ui.leadId })),
+    // A second tap while the first save runs is ignored: it would be refused as a save over a changed Kundenakte.
+    async accountSave() {
+      if (accountSaving) return;
+      accountSaving = true;
+      const f = root.querySelector("#aform");
+      const lead = { id: S().ui.leadId };
+      const saved = await run(() => uc.saveAccount(lead, accountInput(f.elements), JSON.parse(f.elements.before.value)), "Kundenakte gespeichert");
+      accountSaving = false;
+      if (saved !== undefined) back();
+    },
     quick: () => {
       ui({ quick: !S().ui.quick });
       render();

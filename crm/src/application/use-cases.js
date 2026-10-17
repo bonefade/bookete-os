@@ -3,6 +3,7 @@ import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, firstContactUntil } from "../domain/activity.js";
 import { normalizeLead, LEAD_FIELDS, STORED, upgradeLead, newLeadRecord, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
+import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
 
 /**
@@ -30,7 +31,8 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
   const touch = (patch) => ({ ...patch, updatedAt: clock.now() });
   const commit = (ops) => store.commit(ops, actor);
   /**
-   * Every change to a stored lead goes through here: the patch runs through normalizeLead on the read lead and
+   * Every change to a stored lead's fields goes through here (the Kundenakte has its own rules, normalizeAccount,
+   * and saveAccount writes it with the same guard): the patch runs through normalizeLead on the read lead and
    * every field that differs is written, so what the rules derive (a cleared reason, contactedAt, an opt-out)
    * holds on every path. The diff is against the lead as stored: on a row from before 1.4.0 that the store
    * upgraded on read, the first write stores the upgraded fields too. Its schemaVersion stays until 0003 rewrites
@@ -121,6 +123,22 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     closeWithoutReply: (id) => changeLead(id, () => transition("disqualifiziert", "Nicht erreicht")),
     setFollowUp: (id, date) => changeLead(id, (l) => followUpPatch(l, date)),
     setNextStep: (id, text) => changeLead(id, () => ({ nextStep: String(text || "").trim() })),
+    /**
+     * Changes the given parts of a lead's Kundenakte. `before` is the Kundenakte as a form or an agent read it ({} for
+     * none): if it changed since, nothing is saved, so a writer can never undo someone else's entry. Both sides are
+     * compared in today's shape, so a Kundenakte stored before a part was added still saves. Says whether anything changed.
+     */
+    saveAccount: (id, parts, before) => retrying(async () => {
+      const l = await lead(id);
+      const stored = accountOf(l);
+      if (JSON.stringify(normalizeAccount(before, ids.newId)) !== JSON.stringify(stored)) {
+        throw new ValidationError("account", "Die Kundenakte wurde inzwischen ge\xE4ndert. Bitte neu \xF6ffnen.");
+      }
+      const account = normalizeAccount(mergeAccount(stored, parts), ids.newId);
+      if (JSON.stringify(account) === JSON.stringify(stored)) return false;
+      await commit([patchOp(l, { account })]);
+      return true;
+    }),
     logActivity,
     /** The business asked not to be contacted again: record it (dated) and close the lead. */
     optOut: (id, note) => retrying(async () => {
@@ -187,7 +205,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
         leads: (r) => {
           // The browser upgrades an old backup whole, with its activities (chunkBackup); one chunk alone could not.
           if (!(r.schemaVersion >= SCHEMA_VERSION)) throw new ValidationError("backup", "Format vor 1.4.0 \u2013 bitte die App neu laden und erneut importieren");
-          return { ...normalizeLead(r, LEAD_FIELDS, clock.today()), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
+          return { ...normalizeLead(r, LEAD_FIELDS, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
         },
         activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { LeadInput, Status, Reason } from "./commands.js";
+import { LeadInput, Status, Reason, AccountInput } from "./commands.js";
 import { STAGES, CHANNELS, LOST_REASONS, OPT_OUT_REASON } from "../domain/constants.js";
 import { isDue, takesFollowUp } from "../domain/lead.js";
 import { nextActionHint, byTimeline } from "../domain/activity.js";
@@ -12,6 +12,7 @@ const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const INSTRUCTIONS = `bookete CRM: restaurants (leads) in Austria that bookete approaches about table reservations.
 Statuses: ${STAGES.map(([k, label]) => `${k} (${label})`).join(", ")}. Every write is recorded under the signed-in user.
 Rules the server enforces: disqualifiziert needs a reason (${LOST_REASONS.join(" | ")}) and has no follow-up; the reason "${OPT_OUT_REASON}" records an opt-out. Opted-out businesses (optOutAt) must not be contacted. contactedAt is the date of first contact: null on neu, set on kontaktiert, qualifiziert and kunde, either on disqualifiziert. Setting it on a neu lead moves the lead to kontaktiert. Logging any contact moves neu, or disqualifiziert without an opt-out, to kontaktiert; an outgoing message moves the follow-up date by the sequence policy.
+A customer's Kundenakte (lead.account: services we deliver, their systems such as domain and DNS and who runs them, contacts including agencies) is read with get_lead and written with update_account, which takes the Kundenakte as read and refuses the write if it changed since. It never holds passwords, only where logins are kept.
 Agents cannot send email: create_gmail_draft puts a draft into the user's Gmail for a person to review and send.`;
 
 const id = z.string().describe("Lead id");
@@ -46,6 +47,9 @@ const TOOLS = {
   update_lead: ["Change fields of a lead. Only the given fields change, plus what the rules derive from them. contactedAt (YYYY-MM-DD, not after today) records a first contact made outside the CRM and moves a neu lead to kontaktiert; it cannot be cleared.",
     z.object({ id, fields: LeadInput }),
     async ({ id: leadId, fields }, { uc }) => (await uc.updateLead(leadId, fields), { ok: true })],
+  update_account: ["Change a lead's Kundenakte. `before` is lead.account exactly as get_lead returned it ({} if there is none); if the Kundenakte changed since, nothing is saved: read it again. Only the given parts change. services and contacts replace the stored list: send the whole list, and each entry you keep keeps its `id` (an entry without one is new). systems, and each system, change field by field. domain, dns, hosting, email, website and pos are each { what, by }: what it is, and `by`, the id of the contact in the same Kundenakte who runs it. A write that leaves out a contact who runs a system is refused unless it also gives that system's `by`.",
+    AccountInput.extend({ id, before: AccountInput.describe("lead.account as get_lead returned it") }),
+    async ({ id: leadId, before, ...parts }, { uc }) => (await uc.saveAccount(leadId, parts, before), { ok: true })],
   change_status: [`Move a lead to another status. disqualifiziert needs a lostReason: ${LOST_REASONS.join(" | ")}. Any other status takes none.`,
     z.object({ id, status: Status, lostReason: Reason.optional() }),
     async ({ id: leadId, status, lostReason }, { uc }) => {

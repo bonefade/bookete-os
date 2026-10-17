@@ -2,6 +2,7 @@ import { z } from "zod";
 import { LEAD_FIELDS } from "../domain/lead.js";
 import { IMPORT_CHUNK } from "../domain/backup.js";
 import { STAGES, LOST_REASONS } from "../domain/constants.js";
+import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
 
 const id = z.string().min(1).max(100);
 const text = z.string().max(20000);
@@ -12,6 +13,18 @@ export const Reason = z.enum(LOST_REASONS);
 const FIELD = { fit: z.coerce.number().int().min(1).max(3), followUp: date.nullable(), contactedAt: date.nullable(), status: Status, lostReason: z.union([Reason, z.literal("")]).nullable() };
 // optOutAt is not writable here: it is set by optOut or by picking the opt-out reason, and cleared only by clearOptOut.
 export const LeadInput = z.object(Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt").map((k) => [k, FIELD[k] ?? text.nullable()]))).partial().strict();
+// The Kundenakte, part by part; normalizeAccount checks values. Strict, so no field for a password can be added.
+// Choices and dates also take "" from the form's empty option and empty date field.
+const str = (max) => z.string().max(max).nullish();
+const choice = (values) => z.union([z.enum(values), z.literal("")]).nullish();
+const day = z.union([date, z.literal("")]).nullish();
+const Owner = choice(OWNERS.map(([k]) => k));
+const System = z.object({ what: str(200), by: str(100) }).strict();
+export const AccountInput = z.object({
+  services: z.array(z.object({ id: str(100), kind: choice(SERVICE_KINDS), state: choice(SERVICE_STATES.map(([k]) => k)), since: day, goLive: day, contractEnd: day, price: str(200), note: str(2000) }).strict()).max(ACCOUNT_LIMIT),
+  systems: z.object({ ...Object.fromEntries(SYSTEMS.map(([k]) => [k, System])), domainOwner: Owner, registrar: str(200), googleProfile: Owner, access: str(500) }).strict().partial(),
+  contacts: z.array(z.object({ id: str(100), name: z.string().max(200), company: str(200), role: str(200), handles: str(500), email: str(200), phone: str(100), note: str(2000) }).strict()).max(ACCOUNT_LIMIT),
+}).partial().strict();
 const ActivityInput = z.object({ direction: z.enum(["out", "in"]), channel: z.string().max(40), date: z.union([date, z.literal("")]).optional(), text, templateId: z.string().max(100).nullish() });
 const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish() });
 
@@ -25,6 +38,7 @@ export const COMMANDS = {
   purgeLead: [z.object({ id }), (uc, a) => uc.purgeLead(a.id)],
   changeStatus: [z.object({ id, status: Status, reason: Reason.optional() }), (uc, a) => uc.changeStatus(a.id, a.status, a.reason)],
   setLostReason: [z.object({ id, reason: Reason }), (uc, a) => uc.setLostReason(a.id, a.reason)],
+  saveAccount: [z.object({ id, account: AccountInput, before: AccountInput }), (uc, a) => uc.saveAccount(a.id, a.account, a.before)],
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],
   setFollowUp: [z.object({ id, date: z.union([date, z.literal("")]).nullable() }), (uc, a) => uc.setFollowUp(a.id, a.date)],
   setNextStep: [z.object({ id, text: z.string().max(500) }), (uc, a) => uc.setNextStep(a.id, a.text)],

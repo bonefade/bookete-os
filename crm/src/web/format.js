@@ -3,6 +3,8 @@ import { STAGE_LABEL } from '../domain/constants.js';
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 export const fmtDate = (d) => d ? (new Date(d + "T12:00:00")).toLocaleDateString("de-AT", { weekday: "short", day: "numeric", month: "short" }) : "";
+/** For dates that may lie in another year, such as a contract end: "31. Dez. 2026". */
+export const fmtDateWithYear = (d) => d ? (new Date(d + "T12:00:00")).toLocaleDateString("de-AT", { day: "numeric", month: "short", year: "numeric" }) : "";
 export function relDate(d, today) {
   if (!d) return "";
   if (d === today) return "heute";
@@ -20,7 +22,7 @@ export const options = (arr, sel) => arr.map((v) => {
 // Statuses before 1.4.0, still in the history of versions written then.
 const LEGACY_STAGE_LABEL = { recherchiert: "Recherchiert", antwort: "Antwort", demo: "Gespr\xE4ch/Demo", onboarding: "Onboarding", "kein-interesse": "Kein Interesse" };
 const STATUS_LABEL = { ...LEGACY_STAGE_LABEL, ...STAGE_LABEL };
-export const FIELD_LABEL = { name: "Name", city: "Ort", type: "Art", region: "Region", status: "Status", fit: "ICP-Fit", instagram: "Instagram", phone: "Telefon", email: "E-Mail", website: "Website", person: "Ansprechperson", currentTool: "Reserviert aktuell \xFCber", hook: "Aufh\xE4nger", notes: "Notizen", nextStep: "N\xE4chster Schritt", followUp: "Nachfassen am", lostReason: "Grund", optOutAt: "Opt-out seit", contactedAt: "Erstkontakt" };
+export const FIELD_LABEL = { name: "Name", city: "Ort", type: "Art", region: "Region", status: "Status", fit: "ICP-Fit", instagram: "Instagram", phone: "Telefon", email: "E-Mail", website: "Website", person: "Ansprechperson", currentTool: "Reserviert aktuell \xFCber", hook: "Aufh\xE4nger", notes: "Notizen", nextStep: "N\xE4chster Schritt", followUp: "Nachfassen am", lostReason: "Grund", optOutAt: "Opt-out seit", contactedAt: "Erstkontakt", account: "Kundenakte" };
 const shown = (key, v) => {
   if (v == null || v === "") return "\u2013";
   if (key === "status") return STATUS_LABEL[v] || v;
@@ -34,7 +36,7 @@ export function describeChange(entry) {
   if (entry.deleted && !entry.wasDeleted) return ["In den Papierkorb gelegt"];
   if (!entry.deleted && entry.wasDeleted) return ["Wiederhergestellt"];
   return Object.keys(FIELD_LABEL).filter((k) => JSON.stringify(entry.before[k] ?? null) !== JSON.stringify(entry.after[k] ?? null))
-    .map((k) => `${FIELD_LABEL[k]}: ${shown(k, entry.before[k])} \u2192 ${shown(k, entry.after[k])}`);
+    .map((k) => k === "account" ? "Kundenakte ge\xE4ndert" : `${FIELD_LABEL[k]}: ${shown(k, entry.before[k])} \u2192 ${shown(k, entry.after[k])}`);
 }
 /** "jo@bookete.com (mcp)" → "jo (mcp)". */
 export const actorName = (actor) => String(actor || "").replace(/@\S+/, "");

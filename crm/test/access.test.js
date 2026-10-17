@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 
 // The authorization walk: every command and API route, called without a valid session, is refused
 // before its input is read. The exact list makes each new command a conscious addition to this walk.
-const RPC = ["addLead", "updateLead", "updateField", "deleteLead", "restoreLead", "purgeLead", "changeStatus", "setLostReason", "closeWithoutReply", "setFollowUp", "setNextStep", "logActivity", "optOut", "clearOptOut", "saveTemplate", "deleteTemplate", "saveIcp", "sendEmail", "importBackup"];
+const RPC = ["addLead", "updateLead", "updateField", "deleteLead", "restoreLead", "purgeLead", "changeStatus", "setLostReason", "closeWithoutReply", "setFollowUp", "setNextStep", "logActivity", "optOut", "clearOptOut", "saveTemplate", "deleteTemplate", "saveIcp", "saveAccount", "sendEmail", "importBackup"];
 
 const kv = () => {
   const m = new Map();

@@ -65,6 +65,18 @@ test("a form save racing another user's edit runs again on fresh data and keeps 
   assert.equal(lead.notes, "Will eine Demo");
 });
 
+test("a Kundenakte save racing another write runs again on fresh data: other fields are kept, a changed Kundenakte refuses it", async () => {
+  const { store, a, b, between } = twoUsers();
+  const id = await b.addLead({ name: "Gasthaus Krone", status: "kunde" });
+  between(() => b.updateField(id, "notes", "Will eine Website"));
+  assert.equal(await a.saveAccount(id, { systems: { domain: { what: "krone.at" } } }, {}), true);
+  const lead = await store.get("leads", id);
+  assert.deepEqual([lead.notes, lead.account.systems.domain.what], ["Will eine Website", "krone.at"]);
+  between(() => b.saveAccount(id, { contacts: [{ name: "Anna" }] }, lead.account));
+  await assert.rejects(a.saveAccount(id, { contacts: [{ name: "Max" }] }, lead.account), (e) => e instanceof ValidationError && e.field === "account");
+  assert.deepEqual((await store.get("leads", id)).account.contacts.map((c) => c.name), ["Anna"]);
+});
+
 test("an outgoing message logged while the lead opts out is refused", async () => {
   const { store, a, b, between } = twoUsers();
   const id = await b.addLead({ name: "Gasthaus Krone" });

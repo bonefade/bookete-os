@@ -2,6 +2,19 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.6.0 (2026-10-17)
+
+### Added
+- **Kundenakte:** on a Qualifiziert or Kunde business (and on any business that already has one). `#/betrieb/<id>/kunde` opens the Kundenakte form. It holds:
+  - **Leistungen:** what we deliver (bookete, Website, bookete-Integration, Google-Profil, Weiteres), with state, dates and price.
+  - **Systeme:** the domain (who owns it, where it is registered), DNS, hosting, e-mail, website and POS, each with the contact who runs it, plus who manages the Google profile and where the logins are kept. No passwords.
+  - **Kontakte:** the people to reach, agencies included, with what they look after; tap to call or write.
+- Agents can fill it in through MCP (`update_account`). Changes show in the business's Änderungen and go into the backup.
+- A form or agent saving over a Kundenakte someone changed since it was read is refused, so nothing is overwritten by mistake. An agent that leaves out a contact who still runs a system must say who runs it now, so "betreut von" is never emptied by mistake.
+
+### Changed
+- A save finishes once this browser has it: the next screen, and a form opened again at once, show what was just saved.
+
 ## 1.5.0 (2026-10-17)
 
 ### Added

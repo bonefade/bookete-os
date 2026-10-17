@@ -6,7 +6,11 @@ import { LEAD_FIELDS } from "../src/domain/lead.js";
 import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
 import { describeChange } from "../src/web/format.js";
 import { scoped } from "../src/web/selectors.js";
-import { createApi } from "../src/web/api.js";
+import { createApi, coalesced } from "../src/web/api.js";
+import { COLLECTIONS } from "../src/domain/constants.js";
+import worker from "../src/server/index.js";
+import { sha256 } from "../src/server/crypto.js";
+import { createD1 } from "./d1.js";
 import { readFileSync } from "node:fs";
 
 // Renders every view once: catches missing imports and broken templates, which no bundler step reports.
@@ -387,12 +391,18 @@ test("a double click on Zurück steps back once", () => {
 function fakeBrowser(hash, store, uc) {
   const h = fakeHistory(hash);
   const on = {};
+  // What the test typed into the Kundenakte form, by field name; a checkbox takes true or false.
+  const typed = {};
   const root = {
     innerHTML: "",
     addEventListener() {},
     contains: () => false,
-    // A drawn form, with no fields: the use case fakes take whatever the form holds.
-    querySelector: (sel) => (sel === "form" || sel === "#form") && root.innerHTML.includes("<form") ? { elements: [] } : null,
+    querySelector: (sel) => {
+      if (!root.innerHTML.includes("<form")) return null;
+      // The Kundenakte form with its drawn fields; any other form with none: the use case fakes take whatever it holds.
+      if (sel === "#aform") return { elements: formElements(root.innerHTML, typed) };
+      return sel === "form" || sel === "#form" ? { elements: [] } : null;
+    },
     querySelectorAll: () => [],
   };
   Object.assign(globalThis, {
@@ -405,7 +415,29 @@ function fakeBrowser(hash, store, uc) {
   const app = mountApp({ root, tabsEl: {}, toastEl: { classList: { add() {}, remove() {} } }, store, clock: { today: () => "2026-10-15" } });
   app.connect(uc);
   const click = (dataset) => on.click({ target: { closest: () => ({ dataset }) } });
-  return { h, root, app, click };
+  return { h, root, app, click, typed };
+}
+/** A drawn form's fields as form.elements holds them, by position and by name, with what the test typed over them. */
+function formElements(html, typed = {}) {
+  const attr = (tag, name) => tag.match(new RegExp(` ${name}="([^"]*)"`))?.[1];
+  const unesc = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[e]);
+  const fields = [
+    ...[...html.matchAll(/<input([^>]*)>/g)].map(([, tag]) => ({ name: attr(tag, "name"), value: unesc(attr(tag, "value") ?? ""), checked: false })),
+    ...[...html.matchAll(/<select name="([^"]*)">([^]*?)<\/select>/g)].map(([, name, opts]) => ({ name, value: unesc((opts.match(/<option value="([^"]*)" selected>/) ?? opts.match(/<option value="([^"]*)"/))[1]) })),
+    ...[...html.matchAll(/<textarea name="([^"]*)"[^>]*>([^]*?)<\/textarea>/g)].map(([, name, text]) => ({ name, value: unesc(text) })),
+  ];
+  for (const f of fields) if (f.name in typed) typeof typed[f.name] === "boolean" ? (f.checked = typed[f.name]) : (f.value = typed[f.name]);
+  return Object.assign(fields, Object.fromEntries(fields.map((f) => [f.name, f])));
+}
+/** The Worker with jo@bookete.com signed in, as the browser's fetch: a browser test that talks to the real server. */
+async function signedInFetch() {
+  const DB = createD1();
+  await DB.batch([
+    DB.prepare("INSERT INTO users (email, name, updated_at) VALUES ('jo@bookete.com', 'Jo', 'now')"),
+    DB.prepare("INSERT INTO sessions VALUES (?, 'jo@bookete.com', ?)").bind(await sha256("jo"), Date.now() + 1e6),
+  ]);
+  const env = { DB, AUTH_LIMIT: { limit: async () => ({ success: true }) }, PUBLIC_URL: "https://crm.bookete.com", GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret", TOKEN_KEY: btoa("k".repeat(32)), CONSENT_SECRET: "c".repeat(32), ALLOWED_EMAILS: "jo@bookete.com" };
+  return (url, init = {}) => worker.fetch(new Request("https://crm.bookete.com" + url, { ...init, headers: { ...init.headers, Cookie: "__Host-crm-session=jo" } }), env, { waitUntil() {} });
 }
 
 test("the app's buttons and the browser's Back and Forward move through the addresses", async () => {
@@ -463,4 +495,63 @@ test("a sign-in asked for by the server comes back to the same screen", async ()
     [globalThis.fetch, globalThis.location] = [realFetch, realLocation];
   }
   assert.deepEqual(went, ["/auth/login?next=%2F%23%2Fbetrieb%2FL2"]);
+});
+
+test("a sync asked for while one runs waits for one that starts after it", async () => {
+  const done = [];
+  let n = 0;
+  const sync = coalesced(async () => {
+    const run = n++;
+    await new Promise((r) => setTimeout(r, 1));
+    done.push(run);
+    if (run === 0) throw new Error("offline");
+  });
+  const first = sync();
+  const second = sync();
+  assert.equal(sync(), second);
+  await assert.rejects(first);
+  // The first run failing does not stop the one asked for after it.
+  await second;
+  assert.deepEqual(done, [0, 1]);
+});
+
+test("the Kundenakte form saves through the server what it showed, reopens at once with the save, and drops a contact", async () => {
+  const saved = ["history", "location", "window", "document", "confirm", "fetch"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    globalThis.fetch = await signedInFetch();
+    const store = createStore(initialState());
+    let browser = null;
+    // The live sync, a moment late as over a network.
+    const api = createApi(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      const { changes } = await api.changes(0);
+      for (const c of COLLECTIONS) store.data(c, changes.filter((x) => x.collection === c).map((x) => x.record));
+      browser?.app.onDataChanged();
+    });
+    const id = await api.addLead({ name: "Krone", status: "kunde" });
+    browser = fakeBrowser(`#/betrieb/${id}`, store, api);
+    const { h, root, click, typed } = browser;
+    const shown = () => JSON.parse(formElements(root.innerHTML).before.value);
+    const stored = async () => (await api.changes(0)).changes.find((c) => c.id === id).record.account;
+    const save = async (fields) => {
+      await click({ act: "accountEdit" });
+      for (const k of Object.keys(typed)) delete typed[k];
+      Object.assign(typed, fields);
+      await click({ act: "accountSave" });
+      h.land();
+    };
+    await save({ "systems.domain.what": "krone.at", "contacts.0.name": "Max Muster" });
+    // Opened again at once, the form holds the save, so the next save is not refused as over a changed Kundenakte.
+    await click({ act: "accountEdit" });
+    const max = shown().contacts[0];
+    assert.deepEqual([shown().systems.domain.what, max.name], ["krone.at", "Max Muster"]);
+    await save({ "systems.domain.by": max.id });
+    assert.equal((await stored()).systems.domain.by, max.id);
+    // The form sends every system's "betreut von", so removing Max there also clears who runs the domain.
+    await save({ "contacts.0.drop": true });
+    const a = await stored();
+    assert.deepEqual([a.contacts, a.systems.domain], [[], { what: "krone.at", by: "" }]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
 });
