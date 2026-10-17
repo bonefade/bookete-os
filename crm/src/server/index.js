@@ -8,7 +8,7 @@ import { COMMANDS } from "./commands.js";
 import { handleMcp } from "./mcp.js";
 import { isUnsubscribePath, isUnsubscribeLink, unsubscribeLeadId } from "./unsubscribe.js";
 import { createUseCases } from "../application/use-cases.js";
-import { systemClock, uuidIds } from "../adapters/system.js";
+import { systemClock, uuidIds, retryPause } from "../adapters/system.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
 // The version each production deploy bumps; shown in the app, so anyone can see what is live.
 import pkg from "../../package.json" with { type: "json" };
@@ -31,7 +31,7 @@ const html = (body, headers = new Headers(), status = 200) => {
 async function context(env, config, user, via) {
   const store = createStore(env.DB);
   const mailer = await createMailer(config, user);
-  return { store, clock: systemClock, uc: createUseCases({ store, clock: systemClock, ids: uuidIds, actor: `${user.email} (${via})`, mailer }) };
+  return { store, clock: systemClock, uc: createUseCases({ store, clock: systemClock, ids: uuidIds, pause: retryPause, actor: `${user.email} (${via})`, mailer }) };
 }
 
 async function rpc(request, env, config, user, name) {
@@ -102,7 +102,7 @@ async function unsubscribe(request, env, config, pathname) {
 <form method="post"><button>Abmelden</button></form>`, headers());
   if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
   try {
-    await createUseCases({ store: createStore(env.DB), clock: systemClock, ids: uuidIds, actor: "Empf\xE4nger (Abmeldelink)" }).unsubscribe(leadId);
+    await createUseCases({ store: createStore(env.DB), clock: systemClock, ids: uuidIds, pause: retryPause, actor: "Empf\xE4nger (Abmeldelink)" }).unsubscribe(leadId);
   } catch (e) {
     console.error("unsubscribe failed", e);
     return html("<h1>Das hat nicht geklappt</h1><p>Bitte versuchen Sie es in ein paar Minuten noch einmal, oder antworten Sie einfach auf unsere E-Mail.</p>", headers(), 503);

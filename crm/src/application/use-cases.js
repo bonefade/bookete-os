@@ -14,21 +14,27 @@ const lines = (a) => (a || []).map((s) => String(s).trim()).filter(Boolean);
 const normalizeIcp = (icp) => ({ fit: lines(icp.fit), noFit: lines(icp.noFit), note: String(icp.note || "") });
 const ATTEMPTS = 3;
 const OPT_OUT_TEXT = "Opt-out: m\xF6chte keine Nachrichten mehr.";
+
 /**
- * Read, decide, commit. A write that names its read as `base` fails with ConflictError if someone wrote the
- * record in between; then the whole step runs again on fresh state. After ATTEMPTS the ConflictError reaches the caller.
+ * `pause(attempt)` waits before the retry after that attempt (retryPause in adapters/system.js, which the Worker passes).
+ * Without one, the retry runs at once: still correct, only the writers that collided do not spread out.
  */
-async function retrying(step) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await step();
-    } catch (e) {
-      if (!(e instanceof ConflictError) || attempt === ATTEMPTS) throw e;
+export function createUseCases({ store, clock, ids, actor, mailer = null, pause = async () => {} }) {
+  /**
+   * Read, decide, commit. A write that names its read as `base` fails with ConflictError if someone wrote the
+   * record in between; then the whole step runs again on fresh state, after a pause, so writers that collided
+   * do not all read and commit again at the same moment. After ATTEMPTS the ConflictError reaches the caller.
+   */
+  async function retrying(step) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await step();
+      } catch (e) {
+        if (!(e instanceof ConflictError) || attempt === ATTEMPTS) throw e;
+      }
+      await pause(attempt);
     }
   }
-}
-
-export function createUseCases({ store, clock, ids, actor, mailer = null }) {
   const touch = (patch) => ({ ...patch, updatedAt: clock.now() });
   const commit = (ops) => store.commit(ops, actor);
   /**

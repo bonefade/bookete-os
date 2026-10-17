@@ -117,7 +117,8 @@ working them as leads. Two parts, each with its own `package.json`:
   Import adds only records the CRM never held, through the same normalization.
 - Concurrent writes: a write computed from a read names that read as `base`;
   the store commits it only if the record is unchanged (`write_guard`,
-  migration 0002), else the use case runs again on fresh data (`retrying`).
+  migration 0002), else the use case runs again on fresh data after a short
+  random wait (`retrying`, `retryPause`).
   The store refuses a patch, remove or restore without a `base`; only a put
   (a new record, or the ICP) goes without.
   History rows come from triggers on `docs`, so no write path can skip them.

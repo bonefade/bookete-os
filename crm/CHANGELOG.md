@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.12.0 (2026-10-18)
+
+### Changed
+- When several people or agents change the same business at once, a write that collided now waits a short random moment (up to 0.1 s, then 0.2 s) before it reads and saves again. More changes go through the first time, and "Bitte nochmal versuchen" comes up less often. A change is still saved whole or not at all.
+
 ## 1.11.2 (2026-10-18)
 
 ### Changed

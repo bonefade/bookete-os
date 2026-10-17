@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createD1 } from "./d1.js";
 import { createStore } from "../src/server/store.js";
 import { createUseCases } from "../src/application/use-cases.js";
+import { retryPause } from "../src/adapters/system.js";
 import { ValidationError, ConflictError } from "../src/domain/errors.js";
 
 const clock = { today: () => "2026-10-15", now: () => "2026-10-15T10:00:00.000Z" };
@@ -26,6 +27,7 @@ function twoUsers() {
   }
   return {
     store,
+    // No pause, so a retry runs at once: the races here are staged, not timed.
     a: createUseCases({ store: racing, clock, ids, actor: "jo@bookete.com (web)" }),
     b: createUseCases({ store, clock, ids, actor: "michael@bookete.com (web)" }),
     between: (fn, read = "get") => { pending = { fn, read }; },
@@ -94,25 +96,45 @@ test("an activity logged while the lead is deleted is refused, not left behind",
   assert.deepEqual(await store.activitiesOf(id), []);
 });
 
-test("after three lost races the caller gets a ConflictError and nothing is written", async () => {
+test("after three lost races, each followed by a pause, the caller gets a ConflictError and nothing is written", async () => {
   const store = createStore(createD1());
   let n = 0;
   const ids = { newId: () => `id${++n}` };
   const b = createUseCases({ store, clock, ids, actor: "michael@bookete.com (web)" });
   let races = 0;
+  const steps = [];
   const busy = { ...store, async get(collection, id) {
     const found = await store.get(collection, id);
     races++;
+    steps.push("read");
     await b.setNextStep(id, `Anruf ${races}`);
     return found;
   } };
-  const a = createUseCases({ store: busy, clock, ids, actor: "jo@bookete.com (web)" });
+  // The pause ends after the pending reads and writes: a retry that did not wait for it would read first.
+  const recorded = async (attempt) => { await new Promise((resolve) => setImmediate(resolve)); steps.push(`pause ${attempt}`); };
+  const a = createUseCases({ store: busy, clock, ids, pause: recorded, actor: "jo@bookete.com (web)" });
   const id = await b.addLead({ name: "Gasthaus Krone" });
   await assert.rejects(a.setFollowUp(id, "2026-10-20"), ConflictError);
   assert.equal(races, 3);
+  // A pause before each retry, none after the last attempt.
+  assert.deepEqual(steps, ["read", "pause 1", "read", "pause 2", "read"]);
   const lead = await store.get("leads", id);
   assert.equal(lead.followUp, null);
   assert.equal(lead.nextStep, "Anruf 3");
+});
+
+test("retryPause waits a random time below 100 ms times the attempt", async (t) => {
+  const waits = [];
+  t.mock.method(globalThis, "setTimeout", (resolve, ms) => { waits.push(ms); resolve(); });
+  let random = 0.5;
+  t.mock.method(Math, "random", () => random);
+  await retryPause(1);
+  await retryPause(2);
+  // Math.random stays below 1, so the wait stays below the bound.
+  random = 0.999;
+  await retryPause(2);
+  assert.deepEqual(waits.slice(0, 2), [50, 100]);
+  assert.ok(waits[2] > 199 && waits[2] < 200, `waited ${waits[2]} ms`);
 });
 
 test("a commit with a stale read rolls back entirely, history included", async () => {

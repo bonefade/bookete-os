@@ -234,6 +234,34 @@ test("a failed unsubscribe says so and asks to try again, not a bare error", asy
   assert.match(await res.text(), /noch einmal/);
 });
 
+test("the Worker waits a random time before it runs a lost write again, for a signed-in user and for the unsubscribe link", async (t) => {
+  const e = await env();
+  await e.DB.batch([
+    e.DB.prepare("INSERT INTO users (email, name, updated_at) VALUES ('jo@bookete.com', 'Jo', 'now')"),
+    e.DB.prepare("INSERT INTO sessions VALUES (?, 'jo@bookete.com', ?)").bind(await sha256("jo"), Date.now() + 1e6),
+  ]);
+  const { ids: [id] } = await withLeads(e, "Krone");
+  // The first commit after `lost = false` loses a race, as D1 reports it; the retry commits.
+  const db = e.DB;
+  let lost = false;
+  e.DB = { prepare: (sql) => db.prepare(sql), batch: async (statements) => {
+    if (lost) return db.batch(statements);
+    lost = true;
+    throw new Error("D1_ERROR: CHECK constraint failed: stale_write: SQLITE_CONSTRAINT");
+  } };
+  const waits = [];
+  t.mock.method(globalThis, "setTimeout", (resolve, ms) => { waits.push(ms); resolve(); });
+  t.mock.method(Math, "random", () => 0.5);
+  // retryPause after the first attempt: half of 100 ms, by the mocked Math.random.
+  assert.equal((await fetchAs(e, "__Host-crm-session=jo", "POST", "/api/rpc/setNextStep", JSON.stringify({ id, text: "Anrufen" }))).status, 200);
+  assert.deepEqual(waits, [50], "web write");
+  assert.equal((await createStore(db).get("leads", id)).nextStep, "Anrufen");
+  lost = false;
+  assert.equal((await fetchAs(e, null, "POST", path(await unsubscribeUrl(config, id)), "")).status, 200);
+  assert.deepEqual(waits, [50, 50], "unsubscribe");
+  assert.ok((await createStore(db).get("leads", id)).optOutAt);
+});
+
 test("the unsubscribe link is rate limited per IP in its own bucket, after its shape and before its HMAC is checked", async () => {
   const limit = limiter(0);
   const e = await env(limit);
