@@ -50,6 +50,11 @@ test("MCP writes go through the use cases and their rules", async () => {
   const blocked = await call(context, "tools/call", { name: "log_activity", arguments: { id, direction: "out", channel: "E-Mail", text: "Hallo" } });
   assert.equal(blocked.result.isError, true);
   assert.match(blocked.result.content[0].text, /Opt-out/);
+  // The opt-out closes its address too: an outgoing E-Mail to it is refused on another lead.
+  const twin = await call(context, "tools/call", { name: "create_lead", arguments: { name: "Agent Wirt neu", email: "a@example.at" } });
+  const closed = await call(context, "tools/call", { name: "log_activity", arguments: { id: JSON.parse(twin.result.content[0].text).id, direction: "out", channel: "E-Mail", text: "Hallo" } });
+  assert.equal(closed.result.isError, true);
+  assert.match(closed.result.content[0].text, /Keine E-Mail an diese Adresse: \u201EAgent Wirt\u201C/);
   const bad = await call(context, "tools/call", { name: "create_lead", arguments: {} });
   assert.equal(bad.result.isError, true);
 });

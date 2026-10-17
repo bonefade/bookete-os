@@ -51,6 +51,80 @@ test("an opt-out blocks outgoing contact, reopening and direct edits on every wr
   await uc.logActivity(id, { direction: "in", channel: "E-Mail", text: "Doch Interesse" });
 });
 
+test("an opt-out closes its address to mail: no mail, sent, drafted or logged as sent, to an address any lead with an opt-out holds, also in the Papierkorb", async () => {
+  const mailer = fakeMailer();
+  const { store, uc } = setup({ mailer });
+  const old = await uc.addLead({ name: "Krone", email: "Info@Krone.at" });
+  await uc.optOut(old);
+  const again = await uc.addLead({ name: "Gasthaus Krone", email: " info@krone.AT " });
+  const refused = (message) => (e) => e instanceof ValidationError && e.field === "email" && e.message === message;
+  const live = "Keine E-Mail an diese Adresse: \u201EKrone\u201C hat dieselbe Adresse und ein Opt-out seit 2026-10-15";
+  const logged = { direction: "out", channel: "E-Mail", text: "Hallo" };
+  await assert.rejects(uc.sendEmail(again, { subject: "Hi", text: "x" }), refused(live));
+  await assert.rejects(uc.draftEmail(again, { subject: "Hi", text: "x" }), refused(live));
+  await assert.rejects(uc.logActivity(again, logged), refused(live));
+  // In the Papierkorb its opt-out still holds, and the message says where it is.
+  await uc.deleteLead(old);
+  const trashed = "Keine E-Mail an diese Adresse: \u201EKrone\u201C (im Papierkorb) hat dieselbe Adresse und ein Opt-out seit 2026-10-15";
+  await assert.rejects(uc.sendEmail(again, { subject: "Hi", text: "x" }), refused(trashed));
+  await assert.rejects(uc.draftEmail(again, { subject: "Hi", text: "x" }), refused(trashed));
+  await assert.rejects(uc.logActivity(again, logged), refused(trashed));
+  assert.equal(mailer.sent.length, 0);
+  assert.equal((await store.activitiesOf(again)).length, 0);
+  // Another channel logged by hand, a call and an incoming E-Mail stay allowed.
+  await uc.logActivity(again, { direction: "out", channel: "Telefon", text: "Angerufen" });
+  await uc.logCall(again, { outcome: "nicht-erreicht" });
+  await uc.logActivity(again, { direction: "in", channel: "E-Mail", text: "Antwort" });
+  assert.equal((await store.activitiesOf(again)).length, 3);
+  // Once the opt-out is lifted, the address takes mail again; another address always did.
+  await uc.restoreLead(old);
+  await uc.clearOptOut(old);
+  await uc.sendEmail(again, { subject: "Hi", text: "x" });
+  const other = await uc.addLead({ name: "Post", email: "post@example.at" });
+  await uc.draftEmail(other, { subject: "Hi", text: "x" });
+  assert.deepEqual(mailer.sent.map((m) => (m.draft || m).to), ["info@krone.AT", "post@example.at"]);
+});
+
+test("a Kunde's service mail goes to an address another lead's opt-out holds; the Kunde's own opt-out still stops it", async () => {
+  const mailer = fakeMailer();
+  const { uc } = setup({ mailer });
+  await uc.optOut(await uc.addLead({ name: "Krone", email: "info@krone.at" }));
+  const kunde = await uc.addLead({ name: "Gasthaus Krone", status: "kunde", email: "info@krone.at" });
+  await uc.sendEmail(kunde, { subject: "Rechnung", text: "x" });
+  await uc.draftEmail(kunde, { subject: "Rechnung", text: "x" });
+  await uc.logActivity(kunde, { direction: "out", channel: "E-Mail", text: "Rechnung" });
+  assert.equal(mailer.sent.length, 2);
+  await uc.optOut(kunde);
+  await rejects(uc.sendEmail(kunde, { subject: "Rechnung", text: "x" }), "optOutAt");
+  await rejects(uc.draftEmail(kunde, { subject: "Rechnung", text: "x" }), "optOutAt");
+  await rejects(uc.logActivity(kunde, { direction: "out", channel: "E-Mail", text: "Rechnung" }), "optOutAt");
+  assert.equal(mailer.sent.length, 2);
+});
+
+test("a mail sent by Gmail is logged even if its address closed while it went out", async () => {
+  const sent = [];
+  let uc;
+  // Another lead with the same address opts out while the mail is on its way.
+  const mailer = { send: async (msg) => (sent.push(msg), await uc.optOut(other), { id: "m1", threadId: "t1" }) };
+  ({ uc } = setup({ mailer }));
+  const other = await uc.addLead({ name: "Krone", email: "info@krone.at" });
+  const id = await uc.addLead({ name: "Gasthaus Krone", email: "info@krone.at" });
+  const { activity } = await uc.sendEmail(id, { subject: "Hi", text: "Hallo" });
+  assert.deepEqual([sent.length, activity.channel, activity.direction], [1, "E-Mail", "out"]);
+});
+
+test("with a live and a trashed lead holding the closed address, the refusal names the live one", async () => {
+  const { uc } = setup({ mailer: fakeMailer() });
+  // The trashed one is added first and written last, so neither insertion order nor the newest write names the live one; only "live first" does.
+  const trashed = await uc.addLead({ name: "Alte Krone", email: "info@krone.at" });
+  const live = await uc.addLead({ name: "Krone", email: "info@krone.at" });
+  await uc.optOut(live);
+  await uc.optOut(trashed);
+  await uc.deleteLead(trashed);
+  const again = await uc.addLead({ name: "Gasthaus Krone", email: "info@krone.at" });
+  await assert.rejects(uc.draftEmail(again, { subject: "Hi", text: "x" }), { message: "Keine E-Mail an diese Adresse: „Krone“ hat dieselbe Adresse und ein Opt-out seit 2026-10-15" });
+});
+
 test("a cleared follow-up reads back as null, not missing", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Bar Null", followUp: "2026-10-20" });

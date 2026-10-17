@@ -50,6 +50,68 @@ test("every view renders with data", () => {
   assert.doesNotMatch(detailView(state, today), /Abmeldelink/);
 });
 
+test("a Kundenakte contact's address opens no mail where an opt-out closes it, as the lead's own address; its name and address stay", () => {
+  const today = "2026-10-15";
+  const state = initialState();
+  // The lead's own address (other case), an agency's, and one that another business with an opt-out holds.
+  const account = { contacts: [{ id: "C1", name: "Anna Wirt", email: "Info@Krone.at" }, { id: "C2", name: "Agentur Blau", email: "office@blau.at" }, { id: "C3", name: "Max Grün", email: "max@gruen.at" }] };
+  const lead = { ...LEAD_FIELDS, id: "L1", name: "Gasthaus Krone", status: "qualifiziert", email: "info@krone.at", account };
+  state.data = { leads: [lead, { ...LEAD_FIELDS, id: "L2", name: "Grün", status: "disqualifiziert", lostReason: "Keine Kontaktaufnahme gew\xFCnscht", email: "MAX@gruen.at ", optOutAt: "2026-10-01" }], activities: [], templates: [], settings: [] };
+  state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
+  state.caps = { db: true, gmail: false };
+  state.ui = { ...state.ui, leadId: "L1" };
+  const contacts = () => detailView(state, today).split("<h4>Kontakte</h4>")[1].split("<h3>Infos")[0];
+  const mailsTo = (address) => contacts().includes(`href="mailto:${address}"`);
+  assert.deepEqual(["Info@Krone.at", "office@blau.at", "max@gruen.at"].map(mailsTo), [true, true, false]);
+  assert.match(contacts(), /<b>Max Grün<\/b><br>max@gruen\.at/);
+  // On the business with the opt-out, the contact at its address is closed with it; the agency's address is not.
+  state.data.leads[0] = { ...lead, status: "disqualifiziert", lostReason: "Keine Kontaktaufnahme gew\xFCnscht", optOutAt: "2026-10-02" };
+  assert.deepEqual(["Info@Krone.at", "office@blau.at", "max@gruen.at"].map(mailsTo), [false, true, false]);
+  assert.match(contacts(), /<b>Anna Wirt<\/b><br>Info@Krone\.at/);
+  // A Kunde is not closed by another's opt-out; its own opt-out closes its own address.
+  state.data.leads[0] = { ...lead, status: "kunde" };
+  assert.deepEqual(["Info@Krone.at", "office@blau.at", "max@gruen.at"].map(mailsTo), [true, true, true]);
+  state.data.leads[0] = { ...lead, status: "kunde", optOutAt: "2026-10-02" };
+  assert.deepEqual(["Info@Krone.at", "office@blau.at", "max@gruen.at"].map(mailsTo), [false, true, true]);
+});
+
+test("the compose area says why no mail goes to an address another business with an opt-out holds, and no mail link opens one", () => {
+  const today = "2026-10-15";
+  const state = initialState();
+  const lead = { ...LEAD_FIELDS, id: "L1", name: "Gasthaus Krone", status: "neu", email: "info@krone.at" };
+  state.data = { leads: [lead, { ...LEAD_FIELDS, id: "L2", name: "Krone", status: "disqualifiziert", lostReason: "Keine Kontaktaufnahme gew\xFCnscht", email: "Info@Krone.at", optOutAt: "2026-10-01" }], activities: [], templates: [], settings: [] };
+  state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
+  state.caps = { db: true, gmail: true };
+  state.ui = { ...state.ui, leadId: "L1", compose: { direction: "out", channel: "E-Mail", templateId: "", date: today, subject: "S", text: "Hallo", missing: [] } };
+  const html = detailView(state, today);
+  assert.match(html, /Keine E-Mail an diese Adresse: \u201EKrone\u201C hat dieselbe Adresse und ein Opt-out seit 2026-10-01/);
+  assert.doesNotMatch(html, /Per Gmail senden/);
+  // Nor is it logged as sent: the sheet offers only Abbrechen.
+  assert.doesNotMatch(html, /data-act="logActivity"/);
+  assert.match(html, /class="full"[^>]*data-act="composeCancel"/);
+  // Nor does a link open a mail to it, in the sheet or the quick bar, with Gmail or without; as on the lead that holds the opt-out.
+  assert.doesNotMatch(html, /mailto:/);
+  state.caps = { db: true, gmail: false };
+  assert.doesNotMatch(detailView(state, today), /mailto:|data-act="logActivity"/);
+  assert.doesNotMatch(detailView({ ...state, ui: { ...state.ui, leadId: "L2", compose: null } }, today), /mailto:/);
+  // Only mail is closed: another channel shows nothing and is logged as sent.
+  state.ui.compose = { ...state.ui.compose, channel: "Telefon" };
+  assert.doesNotMatch(detailView(state, today), /Keine E-Mail an diese Adresse/);
+  assert.match(detailView(state, today), /class="primary" data-act="logActivity">Als gesendet eintragen/);
+  state.ui.compose = { ...state.ui.compose, channel: "E-Mail" };
+  // A Kunde's service mail is not closed by another's opt-out; its own opt-out closes its mail link.
+  state.data.leads[0] = { ...lead, status: "kunde" };
+  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>Kopieren & E-Mail \xF6ffnen/);
+  state.data.leads[0] = { ...lead, status: "kunde", optOutAt: "2026-10-02" };
+  assert.doesNotMatch(detailView({ ...state, ui: { ...state.ui, compose: null } }, today), /mailto:/);
+  state.data.leads[0] = lead;
+  state.data.leads[1] = { ...state.data.leads[1], email: "post@krone.at" };
+  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>Kopieren & E-Mail \xF6ffnen/);
+  state.caps = { db: true, gmail: true };
+  assert.match(detailView(state, today), /Per Gmail senden/);
+  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>E-Mail</);
+});
+
 test("due leads are todos in their own tab, not in Heute", () => {
   const today = "2026-10-15";
   const state = initialState();

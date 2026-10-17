@@ -87,6 +87,15 @@ export function createStore(db) {
     async ids(collection) {
       return new Set((await many("SELECT id FROM docs WHERE collection = ?", collection)).map((row) => row.id));
     },
+    /**
+     * A lead with an opt-out that holds this email address, live or in the trash (an erased one holds nothing), and
+     * whether it is in the trash; null for none. Compared as lead.js's optOutByAddress compares. One query, live first.
+     */
+    async optOutByAddress(email) {
+      const row = await one(`SELECT id, data, seq, deleted FROM docs WHERE collection = 'leads' AND json_extract(data, '$.optOutAt') IS NOT NULL
+        AND lower(trim(json_extract(data, '$.email'))) = lower(trim(?)) ORDER BY deleted, seq DESC LIMIT 1`, email);
+      return row ? { lead: toRecord("leads", row), trashed: !!row.deleted } : null;
+    },
     async activitiesOf(leadId, { deleted = false } = {}) {
       const rows = await many("SELECT id, data, seq, deleted FROM docs WHERE collection = 'activities' AND deleted = ? AND json_extract(data, '$.leadId') = ?", deleted ? 1 : 0, leadId);
       return rows.map((row) => toRecord("activities", row));

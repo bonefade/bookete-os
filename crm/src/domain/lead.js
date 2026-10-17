@@ -81,6 +81,16 @@ export const isPipeline = (lead) => PIPELINE_STATUSES.has(lead.status);
 export const takesFollowUp = (lead) => lead.status !== "disqualifiziert";
 /** Mail to a Kunde is service mail and carries no unsubscribe link: one click would otherwise block every mail and call to a customer. */
 export const getsUnsubscribeLink = (lead) => lead.status !== "kunde";
+/**
+ * An opt-out holds for the email address too: the same business added again under a new id (a new scrape, a
+ * duplicate) is not mailed again. Addresses compare trimmed and with A–Z lower-cased, as the store's query does
+ * with SQLite's trim() and lower() (store.optOutByAddress).
+ */
+export const addressKey = (email) => str(email).replace(/[A-Z]/g, (c) => c.toLowerCase());
+/** The business among `leads` with an opt-out that holds this lead's email address, if any. */
+export const optOutByAddress = (leads, lead) => lead.email ? leads.find((x) => x.optOutAt && addressKey(x.email) === addressKey(lead.email)) : undefined;
+/** Why no mail may go to this address: `holder` has an opt-out and the same address; `trashed`, it is in the Papierkorb. */
+export const addressOptOutText = (holder, trashed = false) => `Keine E-Mail an diese Adresse: \u201E${holder.name}\u201C${trashed ? " (im Papierkorb)" : ""} hat dieselbe Adresse und ein Opt-out seit ${holder.optOutAt}`;
 export const isDue = (lead, today) => takesFollowUp(lead) && !!lead.followUp && lead.followUp <= today;
 /** Status and reason as one change; normalizeLead checks the pair. */
 export function transition(status, reason = null) {

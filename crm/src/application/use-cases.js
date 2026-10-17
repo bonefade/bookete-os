@@ -1,7 +1,7 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch } from "../domain/activity.js";
-import { normalizeLead, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink } from "../domain/lead.js";
+import { normalizeLead, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
@@ -72,11 +72,16 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     if (!found) throw new ValidationError("id", "Betrieb nicht gefunden");
     return found;
   }
-  const logContact = (id, input, planOf) => retrying(async () => {
+  /**
+   * `sent`: sendEmail sent this mail; it passed assertAddressOpen before it went out and is logged as it happened.
+   * Any other outgoing E-Mail logged here is refused where sending is.
+   */
+  const logContact = (id, input, planOf, { sent = false } = {}) => retrying(async () => {
     const l = await lead(id);
     assertMayContact(l, input.direction);
     const activity = newActivityRecord({ ...input, leadId: id }, { id: ids.newId(), now: clock.now(), today: clock.today() });
     assertHappened(activity, clock.today());
+    if (!sent && activity.direction === "out" && activity.channel === "E-Mail") await assertAddressOpen(l);
     const plan = planOf(l, await store.activitiesOf(id), activity);
     await commit(leadOps(l, plan, { activity }));
     return { activity, plan };
@@ -91,7 +96,18 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
     const l = await lead(id);
     assertMayContact(l, "out");
     if (!l.email) throw new ValidationError("email", "Keine E-Mail-Adresse hinterlegt");
+    await assertAddressOpen(l);
     return l;
+  }
+  /**
+   * Any lead's opt-out closes its address to mail: none is sent, drafted or logged as sent. Calls, other channels and
+   * incoming entries stay allowed. Only for a lead that gets the Abmeldelink: a Kunde's service mail still goes out,
+   * unless the Kunde itself opted out (assertMayContact). Fails closed: a failed query lets nothing through.
+   */
+  async function assertAddressOpen(l) {
+    if (!l.email || !getsUnsubscribeLink(l)) return;
+    const holder = await store.optOutByAddress(l.email);
+    if (holder) throw new ValidationError("email", addressOptOutText(holder.lead, holder.trashed));
   }
 
   return {
@@ -194,7 +210,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null }) {
       const l = await mailable(id);
       const sent = await mailer.send({ leadId: id, to: l.email, subject, text, serviceMail: !getsUnsubscribeLink(l) });
       try {
-        return { ...(await logActivity(id, { direction: "out", channel: "E-Mail", text, templateId })), gmail: sent };
+        return { ...(await logContact(id, { direction: "out", channel: "E-Mail", text, templateId }, planAfterActivity, { sent: true })), gmail: sent };
       } catch (e) {
         // The mail is out; say so instead of inviting a second send.
         throw new ValidationError("activity", `E-Mail wurde gesendet, aber nicht eingetragen (${e.message}). Bitte manuell eintragen.`);

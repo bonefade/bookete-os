@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.11.0 (2026-10-18)
+
+### Added
+- **An opt-out also closes the e-mail address:** no mail goes to an address that a business with an opt-out holds, also one in the Papierkorb, neither with "Per Gmail senden" nor as an agent's draft. Case and spaces do not count. So the same business added again (a new scrape, a duplicate) is not mailed again. A Kunde is exempt: its service mail still goes out; only its own opt-out stops it. "Nachricht schreiben" says, for E-Mail, which business closed the address, and neither "Kopieren & E-Mail öffnen", the E-Mail button nor a contact in the Kundenakte with that address opens a mail to it, also on the business with the opt-out. A business in the Papierkorb is not known to the lead page: it still offers the mail links, and "Per Gmail senden" is then refused with a message naming it. An outgoing E-Mail to the address can't be logged by hand either ("Als gesendet eintragen", an agent's log_activity): for E-Mail, "Nachricht schreiben" then offers only "Text kopieren" and "Abbrechen". Calls, other channels and incoming replies can still be logged. Changing or clearing the e-mail address of the business with the opt-out, or Endgültig löschen on it, opens the address again.
+
 ## 1.10.1 (2026-10-17)
 
 ### Changed

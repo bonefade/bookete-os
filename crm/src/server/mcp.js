@@ -60,7 +60,7 @@ const TOOLS = {
       await uc.changeStatus(leadId, status, lostReason);
       return { ok: true };
     }],
-  log_activity: ["Record a contact: direction out (we wrote) or in (they answered). Updates status and follow-up date.",
+  log_activity: ["Record a contact: direction out (we wrote) or in (they answered). Updates status and follow-up date. An outgoing E-Mail is also refused if, unless the lead is a Kunde, another lead with an opt-out has the same address (also one in the Papierkorb).",
     z.object({ id, direction: z.enum(["out", "in"]), channel: z.enum(CHANNELS), text: z.string().min(1), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }),
     async ({ id: leadId, ...input }, { uc }) => uc.logActivity(leadId, input)],
   log_call: [`Record a phone call made today and how it ended. nicht-erreicht: no answer, call again in 2 days, unless a follow-up date ahead was not set by the sequence (status other than kontaktiert, or a next step); the 5th attempt without ever getting through closes the lead (Nicht erreicht). rueckruf: they asked to be called back, date (YYYY-MM-DD, from today) required, time (HH:MM) optional. termin: an appointment, date required, time optional; the lead becomes qualifiziert. kein-interesse: reason required; the lead becomes disqualifiziert. A kunde stays kunde whatever the outcome; the reason "${OPT_OUT_REASON}" still records an opt-out. Optional note.`,
@@ -84,7 +84,7 @@ const TOOLS = {
       if (template.purpose === "leitfaden") throw new ValidationError("templateId", "Ein Gespr\xE4chsleitfaden ist keine Nachricht");
       return fillTemplate(template.body, lead);
     }],
-  create_gmail_draft: ["Create a Gmail draft to the lead's email address in the signed-in user's mailbox. Nothing is sent or logged; a person reviews and sends it. The draft ends with the lead's unsubscribe link, unless the lead is a Kunde.",
+  create_gmail_draft: ["Create a Gmail draft to the lead's email address in the signed-in user's mailbox. Nothing is sent or logged; a person reviews and sends it. The draft ends with the lead's unsubscribe link, unless the lead is a Kunde. Refused if the lead has an opt-out, or, unless the lead is a Kunde, any lead with the same address (also one in the Papierkorb).",
     z.object({ id, subject: z.string().min(1).max(300), text: z.string().min(1).max(20000) }),
     async ({ id: leadId, ...msg }, { uc }) => uc.draftEmail(leadId, msg)],
 };

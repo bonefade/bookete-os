@@ -6,7 +6,7 @@ import { countTouches, hasReply, sequenceExhausted, nextActionHint, meetingDue }
 import { esc, fmtDate, fmtDateWithYear, relDate, options, describeChange, actorName, fmtTime, FIELD_LABEL } from './format.js';
 import { fold, searchTokens, searchLeads } from '../domain/search.js';
 import { hitLabel, markRanges, markHtml, snippetHtml } from './search.js';
-import { isPipeline, takesFollowUp, isDue, getsUnsubscribeLink } from '../domain/lead.js';
+import { isPipeline, takesFollowUp, isDue, getsUnsubscribeLink, addressKey, optOutByAddress, addressOptOutText } from '../domain/lead.js';
 import { outreachStats, lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
@@ -272,21 +272,31 @@ export function detailView(state, today) {
   const tplName = Object.fromEntries(state.data.templates.map((x) => [x.id, x.name]));
   // A lead to call has the Anruf card, which dials; the quick bar dials only for the others.
   const calls = isPipeline(l) && !l.optOutAt && !meetingDue(l, today);
+  // An address with an opt-out gets no mail link: this lead's own, or another's on a lead that gets the Abmeldelink
+  // (a Kunde's service mail still goes out). From the leads this browser holds; the server refuses the mail too,
+  // also for a lead in the Papierkorb.
+  const closedTo = l.optOutAt ? l : getsUnsubscribeLink(l) ? optOutByAddress(state.data.leads, l) : undefined;
   const touchTxt = l.status === "kontaktiert" && !hasReply(acts) ? `Kontakt ${t} von ${SEQUENCE_POLICY.maxTouches}` : t ? `${t} Kontakt${t > 1 ? "e" : ""}` : "";
+  // Whether the page offers a mail link to an address, such as a Kundenakte contact's: this lead's own address as
+  // above; another (an agency's) is closed when a business with an opt-out holds it, except on a Kunde.
+  const offersMailto = (email) => !(addressKey(email) === addressKey(l.email) ? closedTo : getsUnsubscribeLink(l) && optOutByAddress(state.data.leads, { email }));
   let compose = "";
   if (c) {
-    const link = c.direction === "out" ? channelLink(l, c.channel, c.text) : "";
-    const gmail = c.direction === "out" && c.channel === "E-Mail" && !!l.email && state.caps.gmail;
+    // The server refuses mail to a closed address and logging one as sent, so the sheet then offers no send or log button, only "Text kopieren" and Abbrechen.
+    const addressOptOut = c.direction === "out" && c.channel === "E-Mail" && closedTo;
+    const link = c.direction === "out" && !addressOptOut ? channelLink(l, c.channel, c.text) : "";
+    const gmail = c.direction === "out" && c.channel === "E-Mail" && !!l.email && state.caps.gmail && !addressOptOut;
     compose = `<div class="card compose">
     <h3 style="font-size:1.05rem;margin-bottom:10px">${c.direction === "out" ? "Nachricht schreiben" : "Antwort eintragen"}</h3>
     ${c.direction === "out" ? `<label>Vorlage<select id="cTpl"><option value="">Ohne Vorlage</option>${state.data.templates.filter((x) => x.purpose !== "leitfaden").map((x) => `<option value="${esc(x.id)}"${x.id === c.templateId ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>` : ""}
     <div class="two"><label>Kanal<select id="cCh">${options(CHANNELS, c.channel)}</select></label><label>Datum<input type="date" id="cDate" value="${esc(c.date)}" max="${esc(today)}"></label></div>
     <textarea id="cText" placeholder="${c.direction === "out" ? "Nachricht" : "Was haben sie geantwortet?"}">${esc(c.text)}</textarea>
     ${c.missing?.length ? `<p class="hint">Noch leer: ${esc(c.missing.map((m) => "{" + m + "}").join(", "))}. Erg\xE4nze den Betrieb oder passe den Text an.</p>` : ""}
+    ${addressOptOut ? `<p class="hint">${esc(addressOptOutText(addressOptOut))}</p>` : ""}
     ${gmail ? `<label>Betreff<input id="cSubj" value="${esc(c.subject)}"></label>${getsUnsubscribeLink(l) ? `<p class="hint">Per Gmail kommt am Ende ein Abmeldelink dazu.</p>` : ""}` : ""}
     ${c.direction === "out" ? `<a class="btn full" style="margin-top:8px" data-act="copyOpen" ${link ? `href="${esc(link)}" target="_blank" rel="noopener"` : 'href="#"'}>${link ? `Kopieren & ${esc(c.channel)} \xF6ffnen` : "Text kopieren"}</a>` : ""}
     ${gmail ? `<button class="primary full" style="margin-top:8px" data-act="sendEmail">Per Gmail senden</button>` : ""}
-    <div class="two" style="margin-top:8px"><button data-act="composeCancel">Abbrechen</button><button${gmail ? "" : ' class="primary"'} data-act="logActivity">${c.direction === "out" ? "Als gesendet eintragen" : "Eintragen"}</button></div>
+    ${addressOptOut ? `<button class="full" style="margin-top:8px" data-act="composeCancel">Abbrechen</button>` : `<div class="two" style="margin-top:8px"><button data-act="composeCancel">Abbrechen</button><button${gmail ? "" : ' class="primary"'} data-act="logActivity">${c.direction === "out" ? "Als gesendet eintragen" : "Eintragen"}</button></div>`}
   </div>`;
   }
   return `<div class="bar"><button class="link" data-act="back">\u2039 Zur\xFCck</button><h2>${esc(l.name)}</h2><button class="link" data-act="edit">Bearbeiten</button></div>
@@ -304,12 +314,12 @@ export function detailView(state, today) {
   ${ui.calling ? `<div class="sec"><button class="full" data-act="callNext">N\xE4chster \u203A</button></div>` : ""}
   ${l.optOutAt ? `<div class="card sec optout"><p style="margin:0;font-weight:600">M\xF6chte keine Nachrichten mehr</p><p class="note" style="margin:2px 0 8px">Opt-out seit ${esc(fmtDate(l.optOutAt))}. Keine Mails, DMs oder Anrufe. Nur aufheben, wenn der Betrieb sich selbst wieder meldet.</p><button class="more" data-act="clearOptOut">Opt-out aufheben</button></div>` : ""}
   ${c ? `<div class="sec">${compose}</div>` : l.optOutAt ? `<div class="sec"><button class="full" data-act="composeIn">Eingehende Nachricht eintragen</button></div>` : `<div class="two sec"><button class="primary" data-act="composeOut">Nachricht schreiben</button><button data-act="composeIn">Antwort eintragen</button></div>`}
-  <div class="sec"><div class="quick">${calls ? "" : btn(channelLink(l, "Telefon"), "Anrufen")}${btn(channelLink(l, "E-Mail"), "E-Mail")}${btn(instagramProfile(l), "Instagram")}${btn(l.website, "Website")}</div></div>
+  <div class="sec"><div class="quick">${calls ? "" : btn(channelLink(l, "Telefon"), "Anrufen")}${btn(closedTo ? "" : channelLink(l, "E-Mail"), "E-Mail")}${btn(instagramProfile(l), "Instagram")}${btn(l.website, "Website")}</div></div>
   <div class="sec"><h3>Status</h3><div class="chips">${STAGES.map(([k, v]) => `<button class="chip${k === "disqualifiziert" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}">${v}</button>`).join("")}</div>
     ${l.optOutAt ? "" : `<button class="danger full" style="margin-top:12px" data-act="optOut">Keine Nachrichten mehr (Opt-out)</button>`}
     ${ui.lostPick ? `<div class="card" style="margin-top:10px"><p style="margin:0 0 8px;font-weight:600">Warum disqualifiziert?</p><div class="chips">${LOST_REASONS.map((r) => `<button class="chip lostc" data-lost="${esc(r)}" aria-pressed="${l.lostReason === r}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="lostCancel">Abbrechen</button></div>` : lost && !l.optOutAt ? `<button class="more" data-act="lostPick">Grund \xE4ndern</button>` : ""}
   </div>
-  ${showsAccount(l) ? accountHtml(l) : ""}
+  ${showsAccount(l) ? accountHtml(l, offersMailto) : ""}
   <div class="sec"><h3>Infos <small>zum Bearbeiten antippen</small></h3><dl class="card facts qe">${factsHtml}</dl></div>
   <div class="sec"><h3>Notizen</h3>${ui.editField === "notes" ? `<div class="card"><textarea id="qe" data-field="notes" rows="10">${esc(l.notes || "")}</textarea><div class="qe-actions"><button data-act="qeCancel">Abbrechen</button><button class="primary" data-act="qeSave">Speichern</button></div></div>` : `<div class="card qe-click" data-edit="notes" role="button" tabindex="0">${l.notes ? clamp("notes", l.notes) : `<span class="qe-empty">+ Notiz hinzuf\xFCgen</span>`}</div>`}</div>
   <div class="sec"><h3>Verlauf</h3>${acts.length ? [...acts].reverse().map((e) => `<div class="entry ${e.direction}"><div class="h"><span>${fmtDate(e.date)} \xB7 ${esc(e.channel)} \xB7 ${e.direction === "out" ? "wir \u2192 Betrieb" : "Betrieb \u2192 wir"}${e.templateId && tplName[e.templateId] ? " \xB7 " + esc(tplName[e.templateId]) : ""}</span><button data-copy="${esc(e.id)}">Kopieren</button></div>${clamp("a:" + e.id, e.text)}</div>`).join("") : `<p class="note">Noch keine Eintr\xE4ge.</p>`}</div>
@@ -347,7 +357,7 @@ const OWNER_LABEL = Object.fromEntries(OWNERS);
 const fact = (label, html) => html ? `<div class="fact"><dt>${esc(label)}</dt><dd>${html}</dd></div>` : "";
 const dated = (label, d) => d ? `${label} ${esc(fmtDateWithYear(d))}` : "";
 /** The Kundenakte on the lead page: what we deliver, their systems and who runs them, the people to reach. */
-function accountHtml(l) {
+function accountHtml(l, offersMailto) {
   const a = accountOf(l);
   const who = Object.fromEntries(a.contacts.map((c) => [c.id, c.name]));
   const services = a.services.map((s) => `<div class="fact"><dt>${esc(STATE_LABEL[s.state])}</dt><dd><b>${esc(s.kind)}</b>${s.price ? " \xB7 " + esc(s.price) : ""}${[dated("seit", s.since), dated("live", s.goLive), dated("Vertrag bis", s.contractEnd)].filter(Boolean).map((x) => " \xB7 " + x).join("")}${s.note ? `<br>${esc(s.note)}` : ""}</dd></div>`).join("");
@@ -365,7 +375,7 @@ function accountHtml(l) {
   const contacts = a.contacts.map((c) => {
     const tel = channelLink({ phone: c.phone }, "Telefon");
     const handles = [c.handles, ...handledBy(a, c.id)].filter(Boolean).join(", ");
-    return `<div class="fact"><dt>${esc([c.company, c.role].filter(Boolean).join(" \xB7 ") || "Kontakt")}</dt><dd><b>${esc(c.name)}</b>${handles ? ` \xB7 ${esc(handles)}` : ""}${c.email ? `<br><a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ""}${tel ? `<br><a href="${esc(tel)}">${esc(c.phone)}</a>` : ""}${c.note ? `<br>${esc(c.note)}` : ""}</dd></div>`;
+    return `<div class="fact"><dt>${esc([c.company, c.role].filter(Boolean).join(" \xB7 ") || "Kontakt")}</dt><dd><b>${esc(c.name)}</b>${handles ? ` \xB7 ${esc(handles)}` : ""}${c.email ? `<br>${offersMailto(c.email) ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : esc(c.email)}` : ""}${tel ? `<br><a href="${esc(tel)}">${esc(c.phone)}</a>` : ""}${c.note ? `<br>${esc(c.note)}` : ""}</dd></div>`;
   }).join("");
   const part = (title, html, empty) => `<h4>${title}</h4>${html ? `<dl class="facts" style="padding:0">${html}</dl>` : `<p class="note">${empty}</p>`}`;
   return `<div class="sec"><h3>Kundenakte <button class="link" data-act="accountEdit">Bearbeiten</button></h3><div class="card account">

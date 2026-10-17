@@ -25,7 +25,6 @@ or overwriting data by mistake, not about outside access.
 - CRM: a backup import adds an activity the CRM never held even when its lead is in the Papierkorb or erased; on an erased lead that brings text back after the erase, and an import landing during an erase leaves its activity live and without history, because `purgeLead` guards only the lead row. Decide whether an import may add to a trashed lead, and refuse it for an erased one (second review of 1.9.0, 2026-10-17).
 - CRM: open and click tracking like HubSpot (owner, 2026-10-17): owner's decision, not built. A tracking pixel or rewritten links read the recipient's device without consent (§165 (3) TKG 2021, Art. 5 (3) ePrivacy, GDPR). "Detect replies" below tells us who answered without that.
 - CRM: "Kopieren & E-Mail öffnen" (a mailto link) sends the compose text without the unsubscribe link, also when Gmail is connected. Add the link there too, or offer only "Per Gmail senden" once Gmail is connected.
-- CRM: an opt-out belongs to the lead, not to the email address. The same business added again under a new id (a new scrape, a duplicate) can be mailed again. A suppression list by address would close that.
 - CRM: tasks as their own records (due date, optional time, done), replacing the overloaded `nextStep` and the single `followUp`. Owner decided 2026-10-16: one owner per lead, so a lead gets an `owner` and Todos shows "mine" first.
 - CRM: detect replies. A cron reads the Gmail threads of sent mails and logs incoming replies, so a reply is logged and due on its own. Needs the `gmail.readonly` scope.
 - Scraper → CRM: import scraped leads (CSV or MCP `create_lead`), skipping businesses already in the CRM. Needs duplicate detection first.
@@ -60,6 +59,12 @@ or overwriting data by mistake, not about outside access.
 - Root `package.json` is still named `bookete-scraper`; README and layout describe one tool. The root README still recommends Node 22, while CI tests the scraper on Node 26 since CRM 1.9.1 (`README.md`, for the scraper review).
 
 ## Recently shipped (traceability)
+
+### 2026-10-18
+
+All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
+
+- CRM 1.11.0: an opt-out closes its e-mail address to mail, on every lead that holds it (`optOutByAddress`, `crm/src/server/store.js`). Owner, 2026-10-17: service mail to a Kunde is exempt; an outgoing E-Mail to a closed address can't be logged by hand; changing that lead's address or erasing it opens the address again.
 
 ### 2026-10-17
 
