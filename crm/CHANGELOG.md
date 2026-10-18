@@ -2,6 +2,12 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.16.5 (2026-10-18)
+
+### Fixed
+- **Why no mail goes out:** the note in the message sheet shows the opt-out date as 15.10.2026, not 2026-10-15. The server's refusal reads the same.
+- When a business's own opt-out arrives while its message sheet is open, the note says "Keine E-Mail: Opt-out seit …". Before, it named the business itself as another one with "dieselbe Adresse".
+
 ## 1.16.4 (2026-10-18)
 
 ### Fixed

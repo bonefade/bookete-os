@@ -58,14 +58,14 @@ test("an opt-out closes its address to mail: no mail, sent, drafted or logged as
   await uc.optOut(old);
   const again = await uc.addLead({ name: "Gasthaus Krone", email: " info@krone.AT " });
   const refused = (message) => (e) => e instanceof ValidationError && e.field === "email" && e.message === message;
-  const live = "Keine E-Mail an diese Adresse: \u201EKrone\u201C hat dieselbe Adresse und ein Opt-out seit 2026-10-15";
+  const live = "Keine E-Mail an diese Adresse: \u201EKrone\u201C hat dieselbe Adresse und ein Opt-out seit 15.10.2026";
   const logged = { direction: "out", channel: "E-Mail", text: "Hallo" };
   await assert.rejects(uc.sendEmail(again, { subject: "Hi", text: "x" }), refused(live));
   await assert.rejects(uc.draftEmail(again, { subject: "Hi", text: "x" }), refused(live));
   await assert.rejects(uc.logActivity(again, logged), refused(live));
   // In the Papierkorb its opt-out still holds, and the message says where it is.
   await uc.deleteLead(old);
-  const trashed = "Keine E-Mail an diese Adresse: \u201EKrone\u201C (im Papierkorb) hat dieselbe Adresse und ein Opt-out seit 2026-10-15";
+  const trashed = "Keine E-Mail an diese Adresse: \u201EKrone\u201C (im Papierkorb) hat dieselbe Adresse und ein Opt-out seit 15.10.2026";
   await assert.rejects(uc.sendEmail(again, { subject: "Hi", text: "x" }), refused(trashed));
   await assert.rejects(uc.draftEmail(again, { subject: "Hi", text: "x" }), refused(trashed));
   await assert.rejects(uc.logActivity(again, logged), refused(trashed));
@@ -122,7 +122,7 @@ test("with a live and a trashed lead holding the closed address, the refusal nam
   await uc.optOut(trashed);
   await uc.deleteLead(trashed);
   const again = await uc.addLead({ name: "Gasthaus Krone", email: "info@krone.at" });
-  await assert.rejects(uc.draftEmail(again, { subject: "Hi", text: "x" }), { message: "Keine E-Mail an diese Adresse: „Krone“ hat dieselbe Adresse und ein Opt-out seit 2026-10-15" });
+  await assert.rejects(uc.draftEmail(again, { subject: "Hi", text: "x" }), { message: "Keine E-Mail an diese Adresse: „Krone“ hat dieselbe Adresse und ein Opt-out seit 15.10.2026" });
 });
 
 test("a cleared follow-up reads back as null, not missing", async () => {

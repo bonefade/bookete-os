@@ -50,8 +50,6 @@ or overwriting data by mistake, not about outside access.
 
 - CRM: without Gmail, a lead whose address is closed only by a holder in the Papierkorb still gets mail links: the browser holds no trashed leads. The mail goes out, and logging it is refused. Documented in `crm/README.md` (found in the 1.11.0 review).
 - CRM: a closed address still counts as an address outside the send path: MCP `search_leads` reports `hasEmail`, and the Betriebe list counts and ranks the lead "mit E-Mail" (`withMail`, `crm/src/web/views.js`).
-- CRM: when a lead's own opt-out arrives by sync while its compose sheet is open, the hint names the lead itself as holding "dieselbe Adresse" (`addressOptOutText`, which also shows the opt-out date as a raw ISO date).
-- CRM: no test pins the closed-address compose sheet for a Kunde with its own opt-out and Gmail connected ("Text kopieren" and "Abbrechen", `crm/test/web.test.js`).
 - CRM: a lead created with the reason "Keine Kontaktaufnahme gewünscht" counts as having replied. Matters once scraped leads are imported.
 - CRM: one meaning, two labels: "Betrieb" and "Name", "Nachfassen" and "Nachfassen am", "Fit" and "ICP-Fit", "Kontaktiert seit" and "Erstkontakt" (`FIELD_LABEL`, `crm/src/domain/constants.js`).
 - CRM: MCP `search_leads` pages by offset, so a lead added between two pages can push another one past the page break.
@@ -73,6 +71,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
 
+- CRM 1.16.5: the closed-address hint shows a German date, and on a lead whose own opt-out arrives while the sheet is open it no longer names the lead as holding "dieselbe Adresse"; a test pins that sheet for a Kunde with Gmail connected (`addressOptOutText`, `crm/src/domain/lead.js`).
 - CRM 1.16.4: the Papierkorb reads one more than a page and offers older ones only when they exist (`trash`, `crm/src/server/store.js`).
 - CRM 1.16.3: the search over the screen ends above the bottom tabs, so a result picked by key stays in view; at 320px the top bar drops "CRM" so the whole placeholder shows (`.sbox`, `--tabbar`, `crm/public/index.html`).
 - CRM 1.16.2: a business's page opened by a link or a reload belongs to Betriebe, not Heute (`applyRoute`, `crm/src/web/controller.js`; found in the 1.16.0 review).

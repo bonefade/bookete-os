@@ -1,7 +1,7 @@
 import { REGIONS } from './region.js';
 import { SCHEMA_VERSION, STATUSES, PIPELINE_STATUSES, OPT_OUT_REASON, LOST_REASONS, BUSINESS_TYPES, RESERVATION_TOOLS } from './constants.js';
 import { ValidationError } from './errors.js';
-import { isDate } from './dates.js';
+import { isDate, dayLabel } from './dates.js';
 
 const OPT_OUT_ACTIVE = "Opt-out aktiv \u2013 erst aufheben, wenn der Betrieb wieder Kontakt m\xF6chte";
 export const LEAD_FIELDS = {
@@ -90,7 +90,7 @@ export const addressKey = (email) => str(email).replace(/[A-Z]/g, (c) => c.toLow
 /** The business among `leads` with an opt-out that holds this lead's email address, if any. */
 export const optOutByAddress = (leads, lead) => lead.email ? leads.find((x) => x.optOutAt && addressKey(x.email) === addressKey(lead.email)) : undefined;
 /** Why no mail may go to this address: `holder` has an opt-out and the same address; `trashed`, it is in the Papierkorb. */
-export const addressOptOutText = (holder, trashed = false) => `Keine E-Mail an diese Adresse: \u201E${holder.name}\u201C${trashed ? " (im Papierkorb)" : ""} hat dieselbe Adresse und ein Opt-out seit ${holder.optOutAt}`;
+export const addressOptOutText = (holder, trashed = false) => `Keine E-Mail an diese Adresse: \u201E${holder.name}\u201C${trashed ? " (im Papierkorb)" : ""} hat dieselbe Adresse und ein Opt-out seit ${dayLabel(holder.optOutAt)}`;
 export const isDue = (lead, today) => takesFollowUp(lead) && !!lead.followUp && lead.followUp <= today;
 /** Status and reason as one change; normalizeLead checks the pair. */
 export function transition(status, reason = null) {

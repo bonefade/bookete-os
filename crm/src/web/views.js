@@ -300,7 +300,7 @@ export function detailView(state, today) {
     <div class="two"><label>Kanal<select id="cCh">${options(CHANNELS, c.channel)}</select></label><label>Datum<input type="date" id="cDate" value="${esc(c.date)}" max="${esc(today)}"></label></div>
     <textarea id="cText" placeholder="${c.direction === "out" ? "Nachricht" : "Was haben sie geantwortet?"}">${esc(c.text)}</textarea>
     ${c.missing?.length ? `<p class="hint">Noch leer: ${esc(c.missing.map((m) => "{" + m + "}").join(", "))}. Erg\xE4nze den Betrieb oder passe den Text an.</p>` : ""}
-    ${addressOptOut ? `<p class="hint">${esc(addressOptOutText(addressOptOut))}</p>` : ""}
+    ${addressOptOut ? `<p class="hint">${esc(addressOptOut === l ? `Keine E-Mail: Opt-out seit ${fmtDate(l.optOutAt)}` : addressOptOutText(addressOptOut))}</p>` : ""}
     ${gmail ? `<label>Betreff<input id="cSubj" value="${esc(c.subject)}"></label>${getsUnsubscribeLink(l) ? `<p class="hint">Per Gmail kommt am Ende ein Abmeldelink dazu.</p>` : ""}` : ""}
     ${c.direction === "out" && !(c.channel === "E-Mail" && onlyByGmail) ? `<a class="btn full" style="margin-top:8px" data-act="copyOpen" ${link ? `href="${esc(link)}" target="_blank" rel="noopener"` : 'href="#"'}>${link ? `Kopieren & ${esc(c.channel)} \xF6ffnen` : "Text kopieren"}</a>` : ""}
     ${gmail ? `<button class="primary full" style="margin-top:8px" data-act="sendEmail">Per Gmail senden</button>` : ""}

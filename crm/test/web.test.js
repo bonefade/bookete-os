@@ -86,7 +86,7 @@ test("the compose area says why no mail goes to an address another business with
   state.caps = { db: true, gmail: true };
   state.ui = { ...state.ui, leadId: "L1", compose: { direction: "out", channel: "E-Mail", templateId: "", date: today, subject: "S", text: "Hallo", missing: [] } };
   const html = detailView(state, today);
-  assert.match(html, /Keine E-Mail an diese Adresse: \u201EKrone\u201C hat dieselbe Adresse und ein Opt-out seit 2026-10-01/);
+  assert.match(html, /Keine E-Mail an diese Adresse: \u201EKrone\u201C hat dieselbe Adresse und ein Opt-out seit 01\.10\.2026/);
   assert.doesNotMatch(html, /Per Gmail senden/);
   // Nor is it logged as sent: the sheet offers only Abbrechen.
   assert.doesNotMatch(html, /data-act="logActivity"/);
@@ -106,6 +106,13 @@ test("the compose area says why no mail goes to an address another business with
   assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>Kopieren & E-Mail \xF6ffnen/);
   state.data.leads[0] = { ...lead, status: "kunde", optOutAt: "2026-10-02" };
   assert.doesNotMatch(detailView({ ...state, ui: { ...state.ui, compose: null } }, today), /mailto:/);
+  // Its own opt-out arriving by sync while the sheet is open: the hint names no other business, and the sheet offers
+  // "Text kopieren" (a Kunde's mail goes by mailto too) and Abbrechen, no send and no log.
+  const own = detailView(state, today);
+  assert.match(own, /<p class="hint">Keine E-Mail: Opt-out seit [^<]+2\. Okt\.?<\/p>/);
+  assert.doesNotMatch(own, /dieselbe Adresse|Per Gmail senden|data-act="logActivity"|mailto:/);
+  assert.match(own, /data-act="copyOpen" href="#">Text kopieren</);
+  assert.match(own, /class="full"[^>]*data-act="composeCancel"/);
   state.data.leads[0] = lead;
   state.data.leads[1] = { ...state.data.leads[1], email: "post@krone.at" };
   assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>Kopieren & E-Mail \xF6ffnen/);
