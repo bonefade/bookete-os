@@ -127,9 +127,9 @@ export function leadsView(state, today) {
   }
   list.sort(SORTS[sort] || SORTS.prio);
   const quickForm = quick ? `<div class="card" style="margin-bottom:12px">
-    <label>${FIELD_LABEL.name} *<input id="qaName" autocomplete="off"></label>
-    <div class="two"><label>${FIELD_LABEL.city}<input id="qaCity"></label><label>${FIELD_LABEL.instagram}<input id="qaIg" placeholder="@handle" autocapitalize="off"></label></div>
-    <label>${FIELD_LABEL.hook}<input id="qaHook" placeholder="z. B. Neuer\xF6ffnung"></label>
+    <label>${FIELD_LABEL.name} *<input id="qaName" autocomplete="off" value="${esc(quick.name)}"></label>
+    <div class="two"><label>${FIELD_LABEL.city}<input id="qaCity" value="${esc(quick.city)}"></label><label>${FIELD_LABEL.instagram}<input id="qaIg" placeholder="@handle" autocapitalize="off" value="${esc(quick.instagram)}"></label></div>
+    <label>${FIELD_LABEL.hook}<input id="qaHook" placeholder="z. B. Neuer\xF6ffnung" value="${esc(quick.hook)}"></label>
     <div class="two"><button data-act="quickCancel">Abbrechen</button><button class="primary" data-act="quickSave">Hinzuf\xFCgen</button></div>
     <p class="note">Den Rest kann Claude recherchieren und erg\xE4nzen.</p></div>` : "";
   return `<div class="wrap wide">
@@ -210,7 +210,7 @@ export function moreView(state) {
   const li = (a) => (a || []).map((x) => `<li>${esc(x)}</li>`).join("");
   const lost = lostBreakdown(state.data.leads);
   const { cadence, maxTouches } = SEQUENCE_POLICY;
-  const icpBody = state.ui.icpEdit ? `<label>Passt (eine Zeile pro Kriterium)<textarea id="icpFit" rows="7">${esc((icp?.fit || []).join("\n"))}</textarea></label><label>Passt nicht<textarea id="icpNo" rows="4">${esc((icp?.noFit || []).join("\n"))}</textarea></label><div class="two"><button data-act="icpCancel">Abbrechen</button><button class="primary" data-act="icpSave">Speichern</button></div>` : (icp ? `<h4>Passt</h4><ul>${li(icp.fit)}</ul><h4>Passt nicht</h4><ul>${li(icp.noFit)}</ul>${icp.note ? `<p class="note">${esc(icp.note)}</p>` : ""}` : `<p class="note">Noch kein ICP hinterlegt.</p>`) + (state.caps.db ? `<button data-act="icpEdit" style="margin-top:12px">ICP bearbeiten</button>` : "");
+  const icpBody = state.ui.icpEdit ? `<label>Passt (eine Zeile pro Kriterium)<textarea id="icpFit" rows="7">${esc(state.ui.icpEdit.fit)}</textarea></label><label>Passt nicht<textarea id="icpNo" rows="4">${esc(state.ui.icpEdit.noFit)}</textarea></label><div class="two"><button data-act="icpCancel">Abbrechen</button><button class="primary" data-act="icpSave">Speichern</button></div>` : (icp ? `<h4>Passt</h4><ul>${li(icp.fit)}</ul><h4>Passt nicht</h4><ul>${li(icp.noFit)}</ul>${icp.note ? `<p class="note">${esc(icp.note)}</p>` : ""}` : `<p class="note">Noch kein ICP hinterlegt.</p>`) + (state.caps.db ? `<button data-act="icpEdit" style="margin-top:12px">ICP bearbeiten</button>` : "");
   return `<div class="wrap">
   <div class="head"><h1>Mehr</h1></div>
   <div class="sec"><h3>Ideal Customer Profile</h3><div class="card icp">${icpBody}</div></div>

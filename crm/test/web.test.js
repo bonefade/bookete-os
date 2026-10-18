@@ -210,7 +210,7 @@ test("the forms, the lead page, the list and search name a field as FIELD_LABEL 
     const form = leadEditView(state);
     for (const key of ["name", "city", "type", "region", "status", "fit", "lostReason", "instagram", "phone", "email", "website", "person", "currentTool", "hook", "notes"])
       assert.match(form, new RegExp(`>Feld ${key}( \\*)?<(input|select|textarea) name="${key}"`), key);
-    const quick = leadsView({ ...state, ui: { ...state.ui, quick: true } }, today);
+    const quick = leadsView({ ...state, ui: { ...state.ui, quick: { name: "", city: "", instagram: "", hook: "" } } }, today);
     for (const [key, id] of [["name", "qaName"], ["city", "qaCity"], ["instagram", "qaIg"], ["hook", "qaHook"]])
       assert.match(quick, new RegExp(`>Feld ${key}( \\*)?<input id="${id}"`), key);
     const page = detailView({ ...state, ui: { ...state.ui, leadId: "L1" } }, today);
@@ -610,11 +610,16 @@ function fakeBrowser(hash, store, uc) {
     // The rows of the result list, which the field's arrow keys and Enter go through.
     querySelectorAll: (sel) => sel === "#sres .srow" ? [...results.innerHTML.matchAll(/class="srow[^"]*" data-open="([^"]+)"/g)].map(([, open]) => ({ dataset: { open }, classList: { toggle() {} }, scrollIntoView() {} })) : [],
   };
+  // The screen's own listeners: what is typed and changed in its fields.
+  const rootOn = {};
+  const focused = [];
   const root = {
     innerHTML: "",
-    addEventListener() {},
+    addEventListener: (type, f) => (rootOn[type] = f),
     contains: () => false,
     querySelector: (sel) => {
+      // Name in + Neu and the list filter, drawn: a focus asked for is counted.
+      if (sel === "#qaName" || sel === "#q") return root.innerHTML.includes(`id="${sel.slice(1)}"`) ? { focus: () => focused.push(sel), setSelectionRange() {} } : null;
       if (!root.innerHTML.includes("<form")) return null;
       // The Kundenakte form with its drawn fields; any other form with none: the use case fakes take whatever it holds.
       if (sel === "#aform") return { elements: formElements(root.innerHTML, typed) };
@@ -640,7 +645,9 @@ function fakeBrowser(hash, store, uc) {
     field.on.input();
   };
   const press = (key, mods = {}) => on.keydown({ key, target: { tagName: "BODY" }, preventDefault() {}, ...mods });
-  return { h, root, app, click, press, typed, toastEl, field, type, results, search, tabsEl };
+  const input = (id, value) => rootOn.input({ target: { id, value } });
+  const change = (target) => rootOn.change({ target: { dataset: {}, ...target } });
+  return { h, root, app, click, press, input, change, typed, toastEl, field, type, results, search, tabsEl, focused };
 }
 /** A drawn form's fields as form.elements holds them, by position and by name, with what the test typed over them. */
 function formElements(html, typed = {}) {
@@ -992,10 +999,11 @@ test("while the lead page holds unsaved input the field is shut, and it opens ag
     await click({ open: "L1" });
     await click({ act: "composeOut" });
     assert.equal(field.disabled, true);
-    // Nor do / and Ctrl+K jump into it.
+    // Nor do / and Ctrl+K jump into it, and the keys keep their own meaning, such as Ctrl+K in a text field.
+    let prevented = 0;
     for (const [key, mods] of [["/"], ["k", { ctrlKey: true }]]) {
-      press(key, mods);
-      assert.deepEqual([h.location.hash, field.disabled], ["#/betrieb/L1", true], key);
+      press(key, { ...mods, preventDefault: () => prevented++ });
+      assert.deepEqual([h.location.hash, field.disabled, search.hidden, prevented], ["#/betrieb/L1", true, true, 0], key);
     }
     // Zurück leaves the lead and its message, so the field and / work on every screen after it.
     await click({ act: "back" });
@@ -1016,7 +1024,40 @@ test("the quick-add form on Betriebe and the ICP form on Mehr shut the field whi
     const store = createStore(initialState());
     store.data("leads", [{ ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-01" }]);
     for (const c of ["activities", "templates", "settings"]) store.data(c, []);
-    const { h, root, click, field, search } = fakeBrowser("#/betriebe", store, {});
+    const added = [];
+    const icps = [];
+    const uc = { addLead: async (lead) => (added.push(lead), "L9"), saveIcp: async (icp) => icps.push(icp) };
+    const { h, root, app, click, input, change, field, search, focused } = fakeBrowser("#/betriebe", store, uc);
+    // What is typed into + Neu is drawn back by every redraw under it: a sync, the sort, a filter. Forward onto the
+    // search's entry steps off it again, so the search stays shut and Back leaves the page; Hinzufügen saves what was typed.
+    field.on.click();
+    h.history.go(-1);
+    h.land();
+    await click({ act: "quick" });
+    // Name takes the focus as + Neu opens, and only then: typing into the list filter keeps it there.
+    input("q", "kr");
+    await new Promise((r) => setTimeout(r, 40));
+    assert.deepEqual(focused, ["#q", "#qaName"]);
+    input("q", "");
+    input("qaName", "Neuer Wirt");
+    input("qaCity", "Graz");
+    app.onDataChanged();
+    change({ id: "sort", value: "name" });
+    change({ dataset: { filter: "status" }, value: "neu" });
+    h.history.go(1);
+    h.land();
+    assert.match(root.innerHTML, /id="qaName" autocomplete="off" value="Neuer Wirt"/);
+    assert.match(root.innerHTML, /id="qaCity" value="Graz"/);
+    assert.equal(search.hidden, true);
+    assert.equal(h.seen().at, 0);
+    await click({ act: "quickSave" });
+    assert.deepEqual(added, [{ name: "Neuer Wirt", city: "Graz", instagram: "", hook: "" }]);
+    // The next search opens on one entry, and one Back shuts it.
+    field.on.click();
+    assert.equal(search.hidden, false);
+    h.history.go(-1);
+    h.land();
+    assert.deepEqual([search.hidden, h.seen().at], [true, 0]);
     await click({ act: "quick" });
     assert.equal(field.disabled, true);
     // The search stays shut by every way in, the list's hits outside its filters too, whose button is shut as well.
@@ -1038,6 +1079,13 @@ test("the quick-add form on Betriebe and the ICP form on Mehr shut the field whi
     await click({ tab: "mehr" });
     await click({ act: "icpEdit" });
     assert.equal(field.disabled, true);
+    // The ICP form too keeps what was typed through a sync, and saves it.
+    input("icpFit", "Neu eröffnet\nAbends");
+    app.onDataChanged();
+    assert.match(root.innerHTML, /<textarea id="icpFit" rows="7">Neu eröffnet\nAbends<\/textarea>/);
+    await click({ act: "icpSave" });
+    assert.deepEqual(icps.map(({ fit, noFit }) => [fit, noFit]), [[["Neu eröffnet", "Abends"], [""]]]);
+    await click({ act: "icpEdit" });
     await click({ act: "icpCancel" });
     assert.equal(field.disabled, false);
     // Another tab closes the ICP form, so the field is open there, and back on Mehr the form is closed.

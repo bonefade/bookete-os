@@ -2,6 +2,12 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.16.1 (2026-10-18)
+
+### Fixed
+- **+ Neu and the ICP form keep what you typed.** Before, a change from the other user arriving by sync, or a new sort or filter on Betriebe, drew the form again empty.
+- While a form holds input, the browser's Forward no longer opens the search over it, and / and Ctrl+K do what they do elsewhere instead of nothing.
+
 ## 1.16.0 (2026-10-18)
 
 ### Changed

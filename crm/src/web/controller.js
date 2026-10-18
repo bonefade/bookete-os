@@ -37,6 +37,8 @@ export function parseRoute(hash) {
   return { view: null, tab: TABS.some(([k]) => k === a) ? a : "heute" };
 }
 const LEAD_VIEWS = new Set(["detail", "editLead", "editAccount"]);
+/** The quick-add form's fields and the draft key each one types into; the draft outlives any redraw of the list. */
+const QUICK_ADD_FIELDS = { qaName: "name", qaCity: "city", qaIg: "instagram", qaHook: "hook" };
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 /** A screen holding input not yet saved: search stays shut there, so that it cannot leave the screen by accident. */
 const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call || u.meeting || u.quick || u.icpEdit);
@@ -180,7 +182,6 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     // The tabs show on every screen; while a form holds input they are shut, as the search field is, so nothing typed is lost.
     tabsEl.innerHTML = tabBar(st, today, holdsInput(st.ui));
-    if (st.ui.quick && !view && st.ui.tab === "betriebe") setTimeout(() => root.querySelector("#qaName")?.focus(), 30);
     return true;
   }
   function safeRender() {
@@ -216,10 +217,18 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
   };
   // The address whose screen shows, so a step onto or off the search's entry, which has the same address, leaves it as it is.
   let shown = null;
-  /** Shows the screen of the current address, and the search on the search's entry; also runs on the browser's Back and Forward. */
+  /**
+   * Shows the screen of the current address, and the search on the search's entry. On the address already on screen
+   * only a step onto or off the search's entry lands (Back, Forward, a step back of ours): the screen stays as it is.
+   */
   function applyRoute() {
     const onSearch = !!history.state?.search;
-    if (location.hash === shown && onSearch !== S().ui.searchOpen) return setSearch(onSearch);
+    if (location.hash === shown) {
+      // Forward onto the search's entry over a form holding input steps off it again: the search stays shut, as by every other way in.
+      if (onSearch && holdsInput(S().ui)) return leave(location.hash);
+      if (onSearch !== S().ui.searchOpen) setSearch(onSearch);
+      return;
+    }
     shown = location.hash;
     saveScroll();
     const next = enterRoute(S().ui, parseRoute(location.hash));
@@ -247,17 +256,22 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     ui({ searchOpen: open, gq: open ? q : "", sIdx: 0 });
     drawSearch();
   };
+  /** Opens the search unless a form holds input; whether it is open now. */
   const showSearch = (q = "") => {
-    if (S().ui.searchOpen || holdsInput(S().ui)) return;
-    setSearch(true, q);
-    pushSearch();
+    const u = S().ui;
+    if (!u.searchOpen && !holdsInput(u)) {
+      setSearch(true, q);
+      pushSearch();
+    }
+    return S().ui.searchOpen;
   };
   /** Closes the search by stepping back off its entry, as the browser's Back does. */
   const closeSearch = () => leave(location.hash);
   const openSearch = (q) => {
-    showSearch(q);
+    if (!showSearch(q)) return false;
     searchEl.focus();
     searchEl.select();
+    return true;
   };
   // A click opens it, focus alone does not: Tab, or coming back to the window, lands on the field without meaning to search.
   searchEl.addEventListener("click", () => showSearch());
@@ -274,9 +288,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable;
     const cmdK = (ev.key === "k" || ev.key === "K") && (ev.metaKey || ev.ctrlKey) && !ev.altKey;
     const slash = ev.key === "/" && !typing && !ev.metaKey && !ev.ctrlKey && !ev.altKey;
-    if (!cmdK && !slash) return;
-    ev.preventDefault();
-    openSearch();
+    // Where no search can open, the key keeps its own meaning: Ctrl+K in a text field, the browser's elsewhere.
+    if ((cmdK || slash) && openSearch()) ev.preventDefault();
   });
   const back = () => leave(backRoute(S().ui));
   const openLead = (id) => go(routeOf({ view: "detail", leadId: id }));
@@ -388,16 +401,17 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       if (saved !== undefined) back();
     },
     quick: () => {
-      ui({ quick: !S().ui.quick });
+      ui({ quick: S().ui.quick ? false : Object.fromEntries(Object.values(QUICK_ADD_FIELDS).map((key) => [key, ""])) });
       render();
+      // Into Name once, as it opens: a later redraw (a sync, the list filter typed into) leaves the focus where it is.
+      if (S().ui.quick) setTimeout(() => root.querySelector("#qaName")?.focus(), 30);
     },
     quickCancel: () => {
       ui({ quick: false });
       render();
     },
     async quickSave() {
-      const g = (id2) => root.querySelector("#" + id2).value;
-      const id = await run(() => uc.addLead({ name: g("qaName"), city: g("qaCity"), instagram: g("qaIg"), hook: g("qaHook") }), "Hinzugef\xFCgt");
+      const id = await run(() => uc.addLead(S().ui.quick), "Hinzugef\xFCgt");
       if (id) {
         ui({ quick: false, status: "offen" });
         render();
@@ -515,7 +529,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       if (await run(() => uc.deleteTemplate(S().ui.templateId).then(() => true), "Gel\xF6scht")) back();
     },
     icpEdit: () => {
-      ui({ icpEdit: true });
+      const icp = icpOf(S());
+      ui({ icpEdit: { fit: (icp?.fit || []).join("\n"), noFit: (icp?.noFit || []).join("\n") } });
       render();
     },
     icpCancel: () => {
@@ -523,8 +538,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       render();
     },
     async icpSave() {
-      const lines = (id) => root.querySelector("#" + id).value.split("\n");
-      if (await run(() => uc.saveIcp({ ...icpOf(S()) || {}, fit: lines("icpFit"), noFit: lines("icpNo") }).then(() => true), "ICP gespeichert")) {
+      const { fit, noFit } = S().ui.icpEdit;
+      if (await run(() => uc.saveIcp({ ...icpOf(S()) || {}, fit: fit.split("\n"), noFit: noFit.split("\n") }).then(() => true), "ICP gespeichert")) {
         ui({ icpEdit: false });
         render();
       }
@@ -640,6 +655,10 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       n.focus();
       n.setSelectionRange(pos, pos);
     }
+    // What is typed into the quick-add and ICP forms is kept as typed, so a redraw (a sync, a sort, a filter) draws it back.
+    const { quick, icpEdit } = S().ui;
+    if (QUICK_ADD_FIELDS[t.id] && quick) return ui({ quick: { ...quick, [QUICK_ADD_FIELDS[t.id]]: t.value } });
+    if ((t.id === "icpFit" || t.id === "icpNo") && icpEdit) return ui({ icpEdit: { ...icpEdit, [t.id === "icpFit" ? "fit" : "noFit"]: t.value } });
     if (t.id === "cSubj" && c) return ui({ compose: { ...c, subject: t.value } });
     if (t.id === "cText" && c) {
       ui({ compose: { ...c, text: t.value } });
