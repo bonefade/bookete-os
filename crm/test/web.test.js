@@ -1228,8 +1228,10 @@ test("the Papierkorb pages back through the server, and a restore or erase keeps
     await click({ purge: ids[1] });
     assert.match(root.innerHTML, /Keine \xE4lteren gel\xF6schten Betriebe/);
     assert.match(root.innerHTML, /data-act="showTrash">Zu den neuesten</);
+    // Exactly a page is left: no "Ältere anzeigen" that would open an empty page.
     await click({ act: "showTrash" });
-    assert.deepEqual(shown(), newest);
+    assert.deepEqual([shown(), /trashOlder/.test(root.innerHTML)], [newest, false]);
+    assert.equal(newest.length, TRASH_SHOWN);
     assert.equal((await fetch("/api/trash?before=x")).status, 400);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];

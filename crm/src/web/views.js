@@ -225,10 +225,11 @@ export function moreView(state) {
 function trashHtml(trash, before) {
   if (!trash) return `<button class="full" data-act="showTrash">Papierkorb \xF6ffnen</button>`;
   const newest = before ? `<button class="full" style="margin-top:8px" data-act="showTrash">Zu den neuesten</button>` : "";
-  if (!trash.length) return `<p class="note" style="margin:0">${before ? "Keine \xE4lteren gel\xF6schten Betriebe." : "Der Papierkorb ist leer."}</p>` + newest;
-  // A full page may have older ones behind it.
-  const older = trash.length >= TRASH_SHOWN ? `<button class="full" style="margin-top:8px" data-act="trashOlder" data-before="${esc(trash.at(-1).seq)}">\xC4ltere anzeigen</button>` : "";
-  return trash.map(({ lead, actor, at }) => `<div class="entry"><div class="h"><span>${esc(fmtTime(at))} \xB7 ${esc(actorName(actor))}</span></div><p style="margin:2px 0 8px;font-weight:600">${esc([lead.name, lead.city].filter(Boolean).join(" \xB7 "))}</p><div class="two"><button data-restore="${esc(lead.id)}">Wiederherstellen</button><button class="danger" data-purge="${esc(lead.id)}">Endg\xFCltig l\xF6schen</button></div></div>`).join("") + older + newest;
+  // The server reads one more than a page: it says whether older ones follow.
+  const entries = trash.slice(0, TRASH_SHOWN);
+  if (!entries.length) return `<p class="note" style="margin:0">${before ? "Keine \xE4lteren gel\xF6schten Betriebe." : "Der Papierkorb ist leer."}</p>` + newest;
+  const older = trash.length > TRASH_SHOWN ? `<button class="full" style="margin-top:8px" data-act="trashOlder" data-before="${esc(entries.at(-1).seq)}">\xC4ltere anzeigen</button>` : "";
+  return entries.map(({ lead, actor, at }) => `<div class="entry"><div class="h"><span>${esc(fmtTime(at))} \xB7 ${esc(actorName(actor))}</span></div><p style="margin:2px 0 8px;font-weight:600">${esc([lead.name, lead.city].filter(Boolean).join(" \xB7 "))}</p><div class="two"><button data-restore="${esc(lead.id)}">Wiederherstellen</button><button class="danger" data-purge="${esc(lead.id)}">Endg\xFCltig l\xF6schen</button></div></div>`).join("") + older + newest;
 }
 /** Who changed what on this lead, loaded on demand. */
 function changesHtml(changes) {

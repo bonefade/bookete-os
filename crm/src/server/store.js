@@ -154,13 +154,14 @@ export function createStore(db) {
     /**
      * Deleted leads that can be restored, TRASH_SHOWN at a time, newest first: those deleted before `before` (an
      * entry's `seq`) if given. Each with who deleted it and when: the version that moved the lead to the trash, not
-     * a later write there (an opt-out by the link).
+     * a later write there (an opt-out by the link). One more than a page, so the page knows whether older ones follow;
+     * an answer of up to a page and one is what a page from before 1.16.4 also reads.
      */
     async trash(before) {
       const rows = await many(`SELECT d.id, d.data, d.seq, d.deleted, COALESCE(h.actor, d.updated_by) AS actor, h.at, COALESCE(h.seq, d.seq) AS deleted_seq FROM docs d
         LEFT JOIN history h ON h.seq = (SELECT MIN(x.seq) FROM history x WHERE x.collection = d.collection AND x.id = d.id AND x.deleted = 1
           AND x.seq > (SELECT COALESCE(MAX(y.seq), 0) FROM history y WHERE y.collection = d.collection AND y.id = d.id AND y.deleted = 0))
-        WHERE d.collection = 'leads' AND d.deleted = 1 AND d.data != '{}' ${before ? "AND COALESCE(h.seq, d.seq) < ?" : ""} ORDER BY deleted_seq DESC LIMIT ?`, ...(before ? [before] : []), TRASH_SHOWN);
+        WHERE d.collection = 'leads' AND d.deleted = 1 AND d.data != '{}' ${before ? "AND COALESCE(h.seq, d.seq) < ?" : ""} ORDER BY deleted_seq DESC LIMIT ?`, ...(before ? [before] : []), TRASH_SHOWN + 1);
       return rows.map((row) => ({ lead: toRecord("leads", row), actor: row.actor, at: row.at, seq: row.deleted_seq }));
     },
     /** A lead's newest 100 versions, newest first: each with the data before and after, who wrote it and when, and whether it was deleted before. */

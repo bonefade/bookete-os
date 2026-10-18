@@ -302,7 +302,7 @@ test("a deleted lead waits in the trash and comes back with its activities", asy
   await uc.restoreLead(id);
   assert.equal((await store.get("leads", id)).status, "kontaktiert");
   assert.deepEqual((await store.activitiesOf(id)).map((a) => a.text), ["Angerufen"]);
-  assert.deepEqual((await store.trash()), []);
+  assert.deepEqual(await store.trash(), []);
   assert.deepEqual((await store.changes(seq)).changes.map((c) => [c.collection, !!c.record]), [["leads", true], ["activities", true]]);
 });
 

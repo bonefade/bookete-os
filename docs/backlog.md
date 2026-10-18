@@ -54,7 +54,7 @@ or overwriting data by mistake, not about outside access.
 - CRM: no test pins the closed-address compose sheet for a Kunde with its own opt-out and Gmail connected ("Text kopieren" and "Abbrechen", `crm/test/web.test.js`).
 - CRM: a lead created with the reason "Keine Kontaktaufnahme gewünscht" counts as having replied. Matters once scraped leads are imported.
 - CRM: one meaning, two labels: "Betrieb" and "Name", "Nachfassen" and "Nachfassen am", "Fit" and "ICP-Fit", "Kontaktiert seit" and "Erstkontakt" (`FIELD_LABEL`, `crm/src/domain/constants.js`).
-- CRM: the Papierkorb asks for 50 and offers older ones when 50 come back, so exactly 50 leads show an empty next page; fetch one more than it shows (`TRASH_SHOWN`). MCP `search_leads` pages by offset, so a lead added between two pages can push another one past the page break.
+- CRM: MCP `search_leads` pages by offset, so a lead added between two pages can push another one past the page break.
 - CRM: `searchLeads` (`crm/src/domain/search.js`) runs on every keystroke over all leads; its cost at a few thousand leads is unmeasured.
 - CRM: a backup import batch uses 49 of the 50 queries D1 allows per Worker invocation on the Free plan; how D1 counts statements in one `batch` is unverified, and `crm/test/d1.js` does not model the cap (unenforced).
 - Rule gap: an injected dependency gets no silent default; `retryPause` defaults to no wait, and only a Worker test shows both call sites pass the real one (unenforced; found in the 1.12.0 review).
@@ -73,6 +73,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
 
+- CRM 1.16.4: the Papierkorb reads one more than a page and offers older ones only when they exist (`trash`, `crm/src/server/store.js`).
 - CRM 1.16.3: the search over the screen ends above the bottom tabs, so a result picked by key stays in view; at 320px the top bar drops "CRM" so the whole placeholder shows (`.sbox`, `--tabbar`, `crm/public/index.html`).
 - CRM 1.16.2: a business's page opened by a link or a reload belongs to Betriebe, not Heute (`applyRoute`, `crm/src/web/controller.js`; found in the 1.16.0 review).
 - CRM 1.16.1: + Neu and the ICP form keep what was typed through a sync, a sort or a filter (the drafts live in the UI state, `QUICK_ADD_FIELDS`, `crm/src/web/controller.js`); Forward onto the search's entry over a form steps off it again, so the search stays shut and the history matches the screen, and / and Ctrl+K keep their own meaning where no search can open (found in the 1.16.0 review).
