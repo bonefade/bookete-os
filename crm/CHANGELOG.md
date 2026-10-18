@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.15.0 (2026-10-18)
+
+### Changed
+- **Search over the screen:** clicking into the search field no longer leaves the screen you are on. The results open over it; the screen stays as it was underneath, scrolled where you left it. The browser's or phone's Back closes the search, as do "Schließen", a click on the dimmed area, Escape (once the field is empty) or a tab in the bottom bar. Opening a result closes it too, and Back from that business returns to the screen you searched from. While the search is open, Tab moves only through it and the tabs. Old links to the search open Heute.
+
 ## 1.14.0 (2026-10-18)
 
 ### Added

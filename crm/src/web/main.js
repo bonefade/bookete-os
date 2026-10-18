@@ -10,6 +10,7 @@ const app = mountApp({
   root: document.getElementById("app"),
   tabsEl: document.getElementById("tabs"),
   searchEl: document.getElementById("gq"),
+  searchBox: document.getElementById("sbox"),
   toastEl: document.getElementById("toast"),
   store,
   clock: systemClock

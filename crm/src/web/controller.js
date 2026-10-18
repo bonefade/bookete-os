@@ -9,7 +9,7 @@ import { lastChannel } from '../domain/activity.js';
 import { relDate } from './format.js';
 import { TABS, tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "callCancel", "meetingCancel", "callStart", "callNext", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "callCancel", "meetingCancel", "callStart", "callNext", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -34,8 +34,7 @@ export function parseRoute(hash) {
   if (a === "betrieb" && b) return { view: { bearbeiten: "editLead", kunde: "editAccount" }[c] || "detail", leadId: b };
   // A template belongs to Vorlagen, so one opened from a link or a reload goes back there.
   if (a === "vorlage" && b) return { view: "editTemplate", templateId: b === "neu" ? null : b, tab: "vorlagen" };
-  // Suche has no tab: the search field in the top bar opens it.
-  return { view: null, tab: a === "suche" || TABS.some(([k]) => k === a) ? a : "heute" };
+  return { view: null, tab: TABS.some(([k]) => k === a) ? a : "heute" };
 }
 const LEAD_VIEWS = new Set(["detail", "editLead", "editAccount"]);
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
@@ -43,12 +42,13 @@ const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call || u.meeting || u.quick || u.icpEdit);
 /**
  * The UI state for an address. What a lead page has open lasts only while that lead is on screen: leaving it, or
- * opening another, starts fresh. The quick-add and ICP forms close on any address, as they show on their tab only.
+ * opening another, starts fresh. The quick-add and ICP forms close on any address, as they show on their tab only;
+ * so does the search over the screen.
  * Mehr starts with the Papierkorb closed so it is never shown stale.
  */
 export function enterRoute(ui, route) {
   const sameLead = LEAD_VIEWS.has(route.view) && LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
-  const next = { ...ui, ...route, quick: false, icpEdit: false, ...(!sameLead && { compose: null, lostPick: false, call: null, meeting: null, editField: null, changes: null, expanded: new Set() }) };
+  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, call: null, meeting: null, editField: null, changes: null, expanded: new Set() }) };
   if (route.view) return next;
   return { ...next, calling: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
 }
@@ -63,16 +63,25 @@ export function recordMissing(st) {
 /**
  * Moving between addresses. Our own history entries carry how many of ours lead up to them (the page's first entry
  * carries none), so leaving a screen steps back through them instead of adding a second copy of the screen before.
+ * The open search has an entry of its own, at the address of the screen under it, so Back closes it first.
  */
 export function createNavigation(history, location, applyRoute) {
   const depth = () => history.state?.crm || 0;
   // history.go lands later; until then the state is still this screen's, so a second leave would step back again.
   let leaving = false;
-  /** A new history entry, or with `replace` one in place of the current entry, which keeps its depth. */
+  /**
+   * A new history entry, or with `replace` one in place of the current entry, which keeps its depth. The search's
+   * entry gives way to the screen opened from it, so Back from there skips the search.
+   */
   const go = (route, { replace = false } = {}) => {
-    if (route !== location.hash) replace ? history.replaceState(history.state, "", route) : history.pushState({ crm: depth() + 1 }, "", route);
+    const overSearch = !!history.state?.search;
+    // The screen under the search, asked for again: a step back off the search's entry shows it, with no second copy.
+    if (overSearch && route === location.hash) return leave(route);
+    if (overSearch || route !== location.hash) replace || overSearch ? history.replaceState(overSearch ? { crm: depth() } : history.state, "", route) : history.pushState({ crm: depth() + 1 }, "", route);
     applyRoute();
   };
+  /** The entry of the search, opened over the screen at this address. */
+  const pushSearch = () => history.pushState({ crm: depth() + 1, search: true }, "", location.hash);
   /** Leaves this screen for the one `steps` up: back through our own entries when they are there, else in place of this one. */
   const leave = (route, steps = 1) => {
     if (leaving) return;
@@ -85,7 +94,7 @@ export function createNavigation(history, location, applyRoute) {
     leaving = false;
     applyRoute();
   };
-  return { go, leave, landed };
+  return { go, leave, landed, pushSearch };
 }
 /** Where the in-app Zurück leads when there is no earlier screen of ours to go back to: the screen above. */
 export const backRoute = (ui) => ui.view === "editLead" || ui.view === "editAccount" ? routeOf({ view: "detail", leadId: ui.leadId }) : routeOf({ tab: ui.tab });
@@ -138,7 +147,7 @@ export function pickLostReason(uc, lead, reason) {
 const confirmOptOut = (lead) => confirm(`\u201E${lead.name}\u201C m\xF6chte keine Nachrichten mehr?
 
 Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`);
-export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock }) {
+export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: store2, clock }) {
   let uc = null;
   const S = () => store2.get();
   const ui = (p) => store2.ui(p);
@@ -167,10 +176,9 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
     const view = st.ui.view;
     if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
     tabsEl.hidden = !!view;
-    // The field shows the query on the search screen only, so another screen never looks filtered by it.
-    searchEl.value = !view && st.ui.tab === "suche" ? st.ui.gq : "";
     searchEl.disabled = holdsInput(st.ui);
-    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, suche: searchView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
+    drawSearch(st);
+    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     if (!view) tabsEl.innerHTML = tabBar(st, today);
     if (st.ui.quick && !view && st.ui.tab === "betriebe") setTimeout(() => root.querySelector("#qaName")?.focus(), 30);
     return true;
@@ -206,23 +214,46 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
     store2.ui(patch);
     if (render()) window.scrollTo(0, y);
   };
-  /** Shows the screen of the current address; also runs on the browser's Back and Forward. */
+  // The address whose screen shows, so a step onto or off the search's entry, which has the same address, leaves it as it is.
+  let shown = null;
+  /** Shows the screen of the current address, and the search on the search's entry; also runs on the browser's Back and Forward. */
   function applyRoute() {
+    const onSearch = !!history.state?.search;
+    if (location.hash === shown && onSearch !== S().ui.searchOpen) return setSearch(onSearch);
+    shown = location.hash;
     saveScroll();
     const next = enterRoute(S().ui, parseRoute(location.hash));
     show(next, next.view ? 0 : next.scroll[next.tab] || 0);
+    if (onSearch) setSearch(true);
   }
-  const { go, leave, landed } = createNavigation(history, location, applyRoute);
+  const { go, leave, landed, pushSearch } = createNavigation(history, location, applyRoute);
   history.scrollRestoration = "manual";
   window.addEventListener("popstate", landed);
   const goTab = (tab) => go(routeOf({ tab }));
-  const onSearch = () => !S().ui.view && S().ui.tab === "suche";
-  /** Opens the search screen; coming from another screen it starts over: with `q`, or with the recently changed leads. */
-  const showSearch = (q = "") => {
-    if (onSearch()) return;
-    ui({ gq: q, sIdx: 0 });
-    goTab("suche");
+  /** The search over the current screen, which stays as it is under it, and the field's query while it shows. */
+  function drawSearch(st = S()) {
+    // The field shows the query only while the search is open, so a screen never looks filtered by it.
+    searchEl.value = st.ui.searchOpen ? st.ui.gq : "";
+    searchBox.hidden = !st.ui.searchOpen;
+    // The screen under the search takes no focus and no keys, so Tab moves through the search and the tabs only.
+    root.inert = st.ui.searchOpen;
+    const results = searchBox.querySelector("#sres");
+    // Once open, only the results are drawn again, so the list keeps its scroll position through a sync.
+    if (st.ui.searchOpen && results) results.innerHTML = searchResultsHtml(st, clock.today());
+    else searchBox.innerHTML = st.ui.searchOpen ? searchView(st, clock.today()) : "";
+  }
+  /** Opens or closes the search; each time it opens it starts over: with `q`, or with the recently changed leads. */
+  const setSearch = (open, q = "") => {
+    ui({ searchOpen: open, gq: open ? q : "", sIdx: 0 });
+    drawSearch();
   };
+  const showSearch = (q = "") => {
+    if (S().ui.searchOpen || holdsInput(S().ui)) return;
+    setSearch(true, q);
+    pushSearch();
+  };
+  /** Closes the search by stepping back off its entry, as the browser's Back does. */
+  const closeSearch = () => leave(location.hash);
   const openSearch = (q) => {
     showSearch(q);
     searchEl.focus();
@@ -230,12 +261,8 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
   };
   // A click opens it, focus alone does not: Tab, or coming back to the window, lands on the field without meaning to search.
   searchEl.addEventListener("click", () => showSearch());
-  const refreshResults = () => {
-    const box = root.querySelector("#sres");
-    if (box) box.innerHTML = searchResultsHtml(S(), clock.today());
-  };
   function moveSelection(delta) {
-    const rows = root.querySelectorAll("#sres .srow");
+    const rows = searchBox.querySelectorAll("#sres .srow");
     if (!rows.length) return;
     const i = Math.max(0, Math.min(rows.length - 1, S().ui.sIdx + delta));
     ui({ sIdx: i });
@@ -248,13 +275,16 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
     const cmdK = (ev.key === "k" || ev.key === "K") && (ev.metaKey || ev.ctrlKey) && !ev.altKey;
     const slash = ev.key === "/" && !typing && !ev.metaKey && !ev.ctrlKey && !ev.altKey;
     if (!cmdK && !slash) return;
-    const u = S().ui;
-    if (holdsInput(u)) return;
     ev.preventDefault();
     openSearch();
   });
   const back = () => leave(backRoute(S().ui));
   const openLead = (id) => go(routeOf({ view: "detail", leadId: id }));
+  /** A lead picked in the search; it ends a call round, as leaving the round for a tab does. */
+  const openResult = (id) => {
+    ui({ calling: null });
+    openLead(id);
+  };
   const openTemplate = (id) => go(routeOf({ view: "editTemplate", templateId: id }));
   /** A page of the Papierkorb: the newest, or those deleted before `before`. */
   const loadTrash = (before = null) => run(async () => {
@@ -306,25 +336,29 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
       moveSelection(ev.key === "ArrowDown" ? 1 : -1);
     } else if (ev.key === "Enter") {
       ev.preventDefault();
-      const row = root.querySelectorAll("#sres .srow")[S().ui.sIdx];
+      const row = searchBox.querySelectorAll("#sres .srow")[S().ui.sIdx];
       if (row && searchEl.value.trim()) {
         searchEl.blur();
-        openLead(row.dataset.open);
+        openResult(row.dataset.open);
       }
     } else if (ev.key === "Escape") {
       ev.preventDefault();
       if (searchEl.value) {
         searchEl.value = "";
         ui({ gq: "", sIdx: 0 });
-        refreshResults();
-      } else searchEl.blur();
+        drawSearch();
+      } else {
+        // Shut already, as after Back or Tab into the field, Escape only leaves the field: closing steps back in history.
+        if (S().ui.searchOpen) closeSearch();
+        searchEl.blur();
+      }
     }
   });
   searchEl.addEventListener("input", () => {
+    // Typing while the search is shut, as after Back with the field still focused, opens it with what is typed.
+    if (!S().ui.searchOpen) return showSearch(searchEl.value);
     ui({ gq: searchEl.value, sIdx: 0 });
-    // Typing on another screen, as after Back with the field still focused, opens the search with what is typed.
-    if (onSearch()) refreshResults();
-    else goTab("suche");
+    drawSearch();
   });
   root.addEventListener("keydown", (ev) => {
     const t = ev.target;
@@ -405,7 +439,7 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
       ui({ meeting: null });
       render();
     },
-    /** Starts a call session at the top of the call list; Zurück or a tab ends it. */
+    /** Starts a call session at the top of the call list; Zurück, a tab or a lead picked in the search ends it. */
     callStart: () => {
       const [first] = callList(S(), clock.today());
       if (!first) return toast("Niemand zum Anrufen");
@@ -442,6 +476,7 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
     },
     qeSave: () => saveQuickEdit(),
     toSearch: () => openSearch(S().ui.q),
+    searchClose: () => closeSearch(),
     async optOut() {
       const lead = currentLead(S());
       if (!confirmOptOut(lead)) return;
@@ -528,8 +563,12 @@ export function mountApp({ root, tabsEl, searchEl, toastEl, store: store2, clock
     if (!el) return;
     const d = el.dataset;
     const st = S();
-    if (d.tab) return d.tab === st.ui.tab ? window.scrollTo(0, 0) : goTab(d.tab);
-    if (d.open) return openLead(d.open);
+    if (d.tab) {
+      if (d.tab !== st.ui.tab) return goTab(d.tab);
+      // The tab already shown, under the open search: back to its screen as it was.
+      return st.ui.searchOpen ? closeSearch() : window.scrollTo(0, 0);
+    }
+    if (d.open) return st.ui.searchOpen ? openResult(d.open) : openLead(d.open);
     if (d.tpl) return openTemplate(d.tpl);
     if (d.edit) {
       if (st.ui.editField === d.edit) return;

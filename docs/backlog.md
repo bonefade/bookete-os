@@ -74,6 +74,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
 
+- CRM 1.15.0: the search opens over the screen, which stays as it is under it; no `#/suche` address any more (owner: "the click on the search bar should not change the site but just show a overlay for the search").
 - CRM 1.14.0: the Papierkorb pages back 50 at a time (`GET /api/trash?before=`).
 - CRM 1.13.2: delete, restore and erase move a lead's activities in two fixed statements; `crm/test/d1.js` models D1's 50 queries per invocation, and an import request takes at most one chunk.
 - CRM 1.13.1: a backup import puts a trashed lead's activity in the Papierkorb and adds none to an erased lead, guarded by the lead as read (owner: "Add it to the trash").

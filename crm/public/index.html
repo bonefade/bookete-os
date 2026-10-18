@@ -222,6 +222,19 @@ label.drop>input{width:20px;min-height:20px;flex:none;margin:0;padding:0}
 mark{background:var(--mark);color:inherit;border-radius:3px;padding:0 1px}
 kbd{font:inherit;font-size:.8rem;border:1px solid var(--line);border-radius:5px;padding:0 5px;background:var(--surface)}
 @media (hover:none){.skeys{display:none}}
+/* The search opens over the screen, under the top bar, and leaves it as it is; the tabs stay in reach and close it. */
+.sbox{position:fixed;left:0;right:0;bottom:0;top:calc(env(safe-area-inset-top,0px) + var(--topbar));z-index:8}
+.sbox[hidden]{display:none}
+/* The page's scroll padding keeps a focused field clear of the top bar. The search field sits in that bar, so the same
+   padding would scroll the screen under the search: on the click into the field, which its margin cancels, and on
+   every key typed, as Chrome reveals the caret by the page's padding alone, so that is off while the search shows.
+   The page itself does not scroll then either, by a wheel or a swipe outside the results. */
+#gq{scroll-margin-top:calc(-1 * (env(safe-area-inset-top,0px) + var(--topbar) + 64px))}
+html:has(#sbox:not([hidden])){scroll-padding-top:0;overflow:hidden}
+.sback{position:absolute;inset:0;width:100%;height:100%;border:none;border-radius:0;padding:0;background:rgba(0,0,0,.3);touch-action:none}
+.spanel{position:relative;max-height:100%;overflow-y:auto;overscroll-behavior:contain;background:var(--bg);box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.shead{display:flex;align-items:baseline;gap:12px}
+.shead .note{flex:1 1 auto}
 
 </style>
 </head>
@@ -233,6 +246,7 @@ kbd{font:inherit;font-size:.8rem;border:1px solid var(--line);border-radius:5px;
 </svg><span class="wm">bookete</span><span class="sub">CRM</span></span>
 <div class="sfield" role="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg><input type="search" id="gq" placeholder="Suchen …" aria-label="Alle Betriebe durchsuchen" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></div></header>
 <div id="app"></div>
+<div class="sbox" id="sbox" hidden></div>
 <nav class="tabs" id="tabs" aria-label="Hauptnavigation"></nav>
 <div class="toast" id="toast" role="status"></div>
 <script type="module" src="/app.js"></script>

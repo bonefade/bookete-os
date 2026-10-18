@@ -139,7 +139,7 @@ export function leadsView(state, today) {
     <input type="search" id="q" placeholder="Liste filtern \u2026" value="${esc(q)}" aria-label="Liste filtern">
     <select id="sort" aria-label="Sortierung">${options([["prio", "\u2195 Fit"], ["nachfassen", "\u2195 Nachfassen"], ["status", "\u2195 Status"], ["name", "\u2195 Name"]], sort)}</select>
   </div>
-  <p class="note count">${list.length} Betriebe${list.length ? ` \xB7 ${list.filter((l) => l.email).length} mit E-Mail` : ""}${hidden ? ` \xB7 <button class="more" data-act="toSearch">${hidden} weitere Treffer au\xDFerhalb der Filter</button>` : ""}</p>
+  <p class="note count">${list.length} Betriebe${list.length ? ` \xB7 ${list.filter((l) => l.email).length} mit E-Mail` : ""}${hidden ? ` \xB7 <button class="more" data-act="toSearch"${quick ? " disabled" : ""}>${hidden} weitere Treffer au\xDFerhalb der Filter</button>` : ""}</p>
   ${loadingOr(state, list.length ? rowsOf(state, list, today) : `<div class="empty">${state.data.leads.length ? "Nichts in dieser Ansicht." : "Noch keine Betriebe."}</div>`)}
 </div>`;
 }
@@ -173,12 +173,13 @@ export function searchResultsHtml(state, today) {
   return `<p class="note count">${res.length} Treffer${res.length > SEARCH_LIMIT ? ` \xB7 die ersten ${SEARCH_LIMIT} – Suche verfeinern` : ""}</p>
   <ul class="ltable">${shown.map((r, i) => searchRow(state, r, i, tokens, today)).join("")}</ul>`;
 }
-/** The search screen: the results for the search field in the top bar (#gq in index.html). */
+/** The search over the current screen (#sbox in index.html): the results for the field in the top bar (#gq). */
 export function searchView(state, today) {
-  return `<div class="wrap wide">
-  <p class="note">Alle Betriebe, unabh\xE4ngig von Region, System, Kontakt und Status. Findet auch Notizen und den gesamten Verlauf. Umlaute egal, mehrere W\xF6rter grenzen ein.<span class="skeys"> \xB7 <kbd>↑</kbd><kbd>↓</kbd> w\xE4hlen, <kbd>Enter</kbd> \xF6ffnet \xB7 von \xFCberall: <kbd>/</kbd> oder <kbd>Strg K</kbd></span></p>
+  return `<button class="sback" data-act="searchClose" aria-label="Suche schlie\xDFen" tabindex="-1"></button>
+<div class="spanel"><div class="wrap wide">
+  <div class="shead"><p class="note">Alle Betriebe, unabh\xE4ngig von Region, System, Kontakt und Status. Findet auch Notizen und den gesamten Verlauf. Umlaute egal, mehrere W\xF6rter grenzen ein.<span class="skeys"> \xB7 <kbd>↑</kbd><kbd>↓</kbd> w\xE4hlen, <kbd>Enter</kbd> \xF6ffnet \xB7 von \xFCberall: <kbd>/</kbd> oder <kbd>Strg K</kbd></span></p><button class="link" data-act="searchClose">Schlie\xDFen</button></div>
   <div id="sres">${searchResultsHtml(state, today)}</div>
-</div>`;
+</div></div>`;
 }
 export function templatesView(state) {
   const idx = (p) => TEMPLATE_PURPOSES.findIndex(([k]) => k === p);
