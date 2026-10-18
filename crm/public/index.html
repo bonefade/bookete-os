@@ -34,7 +34,6 @@ body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Source Sans 3
 h1,h2,h3{font-family:"Bricolage Grotesque","Source Sans 3",system-ui,sans-serif;margin:0;line-height:1.15}
 a{color:var(--pine)}
 .wrap{max-width:680px;margin:0 auto;padding:16px 16px calc(96px + env(safe-area-inset-bottom,0px))}
-.wrap.sub{padding-bottom:calc(48px + env(safe-area-inset-bottom,0px))}
 button,.btn{font:inherit;cursor:pointer;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:10px 14px;min-height:44px;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 button.primary,.btn.primary{background:var(--pine);border-color:var(--pine);color:var(--bg);font-weight:600}
 button.link{border:none;background:none;color:var(--pine);padding:10px 4px;font-weight:600}
@@ -57,12 +56,14 @@ label>input,label>select,label>textarea{margin-top:4px}
 .bar h2{flex:1;font-size:1.1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
 .bar button{min-width:84px}
 
-/* bottom tabs */
+/* tabs: at the bottom on a phone, a rail on the left from tablet width (at the end) */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
 .tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:680px}
 .tab{border:none;border-radius:0;background:none;color:var(--muted);flex-direction:column;gap:0;padding:8px 4px 6px;min-height:56px;font-size:.8rem;position:relative}
 .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tab[aria-current="page"]{color:var(--pine);font-weight:600}
+/* A shut tab takes no click, on its icon and label either, whichever element a browser hands the click to. */
+.tab:disabled{pointer-events:none}
 .tab .badge{position:absolute;top:4px;left:calc(50% + 6px);background:var(--due);color:#fff;border-radius:999px;font-size:.7rem;min-width:18px;height:18px;padding:0 5px;display:flex;align-items:center;justify-content:center;font-weight:600}
 
 /* stats */
@@ -179,7 +180,6 @@ ul.ltable{list-style:none;margin:0;padding:0;border:1px solid var(--line);border
 .qe-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
 .qe-actions button{min-height:38px;padding:6px 14px}
 @media (min-width:760px){.facts.qe{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}.facts.qe .fact{border-bottom:1px solid var(--line)}}
-.tabs[hidden]{display:none!important}
 label[hidden]{display:none}
 label.drop{display:flex;align-items:center;gap:8px;margin:0}
 label.drop>input{width:20px;min-height:20px;flex:none;margin:0;padding:0}
@@ -235,6 +235,18 @@ html:has(#sbox:not([hidden])){scroll-padding-top:0;overflow:hidden}
 .spanel{position:relative;max-height:100%;overflow-y:auto;overscroll-behavior:contain;background:var(--bg);box-shadow:0 8px 24px rgba(0,0,0,.18)}
 .shead{display:flex;align-items:baseline;gap:12px}
 .shead .note{flex:1 1 auto}
+/* From tablet width the tabs are a rail on the left, under the top bar; the screens and the search move right of it.
+   The rail needs the height of all five tabs, so a phone on its side, as wide as a tablet, keeps them at the bottom. */
+@media (min-width:760px) and (min-height:480px){
+  :root{--rail:calc(88px + env(safe-area-inset-left,0px))}
+  .tabs{top:calc(env(safe-area-inset-top,0px) + var(--topbar));right:auto;width:var(--rail);border-top:none;border-right:1px solid var(--line);padding:8px 0 0 env(safe-area-inset-left,0px);align-items:flex-start}
+  .tabs .in{display:flex;flex-direction:column}
+  .tab{min-height:68px}
+  #app{margin-left:var(--rail)}
+  .sbox{left:var(--rail)}
+  .wrap{padding-bottom:calc(48px + env(safe-area-inset-bottom,0px))}
+  .toast{bottom:calc(24px + env(safe-area-inset-bottom,0px));left:calc(50% + var(--rail) / 2)}
+}
 
 </style>
 </head>

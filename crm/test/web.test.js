@@ -190,7 +190,7 @@ test("due leads are todos in their own tab, not in Heute", () => {
   assert.match(todos, /data-open="L2"/);
   assert.doesNotMatch(todos, /Später|Abgeschlossen/);
   assert.doesNotMatch(todayView(state, today), /Alt|Heutig/);
-  assert.match(tabBar(state, today), /data-tab="todos"[^]*?<span class="badge">3<\/span>/);
+  assert.match(tabBar(state, today, false), /data-tab="todos"[^]*?<span class="badge">3<\/span>/);
 });
 
 test("the forms, the lead page, the list and search name a field as FIELD_LABEL does", () => {
@@ -631,7 +631,8 @@ function fakeBrowser(hash, store, uc) {
   const toastEl = { classList: { add() {}, remove() {} } };
   // The search field in the top bar, outside the screen; focus() fires a focus handler if there is one, as a browser does.
   const field = { value: "", disabled: false, on: {}, addEventListener(type, f) { field.on[type] = f; }, focus() { field.on.focus?.(); }, select() {}, blur() {} };
-  const app = mountApp({ root, tabsEl: {}, searchEl: field, searchBox: search, toastEl, store, clock: { today: () => "2026-10-15" } });
+  const tabsEl = { innerHTML: "" };
+  const app = mountApp({ root, tabsEl, searchEl: field, searchBox: search, toastEl, store, clock: { today: () => "2026-10-15" } });
   app.connect(uc);
   const click = (dataset) => on.click({ target: { closest: () => ({ dataset }) } });
   const type = (text) => {
@@ -639,7 +640,7 @@ function fakeBrowser(hash, store, uc) {
     field.on.input();
   };
   const press = (key, mods = {}) => on.keydown({ key, target: { tagName: "BODY" }, preventDefault() {}, ...mods });
-  return { h, root, app, click, press, typed, toastEl, field, type, results, search };
+  return { h, root, app, click, press, typed, toastEl, field, type, results, search, tabsEl };
 }
 /** A drawn form's fields as form.elements holds them, by position and by name, with what the test typed over them. */
 function formElements(html, typed = {}) {
@@ -730,10 +731,18 @@ test("the app's buttons and the browser's Back and Forward move through the addr
   }
 });
 
-test("five tabs at the bottom, and the one search field in the top bar", () => {
-  assert.deepEqual([...tabBar(initialState(), "2026-10-15").matchAll(/data-tab="(\w+)"/g)].map(([, k]) => k), ["heute", "todos", "betriebe", "vorlagen", "mehr"]);
+test("five tabs, at the bottom on a phone and on the left from tablet width, and the one search field in the top bar", () => {
+  assert.deepEqual([...tabBar(initialState(), "2026-10-15", false).matchAll(/data-tab="(\w+)"/g)].map(([, k]) => k), ["heute", "todos", "betriebe", "vorlagen", "mehr"]);
+  assert.doesNotMatch(tabBar(initialState(), "2026-10-15", false), /disabled/);
+  assert.equal(tabBar(initialState(), "2026-10-15", true).match(/ disabled>/g).length, TABS.length);
   const page = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   assert.match(page, new RegExp(`\\.tabs \\.in\\{[^}]*repeat\\(${TABS.length},1fr\\)`));
+  // From tablet width, if tall enough for the five tabs, a rail on the left, under the top bar, with the screens, the
+  // search and the toast right of it; never hidden. A shut tab takes no click on its icon or label.
+  const wide = page.match(/@media \(min-width:760px\) and \(min-height:480px\)\{\n  :root\{--rail:[^]*?\n\}/)?.[0] ?? "";
+  for (const rule of [/\.tabs\{top:calc\(env\(safe-area-inset-top,0px\) \+ var\(--topbar\)\);right:auto;width:var\(--rail\)/, /\.tabs \.in\{display:flex;flex-direction:column\}/, /#app\{margin-left:var\(--rail\)\}/, /\.sbox\{left:var\(--rail\)\}/, /\.toast\{[^}]*left:calc\(50% \+ var\(--rail\) \/ 2\)\}/]) assert.match(wide, rule);
+  assert.match(page, /\.tab:disabled\{pointer-events:none\}/);
+  assert.doesNotMatch(page, /\.tabs\[hidden\]/);
   assert.match(page, /<header class="brandbar">[^]*<input type="search" id="gq"[^]*<\/header>/);
   // The search's own box, shut until the field opens it.
   assert.match(page, /<div class="sbox" id="sbox" hidden><\/div>/);
@@ -751,6 +760,39 @@ test("five tabs at the bottom, and the one search field in the top bar", () => {
   assert.deepEqual([placeholder(page, "gq"), placeholder(leadsView(initialState(), "2026-10-15"), "q")], ["Suchen …", "Liste filtern …"]);
 });
 
+test("the tabs show on every screen, shut while a form holds input; a lead page's tab leads to its screen", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const store = createStore(initialState());
+    store.data("leads", [{ ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert" }]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const { h, click, tabsEl } = fakeBrowser("#/betriebe", store, {});
+    const tabs = () => [(tabsEl.innerHTML.match(/data-tab=/g) || []).length, (tabsEl.innerHTML.match(/ disabled>/g) || []).length, tabsEl.innerHTML.match(/data-tab="(\w+)" aria-current/)?.[1]];
+    assert.deepEqual(tabs(), [5, 0, "betriebe"]);
+    await click({ open: "L1" });
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1", 5, 0, "betriebe"]);
+    // A message being written holds input as a form does.
+    await click({ act: "composeOut" });
+    assert.deepEqual(tabs(), [5, 5, "betriebe"]);
+    await click({ act: "composeCancel" });
+    assert.deepEqual(tabs(), [5, 0, "betriebe"]);
+    await click({ act: "edit" });
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1/bearbeiten", 5, 5, "betriebe"]);
+    h.history.go(-1);
+    h.land();
+    // The tab the lead page was opened from opens its screen, not the top of the lead page.
+    await click({ tab: "betriebe" });
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betriebe", 5, 0, "betriebe"]);
+    await click({ act: "quick" });
+    assert.deepEqual(tabs(), [5, 5, "betriebe"]);
+    await click({ act: "quickCancel" });
+    await click({ tab: "vorlagen" });
+    await click({ act: "tplNew" });
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/vorlage/neu", 5, 5, "vorlagen"]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
 test("the top bar's field opens the search over any screen, which stays as it is, first with the recently changed leads", async () => {
   const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
   const lead = (id, name, updatedAt) => ({ ...LEAD_FIELDS, id, name, status: "kontaktiert", updatedAt });

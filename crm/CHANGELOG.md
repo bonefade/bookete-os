@@ -2,6 +2,12 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.16.0 (2026-10-18)
+
+### Changed
+- **Tabs on every screen:** Heute, Todos, Betriebe, Vorlagen and Mehr now stay in reach on a business's page and in every form too. From tablet width they sit on the left side, under the top bar; on a phone, upright or on its side, they stay at the bottom. On a business's page, the tab it was opened from leads back to that tab's screen.
+- While a form holds input (an edit form, a template, "+ Neu", the ICP form, a message or a call outcome being entered), the tabs are greyed out like the search field, so nothing typed is lost by a tab.
+
 ## 1.15.0 (2026-10-18)
 
 ### Changed

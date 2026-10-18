@@ -20,9 +20,10 @@ export const ICONS = {
   mehr: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>'
 };
 export const TABS = [["heute", "Heute"], ["todos", "Todos"], ["betriebe", "Betriebe"], ["vorlagen", "Vorlagen"], ["mehr", "Mehr"]];
-export function tabBar(state, today) {
+/** The tabs, shut while `locked`: a form holds input a tab would drop. */
+export function tabBar(state, today, locked) {
   const due = state.data.leads.filter((l) => isDue(l, today)).length;
-  return `<div class="in">${TABS.map(([k, v]) => `<button class="tab" data-tab="${k}" ${state.ui.tab === k ? 'aria-current="page"' : ""}>${ICONS[k]}<span>${v}</span>${k === "todos" && due ? `<span class="badge">${due}</span>` : ""}</button>`).join("")}</div>`;
+  return `<div class="in">${TABS.map(([k, v]) => `<button class="tab" data-tab="${k}" ${state.ui.tab === k ? 'aria-current="page"' : ""}${locked ? " disabled" : ""}>${ICONS[k]}<span>${v}</span>${k === "todos" && due ? `<span class="badge">${due}</span>` : ""}</button>`).join("")}</div>`;
 }
 export function leadRow(state, l, today) {
   const acts = actsOf(state, l.id);
@@ -195,7 +196,7 @@ export function templateEditView(state) {
   if (id && !isReady(state)) return loadingOr(state, "");
   const t = state.data.templates.find((x) => x.id === id) || { name: "", purpose: "followup1", body: "" };
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>${id ? "Vorlage" : "Neue Vorlage"}</h2><button class="link" data-act="tplSave">Sichern</button></div>
-<form class="wrap sub" id="tform">
+<form class="wrap" id="tform">
   <label>Name<input name="name" value="${esc(t.name)}"></label>
   <label>Wof\xFCr<select name="purpose">${options(TEMPLATE_PURPOSES, t.purpose)}</select></label>
   <label>Text<textarea name="body" rows="12">${esc(t.body)}</textarea></label>
@@ -306,7 +307,7 @@ export function detailView(state, today) {
   </div>`;
   }
   return `<div class="bar"><button class="link" data-act="back">\u2039 Zur\xFCck</button><h2>${esc(l.name)}</h2><button class="link" data-act="edit">Bearbeiten</button></div>
-<div class="wrap sub">
+<div class="wrap">
   <div class="card hero">
     <div class="line"><span class="pill${lost ? " lost" : ""}">${esc(STAGE_LABEL[l.status])}${lost ? " \xB7 " + esc(l.lostReason) : ""}</span><span class="touch">${esc(touchTxt)}</span></div>
     <p class="note" style="margin:8px 0 0">${l.contactedAt ? "Kontaktiert seit " + esc(fmtDate(l.contactedAt)) : "Nie kontaktiert"}</p>
@@ -417,7 +418,7 @@ export function accountEditView(state) {
     <div class="two">${textField(`contacts.${i}.email`, c.email, "E-Mail", "email")}${textField(`contacts.${i}.phone`, c.phone, "Telefon", "tel")}</div>
     ${note(`contacts.${i}.note`, c.note)}${drop(`contacts.${i}`, c.id)}</div>`).join("");
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>Kundenakte</h2><button class="link" data-act="accountSave">Sichern</button></div>
-<form class="wrap sub" id="aform"><input type="hidden" name="before" value="${esc(JSON.stringify(a))}">
+<form class="wrap" id="aform"><input type="hidden" name="before" value="${esc(JSON.stringify(a))}">
   <p class="note">${esc(l.name)}</p>
   <div class="sec"><h3>Leistungen</h3>${services}</div>
   <div class="sec"><h3>Systeme</h3>${systems}</div>
@@ -430,7 +431,7 @@ export function leadEditView(state) {
   const d = l || { status: "neu", fit: 2, currentTool: "unbekannt", type: "Restaurant" };
   const f = (n, ph = "", type = "text") => textField(n, d[n], FIELD_LABEL[n], type, ph);
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>${l ? "Bearbeiten" : "Neuer Betrieb"}</h2><button class="link" data-act="saveLead">Sichern</button></div>
-<form class="wrap sub" id="form">
+<form class="wrap" id="form">
   ${textField("name", d.name, FIELD_LABEL.name + " *")}
   <div class="two">${f("city")}<label>${FIELD_LABEL.type}<select name="type">${options(BUSINESS_TYPES, d.type)}</select></label></div>
   <label>${FIELD_LABEL.region}<select name="region">${options([["", "automatisch aus Ort" + (d.city ? " (" + regionOf(d) + ")" : "")], ...REGIONS], d.region || "")}</select></label>

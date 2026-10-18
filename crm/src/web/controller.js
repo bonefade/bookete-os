@@ -175,11 +175,11 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     const today = clock.today();
     const view = st.ui.view;
     if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
-    tabsEl.hidden = !!view;
     searchEl.disabled = holdsInput(st.ui);
     drawSearch(st);
     root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
-    if (!view) tabsEl.innerHTML = tabBar(st, today);
+    // The tabs show on every screen; while a form holds input they are shut, as the search field is, so nothing typed is lost.
+    tabsEl.innerHTML = tabBar(st, today, holdsInput(st.ui));
     if (st.ui.quick && !view && st.ui.tab === "betriebe") setTimeout(() => root.querySelector("#qaName")?.focus(), 30);
     return true;
   }
@@ -564,8 +564,9 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     const d = el.dataset;
     const st = S();
     if (d.tab) {
-      if (d.tab !== st.ui.tab) return goTab(d.tab);
-      // The tab already shown, under the open search: back to its screen as it was.
+      // Another tab, or the tab a lead page or template was opened from: its screen.
+      if (d.tab !== st.ui.tab || st.ui.view) return goTab(d.tab);
+      // The screen already shown: under the open search, back to it as it was; else to its top.
       return st.ui.searchOpen ? closeSearch() : window.scrollTo(0, 0);
     }
     if (d.open) return st.ui.searchOpen ? openResult(d.open) : openLead(d.open);

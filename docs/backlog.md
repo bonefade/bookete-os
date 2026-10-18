@@ -42,7 +42,7 @@ or overwriting data by mistake, not about outside access.
 - Migration safety (principle 5): no migration linter exists for D1/SQLite here (unenforced — needs tooling). Until then, every migration gets `/second-review`.
 - Rule gap: an agent-facing write that replaces a stored list takes a base or merges by id. `update_account` has a test for it (`crm/test/account.test.js`); a new tool gets none by itself (unenforced; found in the 1.6.0 review).
 - CRM: the Kundenakte's free-text fields (`access`, notes, a system's `what`) may still hold a password; nothing detects one, only the form and the MCP description say not to (unenforced; found in the 1.6.0 review).
-- Rule gap: behaviour only a browser shows (history, scroll, focus) has no committed check; 1.5.0 was checked with a local Playwright script (unenforced; found in the 1.5.0 review).
+- Rule gap: behaviour only a browser shows (history, scroll, focus, a layout at small heights such as a phone on its side) has no committed check; 1.5.0, 1.15.0 and 1.16.0 were checked with local Playwright scripts (unenforced; found in the 1.5.0 and 1.16.0 reviews).
 - Rule gap: a test named for a regression is checked against that regression by mutation before merge: break the code that way, see the test go red, revert. 1.5.0's navigation test first stayed green under both mutations it was named for (unenforced; found in the 1.5.0 review).
 - Rule gap: a rule derived from history (activities) must either be read with that history by a read-time upgrade or recomputed from it on write; 1.4.0's first-contact date missed this once (found in the 1.4.0 review). Its test went with the read-time upgrade in 1.9.2; the next read-time upgrade needs one again (unenforced).
 - Rule gap: a comment in an applied migration may be edited when the code or tests it names change (wrangler tracks migrations by file name, so nothing re-runs); 0003's header was edited so in 1.9.2. No rule says so (unenforced; found in the 1.9.2 review).
@@ -53,7 +53,8 @@ or overwriting data by mistake, not about outside access.
 - CRM: when a lead's own opt-out arrives by sync while its compose sheet is open, the hint names the lead itself as holding "dieselbe Adresse" (`addressOptOutText`, which also shows the opt-out date as a raw ISO date).
 - CRM: no test pins the closed-address compose sheet for a Kunde with its own opt-out and Gmail connected ("Text kopieren" and "Abbrechen", `crm/test/web.test.js`).
 - CRM: a lead created with the reason "Keine Kontaktaufnahme gewünscht" counts as having replied. Matters once scraped leads are imported.
-- CRM: on Betriebe, "N weitere Treffer außerhalb der Filter" and the bottom tabs drop what was typed into + Neu or the ICP form.
+- CRM: a sync with changes, arriving while the focus is outside their fields, redraws the + Neu and ICP forms and drops what was typed (`safeRender`, `crm/src/web/controller.js`; found in the 1.16.0 review).
+- CRM: a business's page opened by a link or a reload marks Heute as its tab: `parseRoute` gives a lead no tab, as it gives a template `vorlagen` (found in the 1.16.0 review).
 - CRM: top-bar search: at 320px the placeholder "Suchen …" is cut before its "…", and the keyboard selection in the results can scroll under the bottom bar.
 - CRM: one meaning, two labels: "Betrieb" and "Name", "Nachfassen" and "Nachfassen am", "Fit" and "ICP-Fit", "Kontaktiert seit" and "Erstkontakt" (`FIELD_LABEL`, `crm/src/domain/constants.js`).
 - CRM: the Papierkorb asks for 50 and offers older ones when 50 come back, so exactly 50 leads show an empty next page; fetch one more than it shows (`TRASH_SHOWN`). MCP `search_leads` pages by offset, so a lead added between two pages can push another one past the page break.
@@ -74,6 +75,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
 
+- CRM 1.16.0: the tabs show on every screen, on the left from tablet width, and are shut while a form holds input (owner: "move the tab bar to the left side and keep it visible for all screens and pages"; on a phone they stay at the bottom, owner's choice).
 - CRM 1.15.0: the search opens over the screen, which stays as it is under it; no `#/suche` address any more (owner: "the click on the search bar should not change the site but just show a overlay for the search").
 - CRM 1.14.0: the Papierkorb pages back 50 at a time (`GET /api/trash?before=`).
 - CRM 1.13.2: delete, restore and erase move a lead's activities in two fixed statements; `crm/test/d1.js` models D1's 50 queries per invocation, and an import request takes at most one chunk.
