@@ -5,8 +5,9 @@ const LOGIN_COOKIE = "__Host-crm-login";
 // Where the OAuth library remembers approved agents (its default cookie prefix, "__Host-oauth-").
 const APPROVALS_COOKIE = "__Host-oauth-approvals";
 const SESSION_DAYS = 30;
-// gmail.compose covers both sending and drafts.
-const SCOPES = "openid email profile https://www.googleapis.com/auth/gmail.compose";
+// gmail.compose covers both sending and drafts; gmail.readonly lets the sync log replies and mail written in Gmail.
+const GMAIL_READ = "https://www.googleapis.com/auth/gmail.readonly";
+const SCOPES = "openid email profile https://www.googleapis.com/auth/gmail.compose " + GMAIL_READ;
 
 const cookie = (name, value, maxAge) => `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
 const readCookie = (request, name) => request.headers.get("Cookie")?.match(new RegExp(`(?:^|; )${name}=([^;]*)`))?.[1] ?? null;
@@ -26,9 +27,12 @@ export function safeNext(next, base) {
  */
 export async function allowedUser(env, config, email) {
   if (!email || !config.ALLOWED_EMAILS.includes(email)) return null;
-  const row = await env.DB.prepare("SELECT email, name, refresh_token FROM users WHERE email = ?").bind(email).first();
-  return row && { email: row.email, name: row.name, refreshToken: row.refresh_token };
+  const row = await env.DB.prepare("SELECT email, name, refresh_token, scopes FROM users WHERE email = ?").bind(email).first();
+  return row && { email: row.email, name: row.name, refreshToken: row.refresh_token, scopes: (row.scopes || "").split(" ").filter(Boolean) };
 }
+
+/** Whether the stored Gmail grant may read the mailbox: a sign-in from before 1.17.0 granted only gmail.compose. */
+export const canReadGmail = (user) => !!user.refreshToken && user.scopes.includes(GMAIL_READ);
 
 /** The user behind the session cookie, or null. */
 export async function sessionUser(request, env, config) {
@@ -89,11 +93,13 @@ export async function finishLogin(request, env, config) {
   if (!profile.email_verified || !config.ALLOWED_EMAILS.includes(email)) return new Response(`${email || "Dieses Konto"} hat keinen Zugang zum CRM.`, { status: 403 });
 
   const sealed = tokens.refresh_token ? await encrypt(config.TOKEN_KEY, tokens.refresh_token) : null;
+  // The scopes belong to the refresh token they came with (Google's consent screen lets the user untick one); without a new token the stored pair stays.
   const session = randomToken();
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO users (email, name, refresh_token, updated_at) VALUES (?, ?, ?, ?)
-      ON CONFLICT (email) DO UPDATE SET name = excluded.name, refresh_token = COALESCE(excluded.refresh_token, users.refresh_token), updated_at = excluded.updated_at`)
-      .bind(email, profile.name || "", sealed, new Date().toISOString()),
+    env.DB.prepare(`INSERT INTO users (email, name, refresh_token, scopes, updated_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (email) DO UPDATE SET name = excluded.name, refresh_token = COALESCE(excluded.refresh_token, users.refresh_token),
+        scopes = CASE WHEN excluded.refresh_token IS NULL THEN users.scopes ELSE excluded.scopes END, updated_at = excluded.updated_at`)
+      .bind(email, profile.name || "", sealed, sealed && String(tokens.scope || ""), new Date().toISOString()),
     env.DB.prepare("INSERT INTO sessions (token_hash, email, expires_at) VALUES (?, ?, ?)").bind(await sha256(session), email, Date.now() + SESSION_DAYS * 864e5),
     env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(Date.now()),
   ]);

@@ -12,7 +12,7 @@ _Last groomed: 2026-10-18_
 
 ## Now (in flight)
 
-Nothing in flight. Next up: tasks as their own records (P1).
+Nothing in flight.
 
 ## P0
 
@@ -23,8 +23,6 @@ or overwriting data by mistake, not about outside access.
 ## P1
 
 - CRM: open and click tracking like HubSpot (owner, 2026-10-17): owner's decision, not built. A tracking pixel or rewritten links read the recipient's device without consent (§165 (3) TKG 2021, Art. 5 (3) ePrivacy, GDPR). "Detect replies" below tells us who answered without that.
-- CRM: tasks as their own records (due date, optional time, done), replacing the overloaded `nextStep` and the single `followUp`. Owner decided 2026-10-16: one owner per lead, so a lead gets an `owner` and Todos shows "mine" first.
-- CRM: detect replies. A cron reads the Gmail threads of sent mails and logs incoming replies, so a reply is logged and due on its own. Needs the `gmail.readonly` scope.
 - Scraper → CRM: import scraped leads (CSV or MCP `create_lead`), skipping businesses already in the CRM. Needs duplicate detection first.
 - Legal check before scaling email outreach: §107 TKG generally requires prior consent for marketing email, B2B included.
 - CRM: weekly automatic export of the database to R2 (needs a bucket), so a copy exists outside D1 and its 7-day Time Travel window.
@@ -32,13 +30,9 @@ or overwriting data by mistake, not about outside access.
 ## P2
 
 - Move the repo to stage `live` (`profiles/ai-factory/patterns/deploy-safety.md` §0): a `staging` branch, a staging Worker with its own D1, and branch protection. Owner decided 2026-10-16 to skip it for now; revisit when a third person or a second write path joins.
-- CRM: trash retention. Deleted leads stay in the Papierkorb until someone erases them; decide whether they should be erased on their own after a set time.
-- CRM: a check of the store against real D1 in CI. The unit tests run on node:sqlite; the write guard, the history triggers and the purge were checked once by hand against local D1 (workerd) on 2026-10-16. Migration 0003 was run on local D1 by the 1.4.1 reviewer on 2026-10-17: rows equal to node:sqlite's, and the whole file rolled back when the self-check failed; its today fallback for undatable rows was checked there the same day.
+- CRM: a check of the store against real D1 in CI. Since 1.17.0 an advisory CI job applies the migrations to local D1 and runs a smoke query; the store's tests still run on node:sqlite only. the write guard, the history triggers and the purge were checked once by hand against local D1 (workerd) on 2026-10-16. Migration 0003 was run on local D1 by the 1.4.1 reviewer on 2026-10-17: rows equal to node:sqlite's, and the whole file rolled back when the self-check failed; its today fallback for undatable rows was checked there the same day.
 - CRM: a pipeline board, one column per status, with counts.
 - Rule gap: a migration that removes what the running Worker still writes (a contract step) reaches production only after the Worker that no longer writes it is live. The deploy applies migrations before the new Worker, and nothing stops both steps from reaching `main` in one push; 1.4.0 and 1.4.1 were pushed apart by hand (unenforced).
-- CRM: undo a wrongly tapped call outcome. Today the status and follow-up are set back by hand; the call stays in the Verlauf.
-- CRM: a calling-time hint on the call list (best 14:30–17:00, not Monday or Tuesday).
-- CRM: the appointment answer (Kunde, Kein Abschluss, Neuer Termin) is web only; agents use `change_status` and `set_follow_up`. Add an MCP tool if agents need it.
 - Migration safety (principle 5): no migration linter exists for D1/SQLite here (unenforced — needs tooling). Until then, every migration gets `/second-review`.
 - Rule gap: an agent-facing write that replaces a stored list takes a base or merges by id. `update_account` has a test for it (`crm/test/account.test.js`); a new tool gets none by itself (unenforced; found in the 1.6.0 review).
 - CRM: the Kundenakte's free-text fields (`access`, notes, a system's `what`) may still hold a password; nothing detects one, only the form and the MCP description say not to (unenforced; found in the 1.6.0 review).
@@ -49,9 +43,13 @@ or overwriting data by mistake, not about outside access.
 - Rule gap: a migration that rewrites stored records chooses its rows by the stored format version (`schemaVersion`), not by a value the old and new formats share (unenforced; found in the 1.4 plan review).
 
 - CRM: without Gmail, a lead whose address is closed only by a holder in the Papierkorb still gets mail links: the browser holds no trashed leads. The mail goes out, and logging it is refused. Documented in `crm/README.md` (found in the 1.11.0 review).
-- CRM: a closed address still counts as an address outside the send path: MCP `search_leads` reports `hasEmail`, and the Betriebe list counts and ranks the lead "mit E-Mail" (`withMail`, `crm/src/web/views.js`).
 - CRM: a lead created with the reason "Keine Kontaktaufnahme gewünscht" counts as having replied. Matters once scraped leads are imported.
 - CRM: one meaning, two labels: "Betrieb" and "Name", "Nachfassen" and "Nachfassen am", "Fit" and "ICP-Fit", "Kontaktiert seit" and "Erstkontakt" (`FIELD_LABEL`, `crm/src/domain/constants.js`).
+- Rulebook (owner's call, from the 1.17.0 review): `.claude/rules/project.md` "Access" does not name the Gmail cron (`crm/src/server/sync.js`), which writes as each user without a session, and "History rows come from triggers ... no write path can skip them" does not say that `undoCall` and `purgeLead` delete history rows; `CLAUDE.md`'s access-boundary list for `/second-review` has no `sync.js`.
+- Rule gap: a sync or import that writes into records held before it shipped gets a test against such records, and never undoes what a person set after the event it records (unenforced; found in the 1.17.0 reviews, where a mail found late would have moved planned follow-ups and reopened closed businesses).
+- Rule gap: one Gmail message is on at most one activity (unenforced: only `recordMail` holds it, by `sameMail`, with no constraint in D1; found in the 1.17.0 review).
+- Rule gap: a change to a JSON shape the deployed web bundle reads keeps a page from before it working, or the CHANGELOG says it does not (unenforced; found in the 1.16.4 review).
+- CRM: an answer to a mail that came into the other user's mailbox starts a new thread in the sender's Gmail, as each mailbox has its own threads; the feed shows it as a thread of its own.
 - CRM: MCP `search_leads` pages by offset, so a lead added between two pages can push another one past the page break.
 - CRM: `searchLeads` (`crm/src/domain/search.js`) runs on every keystroke over all leads; its cost at a few thousand leads is unmeasured.
 - CRM: a backup import batch uses 49 of the 50 queries D1 allows per Worker invocation on the Free plan; how D1 counts statements in one `batch` is unverified, and `crm/test/d1.js` does not model the cap (unenforced).
@@ -71,6 +69,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
 
+- CRM 1.17.0: the lead page redesign the owner approved on the design canvas (one feed, one composer, status from outcomes, one next-step line) and Heute as one queue; Gmail replies and threads from both mailboxes every 5 minutes (`gmail.readonly`, migration 0004, `crm/src/server/sync.js`); answers in their thread; undo of a call (`undoCall`); MCP `meeting_outcome`; a closed address no longer counts as "mit E-Mail". Replaces "tasks as their own records" (owner's pick Q3) and "detect replies". Papierkorb retention decided: kept until erased.
 - CRM 1.16.5: the closed-address hint shows a German date, and on a lead whose own opt-out arrives while the sheet is open it no longer names the lead as holding "dieselbe Adresse"; a test pins that sheet for a Kunde with Gmail connected (`addressOptOutText`, `crm/src/domain/lead.js`).
 - CRM 1.16.4: the Papierkorb reads one more than a page and offers older ones only when they exist (`trash`, `crm/src/server/store.js`).
 - CRM 1.16.3: the search over the screen ends above the bottom tabs, so a result picked by key stays in view; at 320px the top bar drops "CRM" so the whole placeholder shows (`.sbox`, `--tabbar`, `crm/public/index.html`).

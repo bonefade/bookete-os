@@ -7,8 +7,8 @@
 # never disagree about what a check means (principle 6). The gates read the
 # working tree, not the staged snapshot: a partly staged file is checked as it
 # stands on disk, so a green hook is a strong signal, not proof.
-# # The same four checks as CI's test job, in both directions. Only the deploy job
-# runs in CI alone.
+# The same four checks as CI's test job, in both directions. Only the deploy job
+# and the advisory migrations job (local D1) run in CI alone.
 #
 # THE DOCS-ONLY FAST PATH. A commit whose every staged path matches
 # DOCS_ONLY_PATTERNS skips the gates and runs DOCS_FORMAT_CHECK on the staged

@@ -3,7 +3,11 @@ import { optOutPatch } from './lead.js';
 import { ValidationError } from './errors.js';
 import { addDays, isDate, dayLabel } from './dates.js';
 
-export function newActivityRecord(input, { id, now, today }) {
+/**
+ * `mail` is the Gmail message an E-Mail activity is (contract with the web: gmailId, threadId, mailbox, subject, from,
+ * to; and messageId, its Message-ID header, which an answer in its thread refers to). Only the server passes it, for a mail it sent or the sync found; nothing a client sends can set it.
+ */
+export function newActivityRecord(input, { id, now, today, mail = null }) {
   const text = String(input.text ?? "").trim();
   if (!input.leadId) throw new ValidationError("leadId", "Lead fehlt");
   if (!text) throw new ValidationError("text", "Bitte Text eingeben");
@@ -21,9 +25,28 @@ export function newActivityRecord(input, { id, now, today }) {
     templateId: input.templateId || null,
     outcome,
     reason,
-    createdAt: now
+    createdAt: now,
+    ...(mail && { mail: { gmailId: mail.gmailId, threadId: mail.threadId, mailbox: mail.mailbox, subject: mail.subject, from: mail.from, to: mail.to, messageId: mail.messageId || "" } })
   };
 }
+/**
+ * The id of the activity a Gmail message is logged as: the same for sendEmail and the sync, so a mail is logged once.
+ * Per mailbox, since each has its own message ids.
+ */
+export async function mailActivityId(mailbox, gmailId) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(mailbox + ":" + gmailId)));
+  return "gm_" + [...digest].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 24);
+}
+/**
+ * Whether `a`, logged on the lead, is the Gmail message `activity` holds found again: the same message (an entry that
+ * took it), the same mail in the other mailbox (its Message-ID), or an E-Mail entered without Gmail that day and that
+ * way. Every mail sent before 1.17.0 was logged so, and an answer entered by hand is too. An answer is entered after it
+ * came, so a later one is not it; one of ours may be entered before it went ("Als gesendet eintragen", then sent from
+ * Gmail). Such an entry takes the first mail found for it (recordMail), so it stands for one mail, never for more.
+ */
+export const sameMail = (a, activity) => a.channel === "E-Mail" && (a.mail
+  ? a.mail.mailbox === activity.mail.mailbox && a.mail.gmailId === activity.mail.gmailId || !!activity.mail.messageId && a.mail.messageId === activity.mail.messageId
+  : a.direction === activity.direction && a.date === activity.date && (a.direction === "out" || activity.createdAt <= a.createdAt));
 /** A contact is logged once it happened: a date after today would give a first contact that has not been. */
 export function assertHappened(activity, today) {
   if (activity.date > today) throw new ValidationError("date", "Das Datum liegt in der Zukunft");
@@ -51,9 +74,12 @@ export function assertMayContact(lead, direction) {
 /**
  * What logging an activity changes on the lead. Any contact, either way, dates the first contact and moves
  * neu to kontaktiert; it reopens a disqualified lead (they called back, or we work them again), but an opt-out
- * stays closed: their message is logged and nothing else changes.
+ * stays closed: their message is logged and nothing else changes. Only the newest contact plans what comes next: one
+ * that came before another (logged later but dated earlier, or a mail the sync finds late) leaves the plan the later
+ * one made. A message from them is to be answered today; the next step "Antworten" it sets ends with the next
+ * outgoing contact.
  */
-export function planAfterActivity(lead, acts, activity, policy = SEQUENCE_POLICY) {
+export function planAfterActivity(lead, acts, activity, today, policy = SEQUENCE_POLICY) {
   const all = [...acts, activity];
   const patch = {};
   // A contact logged later but dated earlier moves the first contact back. An opted-out lead's contact dates it too.
@@ -62,17 +88,20 @@ export function planAfterActivity(lead, acts, activity, policy = SEQUENCE_POLICY
   if (lead.optOutAt) return patch;
   const status = lead.status === "neu" || lead.status === "disqualifiziert" ? "kontaktiert" : lead.status;
   if (status !== lead.status) patch.status = status;
+  if (!acts.every((a) => byTimeline(a, activity) < 0)) return patch;
   if (activity.direction === "out") {
     if (status === "kontaktiert" && !hasReply(all)) {
       const n = countTouches(all);
       const idx = Math.min(n - 1, policy.cadence.length - 1);
       patch.followUp = addDays(activity.date, policy.cadence[idx]);
       patch.nextStep = "";
-    } else if (!lead.followUp || lead.followUp <= activity.date) {
-      patch.followUp = addDays(activity.date, policy.defaultFollowUpDays);
+    } else {
+      if (!lead.followUp || lead.followUp <= activity.date) patch.followUp = addDays(activity.date, policy.defaultFollowUpDays);
+      // The answer the reply rule asked for went out.
+      if (lead.nextStep === "Antworten") patch.nextStep = "";
     }
   } else {
-    patch.followUp = activity.date;
+    patch.followUp = today;
     patch.nextStep = "Antworten";
   }
   return patch;
@@ -120,7 +149,8 @@ export function meetingPatch(lead, { result, reason, date, time }, today) {
  * reason. A call never moves a customer out of Kunde.
  */
 export function planAfterCall(lead, acts, activity, { date, time }, policy = SEQUENCE_POLICY) {
-  const patch = planAfterActivity(lead, acts, activity, policy);
+  // A call is logged on its day (callActivity), so that is today.
+  const patch = planAfterActivity(lead, acts, activity, activity.date, policy);
   const at = atTime(time);
   const kunde = lead.status === "kunde";
   switch (activity.outcome) {

@@ -37,10 +37,6 @@ export function channelLink(lead, channel, text = "") {
       return "";
   }
 }
-export const instagramProfile = (lead) => {
-  const ig = (lead.instagram || "").replace(/^@/, "").trim();
-  return ig ? `https://www.instagram.com/${ig}/` : "";
-};
 export function saveFile(filename, text) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));

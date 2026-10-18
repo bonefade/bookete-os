@@ -30,8 +30,8 @@ const ActivityInput = z.object({ direction: z.enum(["out", "in"]), channel: z.st
 const time = z.string().regex(/^\d{2}:\d{2}$/);
 const SpokenReason = z.enum(SPOKEN_REASONS);
 export const CallInput = z.object({ outcome: z.enum(CALL_OUTCOMES.map(([k]) => k)), date: date.optional(), time: time.optional(), reason: SpokenReason.optional(), note: z.string().max(2000).optional() }).strict();
-const MeetingInput = z.object({ id, result: z.enum(["kunde", "kein-abschluss", "neuer-termin"]), reason: SpokenReason.optional(), date: date.optional(), time: time.optional() }).strict();
-const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish() });
+export const MeetingInput = z.object({ id, result: z.enum(["kunde", "kein-abschluss", "neuer-termin"]), reason: SpokenReason.optional(), date: date.optional(), time: time.optional() }).strict();
+const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish(), replyTo: id.nullish() });
 
 /** Web-app commands: name → input schema and the use case it runs. */
 export const COMMANDS = {
@@ -45,10 +45,12 @@ export const COMMANDS = {
   setLostReason: [z.object({ id, reason: Reason }), (uc, a) => uc.setLostReason(a.id, a.reason)],
   saveAccount: [z.object({ id, account: AccountInput, before: AccountInput }), (uc, a) => uc.saveAccount(a.id, a.account, a.before)],
   logCall: [CallInput.extend({ id }), (uc, { id: leadId, ...call }) => uc.logCall(leadId, call)],
+  undoCall: [z.object({ activityId: id }), (uc, a) => uc.undoCall(a.activityId)],
   meetingOutcome: [MeetingInput, (uc, { id: leadId, ...meeting }) => uc.meetingOutcome(leadId, meeting)],
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],
   setFollowUp: [z.object({ id, date: z.union([date, z.literal("")]).nullable() }), (uc, a) => uc.setFollowUp(a.id, a.date)],
   setNextStep: [z.object({ id, text: z.string().max(500) }), (uc, a) => uc.setNextStep(a.id, a.text)],
+  addNote: [z.object({ id, text: text.min(1) }), (uc, a) => uc.addNote(a.id, a.text)],
   logActivity: [z.object({ id, input: ActivityInput }), (uc, a) => uc.logActivity(a.id, a.input)],
   optOut: [z.object({ id, note: z.string().max(1000).optional() }), (uc, a) => uc.optOut(a.id, a.note)],
   clearOptOut: [z.object({ id }), (uc, a) => uc.clearOptOut(a.id)],

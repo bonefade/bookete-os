@@ -1,19 +1,20 @@
 import { STAGE_LABEL, OPT_OUT_REASON } from '../domain/constants.js';
 import { ValidationError } from '../domain/errors.js';
-import { actsOf, currentLead, icpOf, isReady, callList } from './selectors.js';
+import { actsOf, currentLead, icpOf, isReady, roundList } from './selectors.js';
 import { addDays } from '../domain/dates.js';
 import { copyText, channelLink, mailSubject, saveFile } from './platform.js';
 import { createBackup } from '../domain/backup.js';
 import { fillTemplate, defaultTemplate, DEFAULT_SCRIPT } from '../domain/template.js';
 import { lastChannel } from '../domain/activity.js';
 import { relDate } from './format.js';
-import { TABS, tabBar, todayView, todosView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView } from './views.js';
+import { TABS, tabBar, todayView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeOut", "composeIn", "composeCancel", "copyOpen", "lostPick", "lostCancel", "callCancel", "meetingCancel", "callStart", "callNext", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostPick", "lostCancel", "statusMenu", "statusDirect", "nextEdit", "infoToggle", "changesToggle", "callOpen", "callTermin", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
- * screen has open on top (compose, reason picker, quick edit) stays out of it.
+ * screen has open on top (compose, reason picker, quick edit) stays out of it. `#/todos`, from before Heute took in
+ * the Todos, lands on Heute as any unknown tab does.
  */
 export function routeOf({ tab, view, leadId, templateId }) {
   const id = (x) => encodeURIComponent(x);
@@ -39,20 +40,24 @@ export function parseRoute(hash) {
 const LEAD_VIEWS = new Set(["detail", "editLead", "editAccount"]);
 /** The quick-add form's fields and the draft key each one types into; the draft outlives any redraw of the list. */
 const QUICK_ADD_FIELDS = { qaName: "name", qaCity: "city", qaIg: "instagram", qaHook: "hook" };
+/** The call and meeting sheets' fields and the key of the sheet's state each one fills. */
+const AGREED_FIELDS = { agDate: "date", agTime: "time", agReason: "reason", agNote: "note" };
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 /** A screen holding input not yet saved: search stays shut there, so that it cannot leave the screen by accident. */
-const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call || u.meeting || u.quick || u.icpEdit);
+// The call sheet holds input once an outcome is picked: its fields show only then.
+const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.meeting || u.quick || u.icpEdit);
 /**
  * The UI state for an address. What a lead page has open lasts only while that lead is on screen: leaving it, or
  * opening another, starts fresh. The quick-add and ICP forms close on any address, as they show on their tab only;
  * so does the search over the screen.
- * Mehr starts with the Papierkorb closed so it is never shown stale.
+ * Mehr starts with the Papierkorb closed so it is never shown stale. A round through a list lasts from lead to lead
+ * and ends on a tab.
  */
 export function enterRoute(ui, route) {
   const sameLead = LEAD_VIEWS.has(route.view) && LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
-  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, call: null, meeting: null, editField: null, changes: null, expanded: new Set() }) };
+  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, call: null, meeting: null, editField: null, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false }) };
   if (route.view) return next;
-  return { ...next, calling: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
+  return { ...next, round: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
 }
 /** A screen whose record is not there once the data has loaded: a deleted lead or template, or a wrong address. */
 export function recordMissing(st) {
@@ -179,10 +184,31 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
     searchEl.disabled = holdsInput(st.ui);
     drawSearch(st);
-    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, todos: todosView, betriebe: leadsView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
+    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, betriebe: leadsView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     // The tabs show on every screen; while a form holds input they are shut, as the search field is, so nothing typed is lost.
     tabsEl.innerHTML = tabBar(st, today, holdsInput(st.ui));
+    if (view === "detail") loadHistory(st);
     return true;
+  }
+  // The lead whose history is on its way, as id@updatedAt, so a redraw meanwhile asks for it only once.
+  let historyLoading = null;
+  /** The lead page's history (status moves in the feed, Änderungen), loaded on open and again after each write to the lead. */
+  function loadHistory(st) {
+    const lead = uc && currentLead(st);
+    const key = lead && lead.id + "@" + lead.updatedAt;
+    if (!lead || st.ui.changes?.leadId === lead.id && st.ui.changes.at === lead.updatedAt || historyLoading === key) return;
+    historyLoading = key;
+    uc.history(lead).catch((e) => {
+      console.error(e);
+      toast("Laden fehlgeschlagen");
+      return null;
+    }).then((rows) => {
+      if (historyLoading === key) historyLoading = null;
+      if (S().ui.leadId !== lead.id) return;
+      // Failed, it stays `rows: null` until the lead changes, so the page does not ask again on every redraw.
+      ui({ changes: { leadId: lead.id, at: lead.updatedAt, rows } });
+      safeRender();
+    });
   }
   function safeRender() {
     const a = document.activeElement;
@@ -296,36 +322,77 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
   });
   const back = () => leave(backRoute(S().ui));
   const openLead = (id) => go(routeOf({ view: "detail", leadId: id }));
-  /** A lead picked in the search; it ends a call round, as leaving the round for a tab does. */
+  /** A lead picked in the search; it ends a round, as leaving the round for a tab does. */
   const openResult = (id) => {
-    ui({ calling: null });
+    ui({ round: null });
     openLead(id);
   };
+  /**
+   * A round through a list (Heute's queue, the call list, the new businesses), from its top or from the lead `id`
+   * picked in it: those above it count as done, so Weiter goes on below it.
+   */
+  const startRound = (list, id = null) => {
+    const all = roundList(S(), clock.today(), list);
+    const i = id ? Math.max(0, all.findIndex((l) => l.id === id)) : 0;
+    if (!all[i]) return toast("Niemand in der Liste");
+    ui({ round: { list, seen: all.slice(0, i).map((l) => l.id) } });
+    openLead(all[i].id);
+  };
+  /**
+   * The next lead of the round, freshly computed: one dealt with has dropped out, one seen in this round is skipped.
+   * In place of this page, so Zurück ends the round.
+   */
+  function roundNext() {
+    const st = S();
+    const seen = [...st.ui.round.seen, st.ui.leadId];
+    const next = roundList(st, clock.today(), st.ui.round.list).find((l) => !seen.includes(l.id));
+    if (!next) return toast("Liste erledigt"), back();
+    ui({ round: { ...st.ui.round, seen } });
+    go(routeOf({ view: "detail", leadId: next.id }), { replace: true });
+  }
+  /** Später in a round: the lead's follow-up moves to `date`, and the round goes on. */
+  async function postpone(date) {
+    if (await run(() => uc.setFollowUp(currentLead(S()), date), "Sp\xE4ter: " + relDate(date, clock.today())) === undefined) return;
+    ui({ later: false });
+    roundNext();
+  }
   const openTemplate = (id) => go(routeOf({ view: "editTemplate", templateId: id }));
   /** A page of the Papierkorb: the newest, or those deleted before `before`. */
   const loadTrash = (before = null) => run(async () => {
     ui({ trash: await uc.trash(before), trashBefore: before });
     render();
   }, null, "Laden fehlgeschlagen");
-  function startCompose(direction) {
+  /**
+   * Opens the composer: "out" to write (a note instead on an opted-out lead, who gets no message), "in" to log what
+   * came in. `channel` defaults to the last one used; from a mail thread (`thread`) the answer goes by mail as "Re: …".
+   */
+  function startCompose(direction, channel = null, thread = null) {
     const st = S();
     const lead = currentLead(st);
     const acts = actsOf(st, lead.id);
-    const tpl = direction === "out" ? defaultTemplate(lead, acts, st.data.templates) : null;
+    const mode = direction === "out" && lead.optOutAt ? "note" : direction;
+    const tpl = mode === "out" ? defaultTemplate(lead, acts, st.data.templates) : null;
     const filled = tpl ? fillTemplate(tpl.body, lead) : { text: "", missing: [] };
-    ui({ compose: { direction, templateId: tpl?.id || "", channel: lastChannel(acts) || (lead.instagram ? "Instagram" : "E-Mail"), date: clock.today(), subject: mailSubject(lead), text: filled.text, missing: filled.missing } });
+    const subject = thread ? (/^re:/i.test(thread.subject) ? thread.subject : "Re: " + thread.subject) : mailSubject(lead);
+    ui({ compose: { direction: mode, templateId: tpl?.id || "", channel: channel || lastChannel(acts) || (lead.instagram ? "Instagram" : "E-Mail"), date: clock.today(), subject, text: filled.text, missing: filled.missing, thread, followUp: null, fuEdit: false }, call: null, statusMenu: false });
     render();
     root.querySelector("#cText")?.scrollIntoView({ block: "center" });
   }
-  // What the open outcome form holds; an empty field is left out.
-  const agreed = () => Object.fromEntries(["date:agDate", "time:agTime", "reason:agReason", "note:agNote"].map((x) => x.split(":")).map(([k, id]) => [k, root.querySelector("#" + id)?.value.trim() || undefined]));
+  /** Closes the composer after a save, then sets the follow-up picked under "Danach" where the save planned another. */
+  async function composeSaved(c) {
+    ui({ compose: null });
+    render();
+    const lead = currentLead(S());
+    if (c.followUp && lead && lead.followUp !== c.followUp) await run(() => uc.setFollowUp(lead, c.followUp), "Nachfassen " + relDate(c.followUp, clock.today()));
+  }
   async function logCall(lead, call) {
     const today = clock.today();
     const r = await run(() => uc.logCall(lead, call), ({ plan }) => plan.status === "disqualifiziert" ? "Eingetragen \xB7 Disqualifiziert" : plan.followUp ? "Eingetragen \xB7 wieder " + relDate(plan.followUp, today) : "Eingetragen");
-    if (r) {
-      ui({ call: null });
-      render();
-    }
+    if (!r) return;
+    ui({ call: null });
+    // In the call list's round, saving moves on to the next call.
+    if (S().ui.round?.list === "calls") return roundNext();
+    render();
   }
   async function saveMeeting(lead, meeting) {
     if (await run(() => uc.meetingOutcome(lead, meeting), meeting.result === "kunde" ? "Status: Kunde" : "Eingetragen") !== undefined) {
@@ -333,6 +400,11 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       render();
     }
   }
+  /** Sets an open sheet's state (`call`, `meeting`, `compose`) and draws the page again. */
+  const sheet = (key, patch) => {
+    ui({ [key]: { ...S().ui[key], ...patch } });
+    render();
+  };
   async function saveQuickEdit() {
     const x = root.querySelector("#qe");
     const lead = currentLead(S());
@@ -420,12 +492,63 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
         render();
       }
     },
-    composeOut: () => startCompose("out"),
-    composeIn: () => startCompose("in"),
     composeCancel: () => {
       ui({ compose: null });
       render();
     },
+    composeFu: () => sheet("compose", { fuEdit: !S().ui.compose.fuEdit }),
+    reply: (el) => {
+      const st = S();
+      const msg = actsOf(st, st.ui.leadId).findLast((a) => a.mail?.threadId === el.dataset.thread);
+      // The answer goes into that thread: the server sends it there with the newest mail's Message-ID.
+      startCompose("out", "E-Mail", { threadId: el.dataset.thread, subject: msg?.mail.subject || "", replyTo: msg?.id || null });
+    },
+    async saveNote() {
+      const lead = currentLead(S());
+      const c = S().ui.compose;
+      const text = c.text.trim();
+      if (!text) return toast("Bitte Text eingeben");
+      // A note is no contact: it goes into the lead's Notizen, dated, below what is there.
+      if (await run(() => uc.addNote(lead, text), "Notiz gespeichert") !== undefined) composeSaved(c);
+    },
+    statusMenu: () => {
+      ui({ statusMenu: !S().ui.statusMenu });
+      render();
+    },
+    statusDirect: () => {
+      ui({ statusMenu: "direct" });
+      render();
+    },
+    nextEdit: () => {
+      ui({ nextEdit: !S().ui.nextEdit });
+      render();
+    },
+    infoToggle: () => {
+      ui({ infoOpen: !S().ui.infoOpen });
+      render();
+    },
+    changesToggle: () => {
+      ui({ changesOpen: !S().ui.changesOpen });
+      render();
+    },
+    /** The call sheet, opened by the call itself (the tel link goes on to dial) or from the composer. */
+    callOpen: () => {
+      ui({ call: S().ui.call || {}, compose: null, statusMenu: false });
+      render();
+    },
+    callTermin: () => {
+      ui({ call: { ...S().ui.call, outcome: "termin" }, compose: null, statusMenu: false });
+      render();
+      root.querySelector("#agDate")?.scrollIntoView({ block: "center" });
+    },
+    later: () => {
+      ui({ later: !S().ui.later });
+      render();
+    },
+    roundNext,
+    callStart: () => startRound("calls"),
+    queueStart: () => startRound("queue"),
+    freshStart: () => startRound("fresh"),
     copyOpen: (el, ev) => {
       toast(copyText(S().ui.compose.text) ? "Text kopiert" : "Kopieren nicht m\xF6glich");
       if (el.getAttribute("href") === "#") ev.preventDefault();
@@ -438,39 +561,20 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
         () => uc.logActivity(lead, actsOf(st, lead.id), { direction: c.direction, channel: c.channel, date: c.date, text: c.text, templateId: c.templateId }),
         (res) => res.plan.followUp && c.direction === "out" ? "Eingetragen \xB7 nachfassen " + relDate(res.plan.followUp, clock.today()) : "Eingetragen"
       );
-      if (r) {
-        ui({ compose: null });
-        render();
-      }
+      if (r) composeSaved(c);
     },
-    callSave: () => logCall(currentLead(S()), { outcome: S().ui.call.outcome, ...agreed() }),
+    callSave: () => logCall(currentLead(S()), callInput(S().ui.call)),
     callCancel: () => {
       ui({ call: null });
       render();
     },
     meetingSave: () => {
-      const { note: _note, ...fields } = agreed();
-      return saveMeeting(currentLead(S()), { result: S().ui.meeting.result, ...fields });
+      const { result, date, time, reason } = S().ui.meeting;
+      return saveMeeting(currentLead(S()), result === "kein-abschluss" ? { result, reason: reason || undefined } : { result, date: date || undefined, time: time || undefined });
     },
     meetingCancel: () => {
       ui({ meeting: null });
       render();
-    },
-    /** Starts a call session at the top of the call list; Zurück, a tab or a lead picked in the search ends it. */
-    callStart: () => {
-      const [first] = callList(S(), clock.today());
-      if (!first) return toast("Niemand zum Anrufen");
-      ui({ calling: { seen: [] } });
-      openLead(first.id);
-    },
-    /** The next on the call list, freshly computed: a lead called in this session is skipped, as is one whose follow-up moved on. In place of this page, so Zurück ends the session. */
-    callNext: () => {
-      const st = S();
-      const seen = [...st.ui.calling.seen, st.ui.leadId];
-      const next = callList(st, clock.today()).find((l) => !seen.includes(l.id));
-      if (!next) return toast("Anrufliste erledigt"), back();
-      ui({ calling: { seen } });
-      go(routeOf({ view: "detail", leadId: next.id }), { replace: true });
     },
     scriptToggle: () => {
       ui({ script: !S().ui.script });
@@ -478,9 +582,12 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     },
     /** The default call script as a template, to adapt under Vorlagen; the lead page shows it from the next sync. */
     scriptTemplate: () => run(() => uc.saveTemplate(null, { name: "Gespr\xE4chsleitfaden", purpose: "leitfaden", body: DEFAULT_SCRIPT }), "Vorlage angelegt \xB7 unter Vorlagen anpassen"),
-    closeWithoutReply: () => run(() => uc.closeWithoutReply(currentLead(S())), "Abgeschlossen"),
+    closeWithoutReply: () => {
+      ui({ statusMenu: false });
+      return run(() => uc.closeWithoutReply(currentLead(S())), "Abgeschlossen");
+    },
     lostPick: () => {
-      ui({ lostPick: true });
+      ui({ lostPick: true, statusMenu: false });
       render();
     },
     lostCancel: () => {
@@ -497,6 +604,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     async optOut() {
       const lead = currentLead(S());
       if (!confirmOptOut(lead)) return;
+      ui({ statusMenu: false });
       const note = prompt("Optional: Wie kam das Opt-out? (z. B. \u201Eper Mail: passt schon\u201C)", "") || "";
       await run(() => uc.optOut(lead, note), "Opt-out gespeichert");
     },
@@ -556,20 +664,9 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const lead = currentLead(st);
       const c = st.ui.compose;
       if (!confirm(`E-Mail an ${lead.email} jetzt senden?`)) return;
-      if (await run(() => uc.sendEmail(lead, { subject: c.subject, text: c.text, templateId: c.templateId }), "Gesendet und eingetragen")) {
-        ui({ compose: null });
-        render();
-      }
+      if (await run(() => uc.sendEmail(lead, { subject: c.subject, text: c.text, templateId: c.templateId, replyTo: c.thread?.replyTo || null }), "Gesendet und eingetragen")) composeSaved(c);
     },
     importPick: () => root.querySelector("#importFile")?.click(),
-    async showChanges() {
-      const lead = currentLead(S());
-      const rows = await run(() => uc.history(lead), null, "Laden fehlgeschlagen");
-      if (rows) {
-        ui({ changes: { leadId: lead.id, rows } });
-        render();
-      }
-    },
     showTrash: () => loadTrash(),
     trashOlder: (el) => loadTrash(Number(el.dataset.before)),
     logoutAll: (el, ev) => {
@@ -588,6 +685,15 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       return st.ui.searchOpen ? closeSearch() : window.scrollTo(0, 0);
     }
     if (d.open) return st.ui.searchOpen ? openResult(d.open) : openLead(d.open);
+    if (d.queue) return startRound("queue", d.queue);
+    if (d.compose) return d.compose === "in" ? startCompose("in") : startCompose("out", d.compose);
+    // Back to writing with nothing written yet: the template fills it again.
+    if (d.mode) return d.mode === "out" && !st.ui.compose.text ? startCompose("out", st.ui.compose.channel, st.ui.compose.thread) : sheet("compose", { direction: d.mode });
+    if (d.ch) return sheet("compose", { channel: d.ch });
+    if (d.feed) {
+      ui({ feed: d.feed });
+      return render();
+    }
     if (d.tpl) return openTemplate(d.tpl);
     if (d.edit) {
       if (st.ui.editField === d.edit) return;
@@ -610,7 +716,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const a = st.data.activities.find((x) => x.id === d.copy);
       return toast(a && copyText(a.text) ? "Kopiert" : "Kopieren nicht m\xF6glich");
     }
-    const writes = d.status || d.lost || d.fu || d.call || d.meeting || d.restore || d.purge || d.act && !UI_ONLY_ACTIONS.has(d.act);
+    const writes = d.status || d.lost || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.act && !UI_ONLY_ACTIONS.has(d.act);
     if (writes && !uc) return toast("Keine Verbindung zur Datenbank");
     if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash(st.ui.trashBefore);
     if (d.purge) {
@@ -621,8 +727,13 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (d.status) {
       if (lead.status === d.status) return;
       // Disqualifiziert needs a reason: the picker asks for it, and the reason picked writes both at once.
-      ui({ lostPick: d.status === "disqualifiziert" });
-      if (d.status === "disqualifiziert") return render();
+      if (d.status === "disqualifiziert") {
+        ui({ lostPick: true, statusMenu: false });
+        return render();
+      }
+      // Set directly, past what happened, is the rare fix: it asks once.
+      if (!confirm(`Status direkt auf „${STAGE_LABEL[d.status]}“ setzen?`)) return;
+      ui({ statusMenu: false, lostPick: false });
       return run(() => uc.changeStatus(lead, d.status), "Status: " + STAGE_LABEL[d.status]);
     }
     if (d.lost) {
@@ -631,15 +742,17 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ lostPick: false });
       return run(() => pickLostReason(uc, lead, d.lost), lead.status === "disqualifiziert" ? "Grund gespeichert" : "Status: " + STAGE_LABEL.disqualifiziert);
     }
-    if (d.call) {
-      if (d.call === "nicht-erreicht") return logCall(lead, { outcome: d.call });
-      ui({ call: { outcome: d.call } });
-      return render();
+    // Every outcome is picked first, Nicht erreicht too, so the sheet shows what saving does before it is saved.
+    if (d.call) return sheet("call", { outcome: d.call });
+    if (d.undo) {
+      const call = st.data.activities.find((a) => a.id === d.undo);
+      if (!call || !confirm("Diesen Anruf zur\xFCcknehmen? Status und n\xE4chster Schritt gehen zur\xFCck auf den Stand davor.")) return;
+      return run(() => uc.undoCall(call), "Anruf zur\xFCckgenommen");
     }
+    if (d.later) return postpone(addDays(clock.today(), +d.later));
     if (d.meeting) {
       if (d.meeting === "kunde") return saveMeeting(lead, { result: "kunde" });
-      ui({ meeting: { result: d.meeting } });
-      return render();
+      return sheet("meeting", { result: d.meeting });
     }
     if (d.fu) {
       const v = d.fu === "clear" ? "" : addDays(clock.today(), +d.fu);
@@ -662,6 +775,9 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     const { quick, icpEdit } = S().ui;
     if (QUICK_ADD_FIELDS[t.id] && quick) return ui({ quick: { ...quick, [QUICK_ADD_FIELDS[t.id]]: t.value } });
     if ((t.id === "icpFit" || t.id === "icpNo") && icpEdit) return ui({ icpEdit: { ...icpEdit, [t.id === "icpFit" ? "fit" : "noFit"]: t.value } });
+    // The call and meeting sheets keep what is typed in the UI state too, for their preview and any redraw.
+    const outcomeKey = S().ui.meeting ? "meeting" : "call";
+    if (AGREED_FIELDS[t.id] && S().ui[outcomeKey]) return ui({ [outcomeKey]: { ...S().ui[outcomeKey], [AGREED_FIELDS[t.id]]: t.value.trim() } });
     if (t.id === "cSubj" && c) return ui({ compose: { ...c, subject: t.value } });
     if (t.id === "cText" && c) {
       ui({ compose: { ...c, text: t.value } });
@@ -680,11 +796,13 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ compose: { ...c, templateId: t.value, text: f.text, missing: f.missing } });
       return render();
     }
-    if (t.id === "cCh" && c) {
-      ui({ compose: { ...c, channel: t.value } });
-      return render();
-    }
-    if (t.id === "cDate" && c) return ui({ compose: { ...c, date: t.value } });
+    if (t.id === "cCh" && c) return t.value ? sheet("compose", { channel: t.value }) : undefined;
+    // The date changes what logging plans, so the line under "Danach" is drawn again.
+    if (t.id === "cDate" && c) return sheet("compose", { date: t.value });
+    if (t.id === "cFu" && c) return sheet("compose", { followUp: t.value || null, fuEdit: false });
+    const outcomeKey = st.ui.meeting ? "meeting" : "call";
+    if (AGREED_FIELDS[t.id] && st.ui[outcomeKey] && t.id !== "agNote") return sheet(outcomeKey, { [AGREED_FIELDS[t.id]]: t.value.trim() });
+    if (t.id === "laterDate" && t.value) return postpone(t.value);
     if (t.id === "qe" && t.tagName === "SELECT") return saveQuickEdit();
     if (t.dataset.filter) {
       ui({ [t.dataset.filter]: t.value });

@@ -47,7 +47,7 @@ label{display:block;font-size:.9rem;color:var(--muted);margin-bottom:12px}
 label>input,label>select,label>textarea{margin-top:4px}
 .full{width:100%}
 .note{color:var(--muted);font-size:.9rem;margin:4px 0 0}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 
 /* headers */
 .head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:4px 0 16px}
@@ -59,7 +59,7 @@ label>input,label>select,label>textarea{margin-top:4px}
 
 /* tabs: at the bottom on a phone, a rail on the left from tablet width (at the end) */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
-.tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:680px}
+.tabs .in{display:grid;grid-template-columns:repeat(4,1fr);width:100%;max-width:680px}
 .tab{border:none;border-radius:0;background:none;color:var(--muted);flex-direction:column;gap:0;padding:8px 4px 6px;min-height:var(--tabbar);font-size:.8rem;position:relative}
 .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tab[aria-current="page"]{color:var(--pine);font-weight:600}
@@ -99,9 +99,6 @@ ul.rows{list-style:none;margin:0;padding:0}
 .furow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .furow input{flex:1 1 140px;width:auto}
 .furow button{flex:0 0 auto;padding:8px 10px}
-.quick{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:6px}
-.quick .btn{font-size:.88rem;padding:8px 4px}
-.quick .btn[aria-disabled="true"]{opacity:.35;pointer-events:none}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{min-height:36px;padding:6px 12px;border-radius:999px;font-size:.9rem}
 .chip[aria-pressed="true"]{background:var(--pine);border-color:var(--pine);color:var(--bg)}
@@ -186,12 +183,6 @@ label.drop{display:flex;align-items:center;gap:8px;margin:0}
 label.drop>input{width:20px;min-height:20px;flex:none;margin:0;padding:0}
 .account h4{margin:14px 0 2px}
 .account h4:first-child{margin-top:0}
-.todo{display:grid;width:100%;text-align:left;border:none;border-radius:0;background:transparent;padding:10px 14px 10px 12px;min-height:52px;column-gap:10px;row-gap:2px;
-  grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"what when" "who who";box-shadow:inset 4px 0 0 var(--due)}
-.todo:hover{background:var(--pine-soft)}
-.t-what{grid-area:what;font-weight:600;overflow:hidden;text-overflow:ellipsis}
-.t-who{grid-area:who;font-size:.85rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.t-when{grid-area:when;font-size:.82rem;color:var(--due);font-weight:600;white-space:nowrap}
 /* brand: the Connected Circles mark from the bookete app (public/brand/), colors as there */
 /* The top bar stays in view, so the search field does while results scroll; it holds the safe area above it. */
 .brandbar{position:sticky;top:0;z-index:6;background:var(--bg);height:calc(env(safe-area-inset-top,0px) + var(--topbar));padding:env(safe-area-inset-top,0px) max(16px,calc(50% - 624px)) 0;display:flex;align-items:center;gap:12px}
@@ -239,8 +230,96 @@ html:has(#sbox:not([hidden])){scroll-padding-top:0;overflow:hidden}
 .spanel{position:relative;max-height:100%;overflow-y:auto;overscroll-behavior:contain;background:var(--bg);box-shadow:0 8px 24px rgba(0,0,0,.18)}
 .shead{display:flex;align-items:baseline;gap:12px}
 .shead .note{flex:1 1 auto}
+/* ---- v6: Heute as one queue, the lead page with one feed and one composer ---- */
+.qrow{display:grid;width:100%;text-align:left;border:none;border-radius:0;background:transparent;padding:9px 14px 9px 12px;min-height:52px;column-gap:10px;row-gap:2px;align-items:center;
+  grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"name ch go" "why why go"}
+.qrow:hover{background:var(--pine-soft)}
+.q-name{grid-area:name;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-ch{grid-area:ch;font-size:.78rem;color:var(--pine);background:var(--pine-soft);border-radius:999px;padding:1px 8px;white-space:nowrap}
+.q-ch.none{color:var(--ink);background:var(--mark)}
+.q-why{grid-area:why;font-size:.85rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-go{grid-area:go;font-size:.88rem;color:var(--pine);font-weight:600;white-space:nowrap}
+@media (min-width:760px){.qrow{grid-template-columns:minmax(120px,1.3fr) auto minmax(0,3fr) auto;grid-template-areas:"name ch why go"}}
+.days{list-style:none;margin:0;padding:2px 14px}
+.days li{padding:8px 0;border-bottom:1px solid var(--line)}
+.days li:last-child{border-bottom:none}
+/* the bar of a round through a list, on the lead it opened */
+.qbar{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:6px 6px 6px 12px;margin-bottom:10px}
+.q-pos{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.92rem}
+.qbar button{flex:none}
+.chips.later{margin:-4px 0 10px}
+.chips.later input{flex:1 1 140px;width:auto;min-height:36px;padding:4px 10px}
+/* the status chip opens the menu of the usual next moves */
+button.pill{min-height:36px;border:none;padding:4px 12px}
+.menu{margin-top:10px;padding:4px 6px}
+.mitem{display:flex;width:100%;justify-content:space-between;text-align:left;border:none;background:transparent;padding:8px}
+.mitem+.mitem{border-top:1px solid var(--line);border-radius:0}
+.mitem:hover{background:var(--pine-soft)}
+.mitem b,.mitem small{display:block}
+.mitem small{color:var(--muted);font-size:.83rem;font-weight:400}
+.mitem.danger{color:var(--due)}
+.next{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;padding:4px 6px 4px 12px;border-radius:10px;background:var(--pine-soft)}
+.next.lacks{background:var(--mark)}
+.next.due{background:var(--due-soft);color:var(--due);font-weight:600}
+.next .more{flex:none}
+.nedit{margin-top:10px}
+.acts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:10px 0}
+.acts>*{font-size:.8rem;padding:8px 0;min-width:0;overflow:hidden;white-space:nowrap}
+.acts [aria-disabled="true"]{opacity:.35;pointer-events:none}
+@media (max-width:359px){.acts>*{font-size:.66rem}}
+/* Where the tabs sit at the bottom, the action row sits right above them; the page leaves room for it. */
+@media (max-width:759px),(max-height:479px){
+  .acts{position:fixed;left:0;right:0;bottom:calc(var(--tabbar) + 1px + env(safe-area-inset-bottom,0px));z-index:7;margin:0;padding:8px max(16px,calc(50% - 324px));background:var(--bg);border-top:1px solid var(--line)}
+  .wrap.lead{padding-bottom:calc(160px + env(safe-area-inset-bottom,0px))}
+  body:has(.acts) .toast{bottom:calc(136px + env(safe-area-inset-bottom,0px))}
+}
+/* Infos fold on a phone and stand open beside the feed on a wide screen; .desk shows only there. */
+.ifold{width:100%;justify-content:space-between;text-align:left;font-weight:600}
+.infos>h3{display:none}
+.infos:not(.open)>dl{display:none}
+.infos.open>.ifold{margin-bottom:8px}
+.desk{display:none}
+.seg{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:6px}
+.seg span{height:6px;border-radius:3px;background:var(--line)}
+.seg .on{background:var(--pine)}
+/* the feed */
+.feedc{margin-top:22px}
+.chip small{color:inherit;opacity:.7;margin-left:2px}
+.thread{margin-bottom:16px}
+.card+.card.thread{margin-top:0}
+.th-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.pill.new{background:var(--mark);color:var(--ink);font-size:.8rem;white-space:nowrap}
+.entry .t.one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.h-acts{display:flex;gap:6px;flex:none}
+.sline{color:var(--muted);font-size:.85rem;margin:0 0 16px;padding-left:15px}
+/* the composer and the sheets */
+.c-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:-6px 0 8px}
+.c-head b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.modes,.chans{margin-bottom:10px}
+select.chip{width:auto;min-height:36px;padding:6px 12px}
+.optout.box{border:1px solid var(--due);border-radius:12px;padding:10px 12px;margin:8px 0}
+.optout.box p:first-child{margin:0;font-weight:600}
+.after{display:flex;flex-wrap:wrap;align-items:center;gap:0 8px}
+.sheet h3{margin-bottom:4px}
+/* Wide: Heute's side panel beside the queue; the lead's Infos beside its feed. */
+@media (min-width:1100px) and (min-height:480px){
+  .today{display:grid;grid-template-columns:minmax(0,1fr) 340px;column-gap:28px;align-items:start}
+  /* The feed's row is 1fr, so a tall Infos column lengthens it and leaves no gap above the feed. */
+  .wrap.lead{max-width:1280px;display:grid;grid-template-columns:320px minmax(0,1fr);grid-template-rows:auto auto auto auto 1fr;
+    grid-template-areas:"round round" "hero hero" "acts acts" "side top" "side feed";column-gap:24px;align-items:start}
+  .lead>.l-round{grid-area:round}
+  .lead>.hero{grid-area:hero}
+  .lead>.acts{grid-area:acts}
+  .lead>.l-side{grid-area:side}
+  .lead>.l-top{grid-area:top}
+  .lead>.l-feed{grid-area:feed}
+  .infos>.ifold{display:none}
+  .infos>h3{display:flex}
+  .l-side .infos .facts.qe{display:block}
+  .desk{display:block}
+}
 /* From tablet width the tabs are a rail on the left, under the top bar; the screens and the search move right of it.
-   The rail needs the height of all five tabs, so a phone on its side, as wide as a tablet, keeps them at the bottom. */
+   The rail needs the height of all the tabs, so a phone on its side, as wide as a tablet, keeps them at the bottom. */
 @media (min-width:760px) and (min-height:480px){
   :root{--rail:calc(88px + env(safe-area-inset-left,0px))}
   .tabs{top:calc(env(safe-area-inset-top,0px) + var(--topbar));right:auto;width:var(--rail);border-top:none;border-right:1px solid var(--line);padding:8px 0 0 env(safe-area-inset-left,0px);align-items:flex-start}

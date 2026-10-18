@@ -2,6 +2,21 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.17.0 (2026-10-18)
+
+### New
+- **Your mail on the lead, both ways.** Every 5 minutes the CRM reads both Gmail mailboxes and puts each mail to or from a business on its page: replies, and mail you wrote in Gmail itself. It finds them by the thread the CRM sent, or by the business's stored address, never by domain. A mail in both mailboxes shows once; out-of-office replies, bounces and mail among ourselves stay out. Mail already on a business (every mail sent before this update, an answer you entered) is not added again, a mail found late leaves a follow-up, next step or status you set after it came, so it never reopens a business you closed since; only an answer of ours found late still ends "Antworten" and dates a follow-up that is due or missing. Each mail shows whose mailbox it came from. Once after this update, each of you signs in again so the CRM may read your mail.
+- **A reply stops the follow-up sequence** and puts "Antworten" for today on the business. "Antworten" on a thread writes into that same Gmail thread.
+- **The lead page, new:** one status button with a menu instead of five chips; one next-step line, marked "Kein nächster Schritt" when a business in work has none; one feed of mail threads, calls, messages and status changes with filters; on a phone a row Anrufen, E-Mail, WhatsApp, Instagram, Eintragen above the tabs.
+- **One composer for every channel.** E-Mail goes by Gmail. Instagram and WhatsApp copy the text and open the app; then "Gesendet". It shows what comes next ("Danach: Nachfassen …"), and you can change it.
+- **Heute is one queue:** new answers first, then overdue, due today, and the call list with the best time to call. "Abarbeiten" goes through it with "Später" and "Weiter". Todos is gone; its lists are in Heute.
+- **Notiz** in the composer adds to Notizen as they are when you save, so a note written meanwhile stays.
+- **A call tapped by mistake can be taken back** ("Rückgängig"), while it is the newest entry and nothing changed since.
+- Agents can enter how a Termin went.
+
+### Fixed
+- A business whose address is closed by an opt-out no longer counts as "mit E-Mail": not in the count, the Kontakt filter or the order of new businesses, nor for agents.
+
 ## 1.16.5 (2026-10-18)
 
 ### Fixed

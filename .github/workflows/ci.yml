@@ -37,6 +37,32 @@ jobs:
       - name: AGENTS.md current
         run: python3 .claude/agents_md.py . --check
 
+  # Advisory: the migrations apply in order to an empty local D1 (wrangler's own SQLite, not the test double),
+  # and a query reads the newest columns. Deploy does not wait on it; promote it to blocking once it has
+  # run green on a few migrations.
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    concurrency:
+      group: migrations-${{ github.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: crm/package-lock.json
+      - run: npm ci
+      - name: apply migrations locally (advisory)
+        run: npx wrangler d1 migrations apply crm --local
+      - name: smoke query (advisory)
+        run: npx wrangler d1 execute crm --local --command "SELECT scopes, gmail_cursor FROM users LIMIT 0"
+
   # Deploys main to crm.bookete.com after the tests pass. Off until the repo
   # variable CRM_DEPLOY is "true" (set it once Cloudflare is set up, see crm/README.md).
   deploy:

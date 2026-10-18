@@ -16,7 +16,7 @@ function setup({ mailer = null } = {}) {
 
 function fakeMailer() {
   const sent = [];
-  return { sent, send: async (msg) => (sent.push(msg), { id: "m1", threadId: "t1" }), draft: async (msg) => (sent.push({ draft: msg }), { draftId: "d1" }) };
+  return { sent, mailbox: "jo@bookete.com", send: async (msg) => (sent.push(msg), { id: "m1", threadId: "t1" }), draft: async (msg) => (sent.push({ draft: msg }), { draftId: "d1" }) };
 }
 
 const rejects = (promise, field) => assert.rejects(promise, (e) => e instanceof ValidationError && e.field === field);
@@ -288,6 +288,15 @@ test("a save that changes nothing writes nothing", async () => {
   const id = await uc.addLead({ name: "Krone", instagram: "@krone" });
   await uc.updateLead(id, { name: "Krone", instagram: "krone" });
   assert.equal((await store.history(id)).length, 1);
+});
+
+test("a note goes below what Notizen holds when it is saved, so one written meanwhile stays", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Krone", notes: "Ruhetag Mo" });
+  await uc.updateField(id, "notes", "Ruhetag Mo\n\nVom Agenten");
+  await uc.addNote(id, " Chef ab 15 Uhr ");
+  assert.equal((await store.get("leads", id)).notes, "Ruhetag Mo\n\nVom Agenten\n\n15.10.2026: Chef ab 15 Uhr");
+  await assert.rejects(uc.addNote(id, "  \n "), { message: "Die Notiz ist leer" });
 });
 
 test("a deleted lead waits in the trash and comes back with its activities", async () => {

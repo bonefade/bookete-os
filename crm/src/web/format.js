@@ -37,6 +37,13 @@ export function describeChange(entry) {
   return Object.keys(FIELD_LABEL).filter((k) => JSON.stringify(entry.before[k] ?? null) !== JSON.stringify(entry.after[k] ?? null))
     .map((k) => k === "account" ? "Kundenakte ge\xE4ndert" : `${FIELD_LABEL[k]}: ${shown(k, entry.before[k])} \u2192 ${shown(k, entry.after[k])}`);
 }
+/** The status move of a history entry, for the lead's feed: "Status Neu → Kontaktiert", "Angelegt", or "" for none. */
+export function statusMove(entry) {
+  if (!entry.before) return entry.after ? "Angelegt" : "";
+  if (!entry.after || entry.deleted || entry.before.status === entry.after.status) return "";
+  const reason = entry.after.status === "disqualifiziert" && entry.after.lostReason ? ` (${entry.after.lostReason})` : "";
+  return `Status ${shown("status", entry.before.status)} → ${shown("status", entry.after.status)}${reason}`;
+}
 /** "jo@bookete.com (mcp)" → "jo (mcp)". */
 export const actorName = (actor) => String(actor || "").replace(/@\S+/, "");
 export const fmtTime = (iso) => iso ? new Date(iso).toLocaleString("de-AT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";

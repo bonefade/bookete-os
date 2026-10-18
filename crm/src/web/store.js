@@ -24,7 +24,7 @@ export function createStore(initial) {
 export const initialState = () => ({
   data: { leads: [], activities: [], templates: [], settings: [] },
   status: { leads: false, activities: false, templates: false, settings: false, failed: "" },
-  caps: { db: false, gmail: false },
+  caps: { db: false, gmail: false, gmailRead: false },
   me: null,
-  ui: { tab: "heute", view: null, leadId: null, templateId: null, status: "offen", reason: "alle", contacted: "alle", q: "", gq: "", sIdx: 0, searchOpen: false, region: "alle", tool: "alle", contact: "alle", sort: "prio", quick: false, compose: null, expanded: new Set(), icpEdit: false, lostPick: false, call: null, meeting: null, calling: null, script: false, editField: null, changes: null, trash: null, trashBefore: null, scroll: {} }
+  ui: { tab: "heute", view: null, leadId: null, templateId: null, status: "offen", reason: "alle", contacted: "alle", q: "", gq: "", sIdx: 0, searchOpen: false, region: "alle", tool: "alle", contact: "alle", sort: "prio", quick: false, compose: null, expanded: new Set(), icpEdit: false, lostPick: false, call: null, meeting: null, round: null, statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false, script: false, editField: null, changes: null, trash: null, trashBefore: null, scroll: {} }
 });

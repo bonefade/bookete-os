@@ -252,7 +252,7 @@ test("closing a lead nobody answers gives Nicht erreicht", async () => {
   assert.deepEqual([l.status, l.lostReason], ["disqualifiziert", "Nicht erreicht"]);
 });
 
-test("a Kunde keeps its follow-up and is due in Todos", async () => {
+test("a Kunde keeps its follow-up and is due in Heute", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Aktivierung", status: "kunde", followUp: "2026-10-14" });
   const l = await store.get("leads", id);

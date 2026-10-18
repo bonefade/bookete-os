@@ -1,7 +1,7 @@
 import { REGIONS, OTHER_REGION, regionOf } from '../domain/region.js';
 import { RESERVATION_TOOLS } from '../domain/constants.js';
 import { meetingDue } from '../domain/activity.js';
-import { isPipeline, isDue } from '../domain/lead.js';
+import { isPipeline, isDue, takesFollowUp, lacksNextStep, addressKey, addressOpen } from '../domain/lead.js';
 import { timelinesByLead } from '../domain/stats.js';
 
 let cacheKey = null;
@@ -17,15 +17,25 @@ export const actsOf = (state, leadId) => activitiesByLead(state).get(leadId) || 
 export const currentLead = (state) => state.data.leads.find((l) => l.id === state.ui.leadId) || null;
 export const icpOf = (state) => state.data.settings.find((s) => s.id === "icp") || null;
 export const isReady = (state) => state.status.leads && state.status.activities;
+let closedKey = null;
+let closedVal = null;
+/** Whether mail may go to this lead, by the leads loaded (addressOpen). */
+export function mailOpen(state, l) {
+  if (state.data.leads !== closedKey) {
+    closedKey = state.data.leads;
+    closedVal = new Set(state.data.leads.filter((x) => x.optOutAt && x.email).map((x) => addressKey(x.email)));
+  }
+  return addressOpen(l, closedVal);
+}
 /** The shared filters, by their key in the UI state; "alle" lets every lead through. */
 const FILTERS = {
   region: (l, v) => regionOf(l) === v,
   tool: (l, v) => (l.currentTool || "unbekannt") === v,
-  contact: (l, v) => v === "telefon" ? !!l.phone : !!l.email
+  contact: (l, v, state) => v === "telefon" ? !!l.phone : mailOpen(state, l)
 };
 /** The leads the shared filters let through; `ignore` leaves one of them out, so its own choices can be counted. */
 export function scoped(state, leads = state.data.leads, ignore = null) {
-  return leads.filter((l) => Object.entries(FILTERS).every(([k, pass]) => k === ignore || state.ui[k] === "alle" || pass(l, state.ui[k])));
+  return leads.filter((l) => Object.entries(FILTERS).every(([k, pass]) => k === ignore || state.ui[k] === "alle" || pass(l, state.ui[k], state)));
 }
 function countBy(leads, keyOf) {
   const m = {};
@@ -42,7 +52,7 @@ export function regionCounts(state) {
 }
 export function contactCounts(state) {
   const leads = scoped(state, state.data.leads, "contact");
-  return [["telefon", "mit Telefon"], ["email", "mit E-Mail"]].map(([k, label]) => [k, label, leads.filter((l) => FILTERS.contact(l, k)).length]);
+  return [["telefon", "mit Telefon"], ["email", "mit E-Mail"]].map(([k, label]) => [k, label, leads.filter((l) => FILTERS.contact(l, k, state)).length]);
 }
 /**
  * Who to call, in order: open businesses with a phone number that are due (by date, then fit), then new ones not
@@ -54,3 +64,23 @@ export function callList(state, today) {
   const fresh = callable.filter((l) => l.status === "neu" && !l.followUp).sort((a, b) => b.fit - a.fit || a.name.localeCompare(b.name, "de"));
   return [...due, ...fresh];
 }
+/** New businesses not yet planned, the best first; those with an address before those without. */
+export const freshLeads = (state) => scoped(state).filter((l) => l.status === "neu" && !l.followUp).sort((a, b) => b.fit - a.fit || mailOpen(state, b) - mailOpen(state, a));
+/** Their message is the newest on the lead: a reply to answer. Not on an opted-out lead, which is not answered from here. */
+export const awaitsAnswer = (state, l) => takesFollowUp(l) && !l.optOutAt && actsOf(state, l.id).at(-1)?.direction === "in";
+/**
+ * Heute as one queue, in the order to work it: new replies (newest first), then what is overdue, then what is due
+ * today and the leads in work with no next step. A lead shows once, in the first section it belongs to.
+ */
+export function todayQueue(state, today) {
+  const leads = scoped(state);
+  const lastDate = (l) => actsOf(state, l.id).at(-1).date;
+  const replies = leads.filter((l) => awaitsAnswer(state, l)).sort((a, b) => lastDate(b).localeCompare(lastDate(a)));
+  const answered = new Set(replies.map((l) => l.id));
+  const due = leads.filter((l) => !answered.has(l.id) && isDue(l, today)).sort((a, b) => a.followUp < b.followUp ? -1 : a.followUp > b.followUp ? 1 : b.fit - a.fit);
+  const unplanned = leads.filter((l) => !answered.has(l.id) && lacksNextStep(l)).sort((a, b) => b.fit - a.fit);
+  return { replies, overdue: due.filter((l) => l.followUp < today), today: [...due.filter((l) => l.followUp === today), ...unplanned] };
+}
+export const queueList = (state, today) => Object.values(todayQueue(state, today)).flat();
+/** The leads a round works through, freshly computed, so one dealt with drops out by itself. */
+export const roundList = (state, today, list) => list === "calls" ? callList(state, today) : list === "fresh" ? freshLeads(state) : queueList(state, today);

@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createStore, initialState } from "../src/web/store.js";
-import { TABS, tabBar, todayView, todosView, leadsView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar } from "../src/web/views.js";
+import { TABS, tabBar, todayView, leadsView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar } from "../src/web/views.js";
 import { LEAD_FIELDS } from "../src/domain/lead.js";
 import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
 import { describeChange, fmtDate } from "../src/web/format.js";
-import { scoped, activitiesByLead } from "../src/web/selectors.js";
+import { scoped, activitiesByLead, freshLeads } from "../src/web/selectors.js";
 import { createApi, coalesced } from "../src/web/api.js";
 import { COLLECTIONS, FIELD_LABEL, TRASH_SHOWN } from "../src/domain/constants.js";
 import worker from "../src/server/index.js";
@@ -33,8 +33,8 @@ test("every view renders with data", () => {
   state.me = { email: "jo@bookete.com", version: "9.8.7" };
   const v1 = { ...lead, phone: "" };
   state.ui = { ...state.ui, leadId: "L1", gq: "kron", trash: [{ lead: { ...lead, id: "L9" }, actor: "jo@bookete.com (web)", at: "2026-10-15T10:00:00.000Z" }],
-    changes: { leadId: "L1", rows: [{ seq: 2, at: "2026-10-15T10:00:00.000Z", actor: "jo@bookete.com (mcp)", deleted: false, before: v1, after: { ...v1, phone: "0664 2" } }, { seq: 1, at: "2026-10-15T09:00:00.000Z", actor: "jo@bookete.com (web)", deleted: false, before: null, after: v1 }] }, compose: { direction: "out", channel: "E-Mail", templateId: "T1", date: today, subject: "S", text: "Hallo", missing: [] } };
-  const html = [tabBar, todayView, todosView, leadsView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView].map((view) => view(state, today)).join("");
+    changesOpen: true, changes: { leadId: "L1", at: lead.updatedAt, rows: [{ seq: 2, at: "2026-10-15T10:00:00.000Z", actor: "jo@bookete.com (mcp)", deleted: false, before: v1, after: { ...v1, phone: "0664 2" } }, { seq: 1, at: "2026-10-15T09:00:00.000Z", actor: "jo@bookete.com (web)", deleted: false, before: null, after: v1 }] }, compose: { direction: "out", channel: "E-Mail", templateId: "T1", date: today, subject: "S", text: "Hallo", missing: [] } };
+  const html = [tabBar, todayView, leadsView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView].map((view) => view(state, today)).join("");
   assert.match(html, /Gasthaus &lt;Krone&gt;/);
   assert.match(html, /Per Gmail senden/);
   assert.match(html, /Telefon: \u2013 \u2192 0664 2/);
@@ -62,7 +62,7 @@ test("a Kundenakte contact's address opens no mail where an opt-out closes it, a
   state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
   state.caps = { db: true, gmail: false };
   state.ui = { ...state.ui, leadId: "L1" };
-  const contacts = () => detailView(state, today).split("<h4>Kontakte</h4>")[1].split("<h3>Infos")[0];
+  const contacts = () => detailView(state, today).split("<h4>Kontakte</h4>")[1].split('<div class="l-feed">')[0];
   const mailsTo = (address) => contacts().includes(`href="mailto:${address}"`);
   assert.deepEqual(["Info@Krone.at", "office@blau.at", "max@gruen.at"].map(mailsTo), [true, true, false]);
   assert.match(contacts(), /<b>Max Grün<\/b><br>max@gruen\.at/);
@@ -88,10 +88,10 @@ test("the compose area says why no mail goes to an address another business with
   const html = detailView(state, today);
   assert.match(html, /Keine E-Mail an diese Adresse: \u201EKrone\u201C hat dieselbe Adresse und ein Opt-out seit 01\.10\.2026/);
   assert.doesNotMatch(html, /Per Gmail senden/);
-  // Nor is it logged as sent: the sheet offers only Abbrechen.
-  assert.doesNotMatch(html, /data-act="logActivity"/);
-  assert.match(html, /class="full"[^>]*data-act="composeCancel"/);
-  // Nor does a link open a mail to it, in the sheet or the quick bar, with Gmail or without; as on the lead that holds the opt-out.
+  // Nor is it logged as sent, nor copied: the composer offers only Abbrechen.
+  assert.doesNotMatch(html, /data-act="(logActivity|copyOpen)"/);
+  assert.match(html, /data-act="composeCancel">Abbrechen/);
+  // Nor does a link open a mail to it, in the composer or the action row, with Gmail or without; as on the lead that holds the opt-out.
   assert.doesNotMatch(html, /mailto:/);
   state.caps = { db: true, gmail: false };
   assert.doesNotMatch(detailView(state, today), /mailto:|data-act="logActivity"/);
@@ -99,24 +99,22 @@ test("the compose area says why no mail goes to an address another business with
   // Only mail is closed: another channel shows nothing and is logged as sent.
   state.ui.compose = { ...state.ui.compose, channel: "Telefon" };
   assert.doesNotMatch(detailView(state, today), /Keine E-Mail an diese Adresse/);
-  assert.match(detailView(state, today), /class="primary" data-act="logActivity">Als gesendet eintragen/);
+  assert.match(detailView(state, today), /class="primary" data-act="logActivity">Gesendet/);
   state.ui.compose = { ...state.ui.compose, channel: "E-Mail" };
   // A Kunde's service mail is not closed by another's opt-out; its own opt-out closes its mail link.
   state.data.leads[0] = { ...lead, status: "kunde" };
-  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>Kopieren & E-Mail \xF6ffnen/);
+  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>Kopieren und \xF6ffnen/);
   state.data.leads[0] = { ...lead, status: "kunde", optOutAt: "2026-10-02" };
   assert.doesNotMatch(detailView({ ...state, ui: { ...state.ui, compose: null } }, today), /mailto:/);
-  // Its own opt-out arriving by sync while the sheet is open: the hint names no other business, and the sheet offers
-  // "Text kopieren" (a Kunde's mail goes by mailto too) and Abbrechen, no send and no log.
+  // Its own opt-out arriving by sync while the composer is open: it says so and names no other business; no send,
+  // no log, no copy.
   const own = detailView(state, today);
-  assert.match(own, /<p class="hint">Keine E-Mail: Opt-out seit [^<]+2\. Okt\.?<\/p>/);
-  assert.doesNotMatch(own, /dieselbe Adresse|Per Gmail senden|data-act="logActivity"|mailto:/);
-  assert.match(own, /data-act="copyOpen" href="#">Text kopieren</);
-  assert.match(own, /class="full"[^>]*data-act="composeCancel"/);
+  assert.match(own, /<p>Keine Kontaktaufnahme gew\xFCnscht<\/p><p class="note">Seit 02\.10\.2026\.<\/p>/);
+  assert.doesNotMatch(own, /dieselbe Adresse|Per Gmail senden|data-act="(logActivity|copyOpen)"|mailto:/);
   state.data.leads[0] = lead;
   state.data.leads[1] = { ...state.data.leads[1], email: "post@krone.at" };
-  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>Kopieren & E-Mail \xF6ffnen/);
-  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>E-Mail</);
+  assert.match(detailView(state, today), /href="mailto:info@krone\.at[^"]*"[^>]*>Kopieren und \xF6ffnen/);
+  assert.match(detailView({ ...state, ui: { ...state.ui, compose: null } }, today), /<button data-compose="E-Mail">E-Mail</);
   state.caps = { db: true, gmail: true };
   assert.match(detailView(state, today), /Per Gmail senden/);
 });
@@ -130,27 +128,25 @@ test("with Gmail connected, mail that gets the Abmeldelink goes out only by Gmai
   state.caps = { db: true, gmail: true };
   const compose = (channel) => ({ direction: "out", channel, templateId: "", date: today, subject: "S", text: "Hallo", missing: [] });
   state.ui = { ...state.ui, leadId: "L1", compose: compose("E-Mail") };
-  const composeCard = () => detailView(state, today).split('class="card compose"')[1].split('class="quick"')[0];
-  const quickBar = () => detailView(state, today).split('class="quick"')[1].split("</div>")[0];
+  const composeCard = () => detailView(state, today).split('class="card compose"')[1].split("<aside")[0];
   const viaGmail = composeCard();
   assert.match(viaGmail, /Per Gmail senden/);
   assert.doesNotMatch(viaGmail, /mailto:|data-act="copyOpen"/);
-  // The quick bar's E-Mail button has no link either, as for a closed address.
-  assert.match(quickBar(), /<a class="btn" aria-disabled="true">E-Mail<\/a>/);
+  // The action row opens the composer, never the mail program.
+  const actionRow = detailView({ ...state, ui: { ...state.ui, compose: null } }, today).split('class="acts"')[1].split("</div>")[0];
+  assert.match(actionRow, /<button data-compose="E-Mail">E-Mail<\/button>/);
   assert.doesNotMatch(detailView(state, today), /mailto:/);
   state.caps = { db: true, gmail: false };
-  assert.match(composeCard(), /href="mailto:k@example\.at[^"]*"[^>]*>Kopieren & E-Mail öffnen/);
-  assert.match(quickBar(), /href="mailto:k@example\.at[^"]*"[^>]*>E-Mail</);
+  assert.match(composeCard(), /href="mailto:k@example\.at[^"]*"[^>]*>Kopieren und öffnen/);
   // A Kunde's service mail gets no Abmeldelink, so its mailto stays next to Gmail.
   state.caps = { db: true, gmail: true };
   state.data.leads[0] = { ...lead, status: "kunde" };
   assert.match(composeCard(), /Per Gmail senden/);
-  assert.match(composeCard(), /href="mailto:k@example\.at[^"]*"[^>]*>Kopieren & E-Mail öffnen/);
-  assert.match(quickBar(), /href="mailto:k@example\.at[^"]*"[^>]*>E-Mail</);
+  assert.match(composeCard(), /href="mailto:k@example\.at[^"]*"[^>]*>Kopieren und öffnen/);
   // Other channels have no Gmail path and keep their link.
   state.data.leads[0] = lead;
   state.ui = { ...state.ui, compose: compose("WhatsApp") };
-  assert.match(composeCard(), /href="https:\/\/wa\.me\/0664123[^"]*"[^>]*>Kopieren & WhatsApp öffnen/);
+  assert.match(composeCard(), /href="https:\/\/wa\.me\/0664123[^"]*"[^>]*>Kopieren und öffnen/);
 });
 
 test("with Gmail connected, a Kundenakte contact at the lead's own address opens no mail program; one at another address, which Gmail does not send to, still does", () => {
@@ -162,7 +158,7 @@ test("with Gmail connected, a Kundenakte contact at the lead's own address opens
   state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
   state.caps = { db: true, gmail: true };
   state.ui = { ...state.ui, leadId: "L1" };
-  const contacts = () => detailView(state, today).split("<h4>Kontakte</h4>")[1].split("<h3>Infos")[0];
+  const contacts = () => detailView(state, today).split("<h4>Kontakte</h4>")[1].split('<div class="l-feed">')[0];
   const mailsTo = (address) => contacts().includes(`href="mailto:${address}"`);
   assert.deepEqual(["K@Example.at", "office@blau.at"].map(mailsTo), [false, true]);
   assert.match(contacts(), /<b>Anna Wirt<\/b><br>K@Example\.at/);
@@ -174,10 +170,11 @@ test("with Gmail connected, a Kundenakte contact at the lead's own address opens
   assert.deepEqual(["K@Example.at", "office@blau.at"].map(mailsTo), [true, true]);
 });
 
-test("due leads are todos in their own tab, not in Heute", () => {
+test("Heute is one queue: new answers, then overdue, then due today with the leads in work that have no next step", () => {
   const today = "2026-10-15";
   const state = initialState();
-  const lead = (id, name, followUp, extra = {}) => ({ ...LEAD_FIELDS, id, name, status: "kontaktiert", followUp, ...extra });
+  const lead = (id, name, followUp, extra = {}) => ({ ...LEAD_FIELDS, id, name, status: "kontaktiert", contactedAt: "2026-10-01", followUp, ...extra });
+  const act = (id, leadId, date, direction, text) => ({ id, leadId, date, direction, channel: "E-Mail", text, createdAt: date + "T09:00:00.000Z" });
   state.data = {
     leads: [
       lead("L1", "Alt", "2026-10-12", { nextStep: "Termin 13:30 bestätigen" }),
@@ -185,19 +182,35 @@ test("due leads are todos in their own tab, not in Heute", () => {
       lead("L3", "Später", "2026-10-20"),
       lead("L4", "Abgeschlossen", "2026-10-01", { status: "disqualifiziert", lostReason: "Kein Bedarf" }),
       lead("L5", "Onboarding", today, { status: "kunde" }),
+      lead("L6", "Ungeplant", null),
+      // Answered and overdue: it shows once, as an answer.
+      lead("L7", "Antwortet", "2026-10-13"),
+      // Answered, then written to again: the answer is no longer the newest, so nothing waits on it.
+      lead("L8", "Beantwortet", "2026-10-20"),
+      lead("L9", "Neu", null, { status: "neu", contactedAt: null }),
     ],
-    activities: [], templates: [], settings: [],
+    activities: [act("A1", "L7", "2026-10-01", "out", "Hallo"), act("A2", "L7", "2026-10-14", "in", "Was kostet das?\nGrüße"), act("A3", "L8", "2026-10-13", "in", "Gern"), act("A4", "L8", "2026-10-14", "out", "Danke")],
+    templates: [], settings: [],
   };
   state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
-  const todos = todosView(state, today);
-  assert.match(todos, /Überfällig <small>1<\/small>/);
-  assert.match(todos, /Heute <small>2<\/small>/);
-  assert.match(todos, /data-open="L5"/);
-  assert.match(todos, /Termin 13:30 bestätigen[\s\S]*Alt[\s\S]*seit 3 Tagen/);
-  assert.match(todos, /data-open="L2"/);
-  assert.doesNotMatch(todos, /Später|Abgeschlossen/);
-  assert.doesNotMatch(todayView(state, today), /Alt|Heutig/);
-  assert.match(tabBar(state, today, false), /data-tab="todos"[^]*?<span class="badge">3<\/span>/);
+  const html = todayView(state, today);
+  const rows = (title) => [...(html.split(`<h3>${title} <small>`)[1] ?? "").split("</ul>")[0].matchAll(/data-queue="(\w+)"/g)].map(([, id]) => id);
+  assert.deepEqual([rows("Neue Antworten"), rows("\xDCberf\xE4llig"), rows("Heute f\xE4llig")], [["L7"], ["L1"], ["L2", "L5", "L6"]]);
+  assert.match(html, /<span class="q-name">Antwortet<\/span><span class="q-ch">E-Mail<\/span><span class="q-why">„Was kostet das\?“<\/span><span class="q-go">Antworten ›/);
+  assert.match(html, /<span class="q-why">Termin 13:30 bestätigen · fällig seit 3 Tagen<\/span><span class="q-go">Öffnen ›/);
+  assert.match(html, /<span class="q-name">Ungeplant<\/span><span class="q-ch none">Kein n\xE4chster Schritt<\/span>[^]*?Planen ›/);
+  assert.match(html, /5 offen<\/p><\/div><button class="primary" data-act="queueStart">Abarbeiten ›/);
+  // The tab's badge counts the queue; Todos is no tab any more.
+  assert.match(tabBar(state, today, false), /data-tab="heute"[^]*?<span class="badge">5<\/span>/);
+  assert.doesNotMatch(tabBar(state, today, false), /todos/);
+});
+
+test("the lead page marks a lead in work with no next step, and only that one", () => {
+  const page = (lead) => detailView(stateWith([{ id: "L1", name: "Krone", ...lead }], { leadId: "L1" }), TODAY);
+  assert.match(page({ status: "kontaktiert", contactedAt: "2026-10-01" }), /<div class="next lacks"><span><b>Kein n\xE4chster Schritt<\/b>/);
+  assert.match(page({ status: "qualifiziert", contactedAt: "2026-10-01" }), /class="next lacks"/);
+  assert.match(page({ status: "kontaktiert", contactedAt: "2026-10-01", followUp: "2026-10-14" }), /<div class="next due"><span>N\xE4chster Schritt: f\xE4llig seit gestern/);
+  for (const lead of [{ status: "neu" }, { status: "kunde" }, { status: "kontaktiert", contactedAt: "2026-10-01", followUp: "2026-10-20" }]) assert.doesNotMatch(page(lead), /next lacks|Kein n\xE4chster Schritt/, lead.status);
 });
 
 test("the forms, the lead page, the list and search name a field as FIELD_LABEL does", () => {
@@ -220,11 +233,11 @@ test("the forms, the lead page, the list and search name a field as FIELD_LABEL 
     const quick = leadsView({ ...state, ui: { ...state.ui, quick: { name: "", city: "", instagram: "", hook: "" } } }, today);
     for (const [key, id] of [["name", "qaName"], ["city", "qaCity"], ["instagram", "qaIg"], ["hook", "qaHook"]])
       assert.match(quick, new RegExp(`>Feld ${key}( \\*)?<input id="${id}"`), key);
-    const page = detailView({ ...state, ui: { ...state.ui, leadId: "L1" } }, today);
+    const page = detailView({ ...state, ui: { ...state.ui, leadId: "L1", nextEdit: true, statusMenu: true } }, today);
     assert.match(page, />Feld nextStep<input id="nextStep"/);
     assert.match(page, />Feld followUp<\/label>/);
     assert.match(page, /<input type="date" id="fu"[^>]*aria-label="Feld followUp"/);
-    assert.match(page, /<h3>Feld status<\/h3><div class="chips">/);
+    assert.match(page, /<b>Feld status direkt setzen …<\/b>/);
     assert.match(page, /<h3>Feld notes<\/h3>/);
     const list = leadsView(state, today);
     const head = list.match(/<li class="lhead"[^>]*>([^]*?)<\/li>/)[1];
@@ -273,7 +286,8 @@ test("Änderungen leaves out entries with nothing visible, such as a logged cont
   state.data = { leads: [lead], activities: [], templates: [], settings: [] };
   state.status = { ...state.status, leads: true, activities: true };
   const entry = (after) => ({ seq: 2, at: "2026-10-15T10:00:00.000Z", actor: "jo@bookete.com (web)", deleted: false, wasDeleted: false, before: lead, after });
-  state.ui = { ...state.ui, leadId: "L1", changes: { leadId: "L1", rows: [entry({ ...lead, updatedAt: "later" })] } };
+  state.ui = { ...state.ui, leadId: "L1", changesOpen: true, changes: { leadId: "L1", at: lead.updatedAt, rows: [entry({ ...lead, updatedAt: "later" })] } };
+  assert.match(detailView(state, "2026-10-15"), /data-act="changesToggle">\xC4nderungen an Feldern ausblenden/);
   assert.match(detailView(state, "2026-10-15"), /Noch keine \xC4nderungen aufgezeichnet/);
   assert.doesNotMatch(detailView(state, "2026-10-15"), /Ohne sichtbare/);
 });
@@ -386,17 +400,41 @@ test("Betriebe: a status select, and with Disqualifiziert a reason and a contact
   assert.deepEqual(names(leadsView(stateWith(leads, { status: "alle", reason: "Zu klein", contacted: "nein" }), TODAY)).length, 7);
 });
 
-test("Heute offers the new leads to write to first", () => {
-  const html = todayView(stateWith([{ id: "L1", name: "Frisch", status: "neu" }, { id: "L2", name: "Dran", status: "kontaktiert", contactedAt: "2026-10-01" }]), TODAY);
-  assert.match(html, /Bereit zum Anschreiben <small>1<\/small>[^]*Frisch/);
-  assert.doesNotMatch(html, /Dran/);
+test("Heute offers the new leads to write to first, the best first", async () => {
+  const leads = [
+    { ...LEAD_FIELDS, id: "L1", name: "Frisch", status: "neu", fit: 1 },
+    { ...LEAD_FIELDS, id: "L2", name: "Dran", status: "kontaktiert", contactedAt: "2026-10-01", followUp: "2026-10-20" },
+    { ...LEAD_FIELDS, id: "L3", name: "Besser", status: "neu", fit: 3 },
+  ];
+  assert.match(todayView(stateWith(leads), TODAY), /Bereit zum Anschreiben <small>2<\/small><\/h3><p class="note"[^>]*>2 neue Betriebe ohne Kontakt, die besten zuerst\.<\/p><button class="full" data-act="freshStart">/);
+  assert.match(todayView(stateWith(leads.slice(0, 2)), TODAY), />1 neuer Betrieb ohne Kontakt/);
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const store = createStore(initialState());
+    store.data("leads", leads);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const { h, click } = fakeBrowser("#/heute", store, {});
+    await click({ act: "freshStart" });
+    assert.equal(h.location.hash, "#/betrieb/L3");
+    await click({ act: "roundNext" });
+    assert.equal(h.location.hash, "#/betrieb/L1");
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
 });
 
-test("the lead view: five status chips, the reason picker, and since when the lead is contacted", () => {
+test("the lead view: the status chip opens the usual moves and setting it directly, the reason picker, and since when the lead is contacted", () => {
   const lead = { id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-12" };
   const view = detailView(stateWith([lead], { leadId: "L1" }), TODAY);
-  assert.deepEqual([...view.matchAll(/data-status="([^"]+)"/g)].map((m) => m[1]), ["neu", "kontaktiert", "qualifiziert", "kunde", "disqualifiziert"]);
-  assert.match(view, /Kontaktiert seit Mo\., 12\. Okt\./);
+  assert.match(view, /<button class="pill" data-act="statusMenu" aria-expanded="false">Kontaktiert ▾<\/button>/);
+  assert.doesNotMatch(view, /data-status=|data-act="optOut"/);
+  const menu = detailView(stateWith([lead], { leadId: "L1", statusMenu: true }), TODAY);
+  assert.deepEqual([...menu.matchAll(/class="mitem[^"]*" data-act="(\w+)"/g)].map((m) => m[1]), ["callTermin", "lostPick", "closeWithoutReply", "statusDirect", "optOut"]);
+  // Ohne Antwort abschließen waits for the last of the five contacts.
+  assert.match(menu, /data-act="closeWithoutReply" disabled>/);
+  const direct = detailView(stateWith([lead], { leadId: "L1", statusMenu: "direct" }), TODAY);
+  assert.deepEqual([...direct.matchAll(/data-status="([^"]+)"/g)].map((m) => m[1]), ["neu", "kontaktiert", "qualifiziert", "kunde", "disqualifiziert"]);
+  assert.match(view, /seit Mo\., 12\. Okt\./);
   assert.doesNotMatch(view, /data-lost=/);
   const picking = detailView(stateWith([lead], { leadId: "L1", lostPick: true }), TODAY);
   assert.equal([...picking.matchAll(/data-lost="/g)].length, 7);
@@ -405,9 +443,9 @@ test("the lead view: five status chips, the reason picker, and since when the le
   const fresh = detailView(stateWith([{ id: "L2", name: "Frisch", status: "neu" }], { leadId: "L2" }), TODAY);
   assert.match(fresh, /Nie kontaktiert/);
   const closed = detailView(stateWith([{ id: "L3", name: "Zu", status: "disqualifiziert", lostReason: "Zu klein" }], { leadId: "L3" }), TODAY);
-  assert.match(closed, /Disqualifiziert \xB7 Zu klein/);
-  assert.match(closed, /data-act="lostPick">Grund \xE4ndern/);
-  assert.doesNotMatch(closed, /id="fu"/);
+  assert.match(closed, /Disqualifiziert \xB7 Zu klein ▾/);
+  assert.match(detailView(stateWith([{ id: "L3", name: "Zu", status: "disqualifiziert", lostReason: "Zu klein" }], { leadId: "L3", statusMenu: true, nextEdit: true }), TODAY), /data-act="lostPick"><span><b>Grund \xE4ndern<\/b><small>Zu klein/);
+  assert.doesNotMatch(closed, /id="fu"|class="next/);
 });
 
 test("picking a reason disqualifies in one call, or changes the reason of a disqualified lead", async () => {
@@ -465,8 +503,8 @@ test("every screen has an address, and the address opens that screen", () => {
     assert.deepEqual(parseRoute(hash), !ui.view ? { view: null, tab } : ui.view === "editTemplate" ? ui : rest);
   }
   // A bare start, an unknown tab and a broken escape all open Heute; so does the search screen's address before 1.15.0,
-  // as the search now opens over a screen and has none.
-  for (const hash of ["", "#", "#/", "#/gibts-nicht", "#/betrieb/%E0", "#/suche"]) assert.deepEqual(parseRoute(hash), { view: null, tab: "heute" }, hash);
+  // as the search now opens over a screen and has none, and the Todos tab's before 1.17.0, as Heute took them in.
+  for (const hash of ["", "#", "#/", "#/gibts-nicht", "#/betrieb/%E0", "#/suche", "#/todos"]) assert.deepEqual(parseRoute(hash), { view: null, tab: "heute" }, hash);
 });
 
 test("entering an address resets what belongs to the screen left, and keeps the rest", () => {
@@ -484,8 +522,8 @@ test("entering an address resets what belongs to the screen left, and keeps the 
 });
 
 test("the in-app back button goes to the screen above", () => {
-  assert.equal(backRoute({ tab: "todos", view: "detail", leadId: "L1" }), "#/todos");
-  assert.equal(backRoute({ tab: "todos", view: "editLead", leadId: "L1" }), "#/betrieb/L1");
+  assert.equal(backRoute({ tab: "heute", view: "detail", leadId: "L1" }), "#/heute");
+  assert.equal(backRoute({ tab: "heute", view: "editLead", leadId: "L1" }), "#/betrieb/L1");
   assert.equal(backRoute({ tab: "vorlagen", view: "editTemplate", templateId: "T1" }), "#/vorlagen");
   // A template opened from a link or after a reload, where the app starts on Heute.
   for (const hash of ["#/vorlage/T1", "#/vorlage/neu"]) assert.equal(backRoute(enterRoute({ ...initialState().ui, tab: "heute" }, parseRoute(hash))), "#/vorlagen", hash);
@@ -645,7 +683,9 @@ function fakeBrowser(hash, store, uc) {
   const field = { value: "", disabled: false, on: {}, addEventListener(type, f) { field.on[type] = f; }, focus() { field.on.focus?.(); }, select() {}, blur() {} };
   const tabsEl = { innerHTML: "" };
   const app = mountApp({ root, tabsEl, searchEl: field, searchBox: search, toastEl, store, clock: { today: () => "2026-10-15" } });
-  app.connect(uc);
+  // A lead page loads its history on open; for a test's use cases that have none it stays on its way, so nothing
+  // draws after the test.
+  app.connect(uc && { history: () => new Promise(() => {}), ...uc });
   const click = (dataset) => on.click({ target: { closest: () => ({ dataset }) } });
   const type = (text) => {
     field.value = text;
@@ -745,13 +785,13 @@ test("the app's buttons and the browser's Back and Forward move through the addr
   }
 });
 
-test("five tabs, at the bottom on a phone and on the left from tablet width, and the one search field in the top bar", () => {
-  assert.deepEqual([...tabBar(initialState(), "2026-10-15", false).matchAll(/data-tab="(\w+)"/g)].map(([, k]) => k), ["heute", "todos", "betriebe", "vorlagen", "mehr"]);
+test("four tabs, at the bottom on a phone and on the left from tablet width, and the one search field in the top bar", () => {
+  assert.deepEqual([...tabBar(initialState(), "2026-10-15", false).matchAll(/data-tab="(\w+)"/g)].map(([, k]) => k), ["heute", "betriebe", "vorlagen", "mehr"]);
   assert.doesNotMatch(tabBar(initialState(), "2026-10-15", false), /disabled/);
   assert.equal(tabBar(initialState(), "2026-10-15", true).match(/ disabled>/g).length, TABS.length);
   const page = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   assert.match(page, new RegExp(`\\.tabs \\.in\\{[^}]*repeat\\(${TABS.length},1fr\\)`));
-  // From tablet width, if tall enough for the five tabs, a rail on the left, under the top bar, with the screens, the
+  // From tablet width, if tall enough for the tabs, a rail on the left, under the top bar, with the screens, the
   // search and the toast right of it; never hidden. A shut tab takes no click on its icon or label.
   const wide = page.match(/@media \(min-width:760px\) and \(min-height:480px\)\{\n  :root\{--rail:[^]*?\n\}/)?.[0] ?? "";
   for (const rule of [/\.tabs\{top:calc\(env\(safe-area-inset-top,0px\) \+ var\(--topbar\)\);right:auto;width:var\(--rail\)/, /\.tabs \.in\{display:flex;flex-direction:column\}/, /#app\{margin-left:var\(--rail\)\}/, /\.sbox\{left:var\(--rail\);bottom:0\}/, /\.toast\{[^}]*left:calc\(50% \+ var\(--rail\) \/ 2\)\}/]) assert.match(wide, rule);
@@ -787,27 +827,27 @@ test("the tabs show on every screen, shut while a form holds input; a lead page'
     for (const c of ["activities", "templates", "settings"]) store.data(c, []);
     const { h, click, tabsEl } = fakeBrowser("#/betriebe", store, {});
     const tabs = () => [(tabsEl.innerHTML.match(/data-tab=/g) || []).length, (tabsEl.innerHTML.match(/ disabled>/g) || []).length, tabsEl.innerHTML.match(/data-tab="(\w+)" aria-current/)?.[1]];
-    assert.deepEqual(tabs(), [5, 0, "betriebe"]);
+    assert.deepEqual(tabs(), [4, 0, "betriebe"]);
     await click({ open: "L1" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1", 5, 0, "betriebe"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1", 4, 0, "betriebe"]);
     // A message being written holds input as a form does.
-    await click({ act: "composeOut" });
-    assert.deepEqual(tabs(), [5, 5, "betriebe"]);
+    await click({ compose: "E-Mail" });
+    assert.deepEqual(tabs(), [4, 4, "betriebe"]);
     await click({ act: "composeCancel" });
-    assert.deepEqual(tabs(), [5, 0, "betriebe"]);
+    assert.deepEqual(tabs(), [4, 0, "betriebe"]);
     await click({ act: "edit" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1/bearbeiten", 5, 5, "betriebe"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1/bearbeiten", 4, 4, "betriebe"]);
     h.history.go(-1);
     h.land();
     // The tab the lead page was opened from opens its screen, not the top of the lead page.
     await click({ tab: "betriebe" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/betriebe", 5, 0, "betriebe"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betriebe", 4, 0, "betriebe"]);
     await click({ act: "quick" });
-    assert.deepEqual(tabs(), [5, 5, "betriebe"]);
+    assert.deepEqual(tabs(), [4, 4, "betriebe"]);
     await click({ act: "quickCancel" });
     await click({ tab: "vorlagen" });
     await click({ act: "tplNew" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/vorlage/neu", 5, 5, "vorlagen"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/vorlage/neu", 4, 4, "vorlagen"]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }
@@ -908,11 +948,11 @@ test("the top bar's field opens the search over any screen, which stays as it is
     // Behind it only the search's own entry, now a step Forward.
     const { at, entries } = h.seen();
     assert.deepEqual([at, entries.slice(0, at + 1)], [2, [["#/betriebe", null], ["#/heute", 1], ["#/betrieb/L2", 2]]]);
-    // A lead picked in the search ends a call round, as a tab does.
-    store.ui({ calling: { seen: [] } });
+    // A lead picked in the search ends a round, as a tab does.
+    store.ui({ round: { list: "calls", seen: [] } });
     field.on.click();
     await click({ open: "L1" });
-    assert.deepEqual([h.location.hash, store.get().ui.calling], ["#/betrieb/L1", null]);
+    assert.deepEqual([h.location.hash, store.get().ui.round], ["#/betrieb/L1", null]);
     h.history.go(-1);
     h.land();
     // A form holds unsaved input, so search is shut there.
@@ -1014,6 +1054,9 @@ test("while the lead page holds unsaved input the field is shut, and it opens ag
     const { h, click, press, field, search } = fakeBrowser("#/heute", store, {});
     // The outcome forms of a call and of an appointment take a typed date, time, reason or note.
     await click({ open: "L1" });
+    // The open call sheet holds nothing yet; a picked outcome does.
+    await click({ act: "callOpen" });
+    assert.equal(field.disabled, false);
     await click({ call: "rueckruf" });
     assert.equal(field.disabled, true);
     await click({ act: "callCancel" });
@@ -1030,7 +1073,7 @@ test("while the lead page holds unsaved input the field is shut, and it opens ag
     await click({ act: "back" });
     h.land();
     await click({ open: "L1" });
-    await click({ act: "composeOut" });
+    await click({ compose: "E-Mail" });
     assert.equal(field.disabled, true);
     // Nor do / and Ctrl+K jump into it, and the keys keep their own meaning, such as Ctrl+K in a text field.
     let prevented = 0;
@@ -1258,10 +1301,10 @@ test("the call list: due calls first by date then fit, then new businesses by fi
   ];
   assert.deepEqual(callList(state, today).map((x) => x.id), ["due13", "due14fit3", "due14", "rueckruf", "neu3", "neu2"]);
   state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
-  assert.match(todosView(state, today), /Anrufliste <small>6<\/small>[\s\S]*data-act="callStart"/);
+  assert.match(todayView(state, today), /Anrufliste <small>6<\/small><\/h3><p class="note"[^>]*>Am besten 14:30–17:00 Uhr, Montag und Dienstag schw\xE4cher\.<\/p><button class="primary full" data-act="callStart">/);
 });
 
-test("the lead page asks how a call ended, and on the appointment's day how the appointment went", () => {
+test("the lead page asks how a call ended, and what saving does, and on the appointment's day how the appointment went", () => {
   const today = "2026-10-15";
   const state = initialState();
   const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", phone: "+43 1 234", status: "kontaktiert", contactedAt: "2026-10-01" };
@@ -1269,51 +1312,79 @@ test("the lead page asks how a call ended, and on the appointment's day how the 
   state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
   state.ui = { ...state.ui, view: "detail", leadId: "L1" };
   let html = detailView(state, today);
-  // One dial button: the Anruf card's, right above the outcomes.
-  assert.match(html, /href="tel:\+431234">\+43 1 234 anrufen/);
-  assert.equal(html.match(/href="tel:/g).length, 1);
-  assert.deepEqual([...html.matchAll(/data-call="([^"]+)"/g)].map((m) => m[1]), ["nicht-erreicht", "rueckruf", "termin", "kein-interesse"]);
-  assert.doesNotMatch(html, /callNext|agDate|Wie war der Termin/);
-  state.ui = { ...state.ui, call: { outcome: "termin" }, calling: { seen: [] } };
+  // Anrufen dials and opens the call sheet; no sheet before.
+  assert.match(html, /<a class="btn" href="tel:\+431234" data-act="callOpen">Anrufen<\/a>/);
+  assert.doesNotMatch(html, /data-call=|roundNext|agDate|Wie war der Termin/);
+  state.ui = { ...state.ui, call: {} };
   html = detailView(state, today);
-  assert.match(html, /id="agDate" min="2026-10-15"/);
-  assert.match(html, /data-act="callNext"/);
-  state.ui = { ...state.ui, call: { outcome: "kein-interesse" } };
+  assert.match(html, /href="tel:\+431234">\+43 1 234 anrufen/);
+  assert.deepEqual([...html.matchAll(/data-call="([^"]+)"/g)].map((m) => m[1]), ["nicht-erreicht", "rueckruf", "termin", "kein-interesse"]);
+  assert.match(html, /data-act="callSave" disabled>Speichern</);
+  assert.doesNotMatch(html, /Beim Speichern/);
+  // Each outcome says before saving what it does to the status and the next step.
+  state.ui = { ...state.ui, call: { outcome: "nicht-erreicht" } };
+  assert.match(detailView(state, today), /Beim Speichern: Status bleibt Kontaktiert · N\xE4chster Schritt Sa\., 17\. Okt\.</);
+  state.ui = { ...state.ui, call: { outcome: "termin", date: "2026-10-20", time: "10:00" }, round: { list: "calls", seen: [] } };
+  html = detailView(state, today);
+  assert.match(html, /id="agDate" min="2026-10-15" value="2026-10-20"/);
+  assert.match(html, /Beim Speichern: Status wird Qualifiziert · N\xE4chster Schritt Di\., 20\. Okt\. · Termin um 10:00</);
+  assert.match(html, /data-act="callSave">Speichern und weiter ›/);
+  assert.match(html, /data-act="roundNext"/);
+  state.ui = { ...state.ui, call: { outcome: "kein-interesse", reason: "Zu klein" } };
   html = detailView(state, today);
   assert.match(html, /id="agReason"/);
+  assert.match(html, /Beim Speichern: Status wird Disqualifiziert \(Zu klein\) · kein n\xE4chster Schritt/);
   assert.doesNotMatch(html, /<option value="Nicht erreicht">/);
   state.data.leads = [{ ...lead, status: "qualifiziert", followUp: today, nextStep: "Termin" }];
   html = detailView(state, today);
   assert.match(html, /Wie war der Termin\?/);
   assert.doesNotMatch(html, /data-call=/);
-  // Without the Anruf card the quick bar dials, and the round goes on with Nächster.
-  assert.equal(html.match(/href="tel:/g).length, 1);
-  assert.match(html, /data-act="callNext"/);
+  assert.match(html, /data-act="roundNext"/);
   state.data.leads = [{ ...lead, status: "disqualifiziert", lostReason: "Zu klein" }];
   html = detailView(state, today);
   assert.doesNotMatch(html, /data-call=|Wie war der Termin/);
-  assert.match(html, /data-act="callNext"/);
+  assert.match(html, /data-act="roundNext"/);
 });
 
-test("Nächster opens the next on the call list in place of this page, past this lead and those seen; then the round ends", async () => {
+test("a round shows where it stands; Weiter opens the next in place of this page, past those seen, then the round ends; Später moves the follow-up and goes on", async () => {
   const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
   const l = (id, fit) => ({ ...LEAD_FIELDS, id, name: id, phone: "+43 1", status: "neu", fit });
   try {
     const store = createStore(initialState());
     store.data("leads", [l("A", 3), l("B", 2), l("C", 1)]);
     for (const c of ["activities", "templates", "settings"]) store.data(c, []);
-    const { h, click, toastEl } = fakeBrowser("#/todos", store, {});
+    const { h, root, click, toastEl } = fakeBrowser("#/heute", store, {});
     await click({ act: "callStart" });
     const at = () => [store.get().ui.leadId, h.seen()];
-    const page = (id) => ({ at: 1, entries: [["#/todos", null], [`#/betrieb/${id}`, 1]] });
+    const page = (id) => ({ at: 1, entries: [["#/heute", null], [`#/betrieb/${id}`, 1]] });
     assert.deepEqual(at(), ["A", page("A")]);
-    await click({ act: "callNext" });
+    assert.match(root.innerHTML, /<span class="q-pos"><b>Anrufliste<\/b> · 1 von 3<\/span>/);
+    await click({ act: "roundNext" });
     assert.deepEqual(at(), ["B", page("B")]);
-    await click({ act: "callNext" });
+    assert.match(root.innerHTML, /<b>Anrufliste<\/b> · 2 von 3/);
+    await click({ act: "roundNext" });
     assert.deepEqual(at(), ["C", page("C")]);
-    await click({ act: "callNext" });
+    await click({ act: "roundNext" });
     h.land();
-    assert.deepEqual([toastEl.textContent, store.get().ui.view, store.get().ui.tab, store.get().ui.calling], ["Anrufliste erledigt", null, "todos", null]);
+    assert.deepEqual([toastEl.textContent, store.get().ui.view, store.get().ui.tab, store.get().ui.round], ["Liste erledigt", null, "heute", null]);
+
+    // In Heute's queue, a row starts the round at its lead; Später sets the follow-up and opens the next.
+    const queue = createStore(initialState());
+    const due = (id, followUp) => ({ ...LEAD_FIELDS, id, name: id, status: "kontaktiert", contactedAt: "2026-10-01", followUp });
+    queue.data("leads", [due("Q1", "2026-10-13"), due("Q2", "2026-10-14"), due("Q3", "2026-10-15")]);
+    for (const c of ["activities", "templates", "settings"]) queue.data(c, []);
+    const set = [];
+    const b = fakeBrowser("#/heute", queue, { setFollowUp: async (lead, date) => set.push([lead.id, date]) });
+    await b.click({ queue: "Q2" });
+    assert.equal(queue.get().ui.leadId, "Q2");
+    assert.match(b.root.innerHTML, /<b>Heute · \xDCberf\xE4llig<\/b> · 2 von 3/);
+    await b.click({ act: "later" });
+    assert.match(b.root.innerHTML, /data-later="1">Morgen[^]*data-later="7">N\xE4chste Woche[^]*id="laterDate"/);
+    await b.click({ later: "7" });
+    assert.deepEqual([set, queue.get().ui.leadId, queue.get().ui.later], [[["Q2", "2026-10-22"]], "Q3", false]);
+    b.change({ id: "laterDate", value: "2026-11-02" });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(set.at(-1), ["Q3", "2026-11-02"]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }
@@ -1369,12 +1440,147 @@ test("a write asked for again while it is on its way is sent once; a different o
   }
 });
 
-test("a call session lasts while moving between leads and ends on a tab; an open outcome form belongs to its lead and ends with it", () => {
-  const ui = { ...initialState().ui, view: "detail", leadId: "L1", call: { outcome: "termin" }, meeting: { result: "kunde" }, calling: { seen: ["L0"] } };
+test("a round lasts while moving between leads and ends on a tab; an open outcome form belongs to its lead and ends with it", () => {
+  const ui = { ...initialState().ui, view: "detail", leadId: "L1", call: { outcome: "termin" }, meeting: { result: "kunde" }, round: { list: "calls", seen: ["L0"] }, statusMenu: true, later: true };
   const next = enterRoute(ui, parseRoute("#/betrieb/L2"));
-  assert.deepEqual([next.call, next.meeting, next.calling], [null, null, { seen: ["L0"] }]);
+  assert.deepEqual([next.call, next.meeting, next.round, next.statusMenu, next.later], [null, null, { list: "calls", seen: ["L0"] }, false, false]);
   assert.deepEqual(enterRoute(ui, parseRoute("#/betrieb/L1/bearbeiten")).call, { outcome: "termin" });
-  assert.equal(enterRoute(next, parseRoute("#/todos")).calling, null);
-  const left = enterRoute(ui, parseRoute("#/todos"));
+  assert.equal(enterRoute(next, parseRoute("#/heute")).round, null);
+  const left = enterRoute(ui, parseRoute("#/heute"));
   assert.deepEqual([left.call, left.meeting], [null, null]);
+});
+
+// Mail in a lead's feed, as the Gmail sync logs it: a sent mail in both mailboxes, then an answer only in Anna's.
+const SUBJECT = "bookete – Tischreservierung";
+const mail = (id, mailbox, extra) => ({ id, leadId: "L1", channel: "E-Mail", templateId: "", ...extra, mail: { gmailId: "g" + id, threadId: "T1", mailbox, subject: SUBJECT, from: "jo@bookete.com", to: "k@krone.at", ...extra.mail } });
+const SENT = { direction: "out", date: "2026-10-10", createdAt: "2026-10-10T08:00:00.000Z", text: "Hallo Krone" };
+const FEED = [
+  mail("M1", "jo@bookete.com", SENT),
+  mail("M2", "anna@bookete.com", { direction: "in", date: "2026-10-14", createdAt: "2026-10-14T09:00:00.000Z", text: "Was kostet das?", mail: { subject: "Re: " + SUBJECT, from: "k@krone.at", to: "anna@bookete.com" } }),
+  { id: "C1", leadId: "L1", direction: "out", channel: "Telefon", date: "2026-10-12", createdAt: "2026-10-12T15:00:00.000Z", outcome: "nicht-erreicht", text: "" },
+  { id: "W1", leadId: "L1", direction: "out", channel: "WhatsApp", date: "2026-10-11", createdAt: "2026-10-11T15:00:00.000Z", text: "Servus" },
+];
+const MOVED = { seq: 1, at: "2026-10-10T08:00:01.000Z", actor: "jo@bookete.com (web)", deleted: false, wasDeleted: false, before: { ...LEAD_FIELDS, status: "neu" }, after: { ...LEAD_FIELDS, status: "kontaktiert" } };
+
+test("the feed groups mail by its thread and names a colleague's mailbox; the chips filter it, and status moves are grey lines", () => {
+  const state = stateWith([{ id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-10", email: "k@krone.at", followUp: "2026-10-20" }], { leadId: "L1", changes: { leadId: "L1", rows: [MOVED] } });
+  state.data.activities = FEED;
+  state.me = { email: "jo@bookete.com" };
+  const html = detailView(state, TODAY);
+  assert.equal(html.match(/class="card thread"/g).length, 1);
+  assert.match(html, /<div class="th-head"><b>Re: bookete – Tischreservierung<\/b><span class="pill new">Neue Antwort<\/span><\/div>\s*<p class="note"[^>]*>2 Nachrichten · Gmail · Postfach von anna<\/p>/);
+  // The newest message open, from whom and in whose mailbox; the older one in a line.
+  assert.match(html, /↙ Empfangen · k@krone\.at · Mi\., 14\. Okt\. · Postfach von anna/);
+  assert.deepEqual([...html.matchAll(/data-expand="a:(M\w+)"/g)].map(([, id]) => id), ["M1"]);
+  assert.match(html, /data-act="reply" data-thread="T1">Antworten/);
+  // Newest first: the thread by its newest message, the call, the WhatsApp message, then the move to Kontaktiert.
+  const order = ["card thread", "Anruf · Nicht erreicht", "↗ Gesendet · WhatsApp", 'class="sline">Sa., 10. Okt. · Status Neu → Kontaktiert'].map((s) => html.indexOf(s));
+  assert.ok(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1])), String(order));
+  // The call is not the newest entry, so it cannot be taken back.
+  assert.doesNotMatch(html, /data-undo/);
+  assert.match(html, /data-feed="mail" aria-pressed="false">E-Mail <small>2<\/small>[^]*data-feed="call" aria-pressed="false">Anrufe <small>1<\/small>/);
+  const only = (feed) => detailView({ ...state, ui: { ...state.ui, feed } }, TODAY);
+  assert.doesNotMatch(only("mail"), /Anruf ·|WhatsApp ·|class="sline"/);
+  assert.match(only("call"), /Anruf · Nicht erreicht/);
+  assert.doesNotMatch(only("call"), /card thread|class="sline"/);
+  assert.match(only("note"), /<h3>Notizen<\/h3>/);
+  assert.doesNotMatch(only("note"), /card thread|Anruf ·/);
+});
+
+test("Rückgängig shows on the newest activity when it is a call, and never on an opted-out lead", () => {
+  const lead = { id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-10", phone: "+43 1" };
+  const call = (id, date) => ({ id, leadId: "L1", direction: "out", channel: "Telefon", date, createdAt: date + "T15:00:00.000Z", outcome: "nicht-erreicht", text: "" });
+  const page = (l, activities) => {
+    const state = stateWith([l], { leadId: "L1" });
+    state.data.activities = activities;
+    return [...detailView(state, TODAY).matchAll(/data-undo="(\w+)"/g)].map(([, id]) => id);
+  };
+  assert.deepEqual(page(lead, [call("C1", "2026-10-12"), call("C2", "2026-10-14")]), ["C2"]);
+  assert.deepEqual(page(lead, [call("C1", "2026-10-12"), { ...call("N1", "2026-10-14"), channel: "E-Mail", outcome: null, text: "Hallo" }]), []);
+  assert.deepEqual(page({ ...lead, status: "disqualifiziert", lostReason: "Keine Kontaktaufnahme gew\xFCnscht", optOutAt: "2026-10-14" }, [call("C1", "2026-10-14")]), []);
+});
+
+test("the composer says what comes after: the sequence's next contact, the answer asked for, or the day picked", () => {
+  const state = stateWith([{ id: "L1", name: "Krone", status: "neu", email: "k@krone.at" }], { leadId: "L1" });
+  const compose = (c) => detailView({ ...state, ui: { ...state.ui, compose: { direction: "out", channel: "E-Mail", templateId: "", date: TODAY, subject: "S", text: "Hallo", missing: [], followUp: null, fuEdit: false, ...c } } }, TODAY).match(/<p class="note after">([^<]*)/)?.[1];
+  assert.equal(compose({}), "Danach: Nachfassen So., 18. Okt. (+3 Tage, Kontakt 1 von 5) ");
+  assert.equal(compose({ direction: "in" }), "Danach: Antworten, heute ");
+  assert.equal(compose({ followUp: "2026-10-25" }), "Danach: Nachfassen So., 25. Okt. ");
+});
+
+test("Betriebe counts, filters and ranks a lead with mail only where its address is open", () => {
+  const OPT_OUT = "Keine Kontaktaufnahme gew\xFCnscht";
+  const leads = [
+    { id: "L1", name: "Offen", status: "neu", email: "a@a.at" },
+    { id: "L2", name: "Zu", status: "disqualifiziert", lostReason: OPT_OUT, optOutAt: "2026-10-01", email: "b@b.at" },
+    // Another business at the closed address; a Kunde there still gets its service mail.
+    { id: "L3", name: "Daneben", status: "neu", email: "B@b.at" },
+    { id: "L4", name: "Kundin", status: "kunde", contactedAt: "2026-10-01", email: "b@b.at" },
+  ];
+  assert.match(leadsView(stateWith(leads, { status: "alle" }), TODAY), /4 Betriebe · 2 mit E-Mail/);
+  assert.deepEqual(optionsOf(filterBar(stateWith(leads)), "contact").at(-1), "email mit E-Mail (2)");
+  assert.deepEqual(scoped(stateWith(leads, { contact: "email" })).map((l) => l.id), ["L1", "L4"]);
+  // Of two new businesses alike, the one that can be mailed first.
+  assert.deepEqual(freshLeads(stateWith([leads[1], leads[2], leads[0]].map((l) => ({ ...l, fit: 1 })))).map((l) => l.id), ["L1", "L3"]);
+});
+
+test("Mehr says whether Gmail is connected, and asks to connect it again where it cannot read the answers", () => {
+  const line = (caps) => moreView({ ...stateWith([]), caps: { db: true, ...caps }, me: { email: "jo@bookete.com" } }).match(/ · Gmail ([^]*?)<\/p>/)[1];
+  assert.equal(line({ gmail: false, gmailRead: false }), 'nicht verbunden – <a href="/auth/login">neu anmelden</a>');
+  assert.equal(line({ gmail: true, gmailRead: false }), 'verbunden – <a href="/auth/login">Gmail neu verbinden, damit Antworten erscheinen</a>');
+  assert.equal(line({ gmail: true, gmailRead: true }), "verbunden");
+});
+
+test("the lead page loads its history once per version of the lead; Antworten writes in the thread, Rückgängig takes the call back, a note goes into Notizen, and after an opt-out E-Mail only writes a note", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const store = createStore(initialState());
+    const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-10", email: "k@krone.at", notes: "Ruhetag Mo", updatedAt: "v1" };
+    store.data("leads", [lead]);
+    const call = { id: "C9", leadId: "L1", direction: "out", channel: "Telefon", date: "2026-10-15", createdAt: "2026-10-15T15:00:00.000Z", outcome: "nicht-erreicht", text: "" };
+    store.data("activities", [...FEED, call]);
+    for (const c of ["templates", "settings"]) store.data(c, []);
+    const done = [];
+    const uc = {
+      history: async (l) => (done.push(["history", l.id]), [MOVED]),
+      undoCall: async (a) => done.push(["undoCall", a.id]),
+      addNote: async (l, text) => done.push(["addNote", text]),
+      sendEmail: async (l, msg) => done.push(["sendEmail", msg.subject, msg.replyTo]),
+    };
+    const { root, app, click, input } = fakeBrowser("#/betrieb/L1", store, uc);
+    // The data arrives, as after the first sync; a redraw of the same version asks for nothing more.
+    app.onDataChanged();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.match(root.innerHTML, /class="sline">Sa\., 10\. Okt\. · Status Neu → Kontaktiert/);
+    app.onDataChanged();
+    await new Promise((r) => setTimeout(r, 0));
+    store.data("leads", [{ ...lead, updatedAt: "v2" }]);
+    app.onDataChanged();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(done, [["history", "L1"], ["history", "L1"]]);
+    await click({ undo: "C9" });
+    assert.deepEqual(done.at(-1), ["undoCall", "C9"]);
+    await click({ act: "reply", thread: "T1" });
+    assert.deepEqual([store.get().ui.compose.channel, store.get().ui.compose.subject, store.get().ui.compose.direction], ["E-Mail", "Re: " + SUBJECT, "out"]);
+    assert.match(root.innerHTML, /Antwort im Verlauf „Re: bookete – Tischreservierung“/);
+    // Sent, it answers the thread's newest mail; a mail written fresh answers none.
+    await click({ act: "sendEmail" });
+    assert.deepEqual(done.at(-1), ["sendEmail", "Re: " + SUBJECT, "M2"]);
+    await click({ compose: "E-Mail" });
+    await click({ act: "sendEmail" });
+    assert.equal(done.at(-1)[2], null);
+    await click({ mode: "note" });
+    input("cText", "Chef ist ab 15 Uhr da");
+    await click({ act: "saveNote" });
+    assert.deepEqual(done.at(-1), ["addNote", "Chef ist ab 15 Uhr da"]);
+    // After an opt-out, E-Mail opens the composer for a note: nothing goes out to the business.
+    store.data("leads", [{ ...lead, status: "disqualifiziert", lostReason: "Keine Kontaktaufnahme gew\xFCnscht", optOutAt: "2026-10-15", updatedAt: "v3" }]);
+    app.onDataChanged();
+    await click({ compose: "E-Mail" });
+    assert.equal(store.get().ui.compose.direction, "note");
+    // The new version's history arrives before the test ends.
+    await new Promise((r) => setTimeout(r, 0));
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
 });

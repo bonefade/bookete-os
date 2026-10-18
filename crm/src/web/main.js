@@ -37,7 +37,7 @@ const api = createApi(sync);
 async function boot() {
   const me = await api.me();
   app.connect(api);
-  store.set((s) => ({ ...s, me, caps: { db: true, gmail: me.gmail } }));
+  store.set((s) => ({ ...s, me, caps: { db: true, gmail: me.gmail, gmailRead: !!me.caps?.gmailRead } }));
   await sync();
   setInterval(() => document.visibilityState === "visible" && sync(), POLL_MS);
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && sync());

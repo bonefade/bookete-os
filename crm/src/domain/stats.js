@@ -1,4 +1,4 @@
-import { byTimeline, hasReply, isReply } from './activity.js';
+import { byTimeline, isReply } from './activity.js';
 import { weekStart } from './dates.js';
 
 export function groupByLead(activities) {
@@ -14,12 +14,6 @@ export function timelinesByLead(activities) {
   const m = groupByLead(activities);
   for (const list of m.values()) list.sort(byTimeline);
   return m;
-}
-export function outreachStats(leads, actsByLead) {
-  const acts = (l) => actsByLead.get(l.id) || [];
-  const contacted = leads.filter((l) => acts(l).some((a) => a.direction === "out")).length;
-  const replied = leads.filter((l) => hasReply(acts(l))).length;
-  return { contacted, replied, replyRate: contacted ? replied / contacted : null };
 }
 /** Disqualified leads by reason, most first; each has a reason. */
 export function lostBreakdown(leads) {

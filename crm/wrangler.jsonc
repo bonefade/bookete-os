@@ -12,6 +12,8 @@
   "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "afa2330ca33c4d7db8042cf8d0070550" }],
   // Per IP (IPv6: per /64) on sign-in, the open OAuth endpoints and the unsubscribe link; see rateLimited in src/server/index.js.
   "ratelimits": [{ "name": "AUTH_LIMIT", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } }],
+  // The Gmail sync (src/server/sync.js).
+  "triggers": { "crons": ["*/5 * * * *"] },
   "vars": { "PUBLIC_URL": "https://crm.bookete.com" }
   // Secrets (wrangler secret put): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_KEY, CONSENT_SECRET, ALLOWED_EMAILS.
 }

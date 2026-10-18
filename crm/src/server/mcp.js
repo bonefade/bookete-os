@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { LeadInput, Status, Reason, AccountInput, CallInput } from "./commands.js";
+import { LeadInput, Status, Reason, AccountInput, CallInput, MeetingInput } from "./commands.js";
 import { STAGES, CHANNELS, LOST_REASONS, OPT_OUT_REASON } from "../domain/constants.js";
-import { isDue, takesFollowUp } from "../domain/lead.js";
+import { isDue, takesFollowUp, addressOpen } from "../domain/lead.js";
 import { nextActionHint, byTimeline } from "../domain/activity.js";
 import { fillTemplate } from "../domain/template.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
@@ -12,22 +12,26 @@ const INSTRUCTIONS = `bookete CRM: restaurants (leads) in Austria that bookete a
 Statuses: ${STAGES.map(([k, label]) => `${k} (${label})`).join(", ")}. Every write is recorded under the signed-in user.
 Rules the server enforces: disqualifiziert needs a reason (${LOST_REASONS.join(" | ")}) and has no follow-up; the reason "${OPT_OUT_REASON}" records an opt-out. Opted-out businesses (optOutAt) must not be contacted. contactedAt is the date of first contact: null on neu, set on kontaktiert, qualifiziert and kunde, either on disqualifiziert. Setting it on a neu lead moves the lead to kontaktiert. Logging any contact moves neu, or disqualifiziert without an opt-out, to kontaktiert; an outgoing message moves the follow-up date by the sequence policy.
 A customer's Kundenakte (lead.account: services we deliver, their systems such as domain and DNS and who runs them, contacts including agencies) is read with get_lead and written with update_account, which takes the Kundenakte as read and refuses the write if it changed since. It never holds passwords, only where logins are kept.
-A phone call is logged with log_call, which records its outcome and moves the lead on by it; a call never moves a kunde out of kunde.
+A phone call is logged with log_call, which records its outcome and moves the lead on by it; a call never moves a kunde out of kunde. How an appointment went is recorded with meeting_outcome.
+Mail to and from a lead's address, and replies in a thread the CRM sent, are logged from the users' Gmail by the CRM itself within minutes: do not log them with log_activity.
 Agents cannot send email: create_gmail_draft puts a draft into the user's Gmail for a person to review and send. The CRM adds the lead's unsubscribe link at the end, except for a Kunde; do not write one yourself.`;
 
 const id = z.string().describe("Lead id");
 // Enough to choose a lead, and short, so a page of them stays small; get_lead reads one in full.
-const summary = (l, acts, today) => ({
+// hasEmail: mail to the lead would go out (sendEmail's and create_gmail_draft's rules, addressOpen); `closed`, the
+// addresses the businesses with an opt-out hold.
+const summary = (l, acts, today, closed) => ({
   id: l.id, name: l.name, city: l.city, status: l.status, fit: l.fit, followUp: l.followUp, due: isDue(l, today),
-  next: (takesFollowUp(l) && nextActionHint(l, acts)) || undefined, hasEmail: !!l.email, hasPhone: !!l.phone, optOut: !!l.optOutAt,
+  next: (takesFollowUp(l) && nextActionHint(l, acts)) || undefined,
+  hasEmail: addressOpen(l, closed), hasPhone: !!l.phone, optOut: !!l.optOutAt,
 });
 
 /** Tools: name → description, input schema, handler. Writes go through the same use cases as the web app. */
 const TOOLS = {
-  search_leads: ["Search leads by name, place, person, notes or history, best match first. Empty query lists all, by name. Filter by status, or only those due for follow-up. Answers `total` and up to `limit` leads from `offset`, each a short summary; if more match, `nextOffset` is the offset of the next page. Read one lead in full, with its history, with get_lead.",
+  search_leads: ["Search leads by name, place, person, notes or history, best match first. Empty query lists all, by name. Filter by status, or only those due for follow-up. Answers `total` and up to `limit` leads from `offset`, each a short summary; if more match, `nextOffset` is the offset of the next page. hasEmail is false where no mail may go (an opt-out, or another business with an opt-out holds the address). Read one lead in full, with its history, with get_lead.",
     z.object({ query: z.string().default(""), status: Status.optional(), dueOnly: z.boolean().default(false), offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(50).default(30) }),
     async ({ query, status, dueOnly, offset, limit }, { store, clock }) => {
-      const [stored, activities] = await Promise.all([store.list("leads"), store.list("activities")]);
+      const [stored, activities, closed] = await Promise.all([store.list("leads"), store.list("activities"), store.closedAddresses()]);
       // The store returns no set order; pages only line up if every call ranks the same leads the same way.
       const leads = stored.sort((a, b) => a.name.localeCompare(b.name, "de") || a.id.localeCompare(b.id));
       const today = clock.today();
@@ -35,7 +39,7 @@ const TOOLS = {
       const actsOf = (lid) => activities.filter((a) => a.leadId === lid);
       const found = hits.filter((l) => (!status || l.status === status) && (!dueOnly || isDue(l, today)));
       const end = offset + limit;
-      return { total: found.length, leads: found.slice(offset, end).map((l) => summary(l, actsOf(l.id), today)), nextOffset: end < found.length ? end : undefined };
+      return { total: found.length, leads: found.slice(offset, end).map((l) => summary(l, actsOf(l.id), today, closed)), nextOffset: end < found.length ? end : undefined };
     }],
   get_lead: ["One lead with every field and its full contact history.",
     z.object({ id }),
@@ -66,6 +70,9 @@ const TOOLS = {
   log_call: [`Record a phone call made today and how it ended. nicht-erreicht: no answer, call again in 2 days, unless a follow-up date ahead was not set by the sequence (status other than kontaktiert, or a next step); the 5th attempt without ever getting through closes the lead (Nicht erreicht). rueckruf: they asked to be called back, date (YYYY-MM-DD, from today) required, time (HH:MM) optional. termin: an appointment, date required, time optional; the lead becomes qualifiziert. kein-interesse: reason required; the lead becomes disqualifiziert. A kunde stays kunde whatever the outcome; the reason "${OPT_OUT_REASON}" still records an opt-out. Optional note.`,
     CallInput.extend({ id }),
     async ({ id: leadId, ...call }, { uc }) => uc.logCall(leadId, call)],
+  meeting_outcome: ["Record how an appointment went, on a qualifiziert lead. kunde: they became a customer. kein-abschluss: no deal, reason required; the lead becomes disqualifiziert. neuer-termin: a new appointment, date (YYYY-MM-DD, from today) required, time (HH:MM) optional.",
+    MeetingInput,
+    async ({ id: leadId, ...meeting }, { uc }) => (await uc.meetingOutcome(leadId, meeting), { ok: true })],
   set_follow_up: ["Set or clear the follow-up date (YYYY-MM-DD or null) and optionally the next step.",
     z.object({ id, date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), nextStep: z.string().max(500).optional() }),
     async ({ id: leadId, date, nextStep }, { uc }) => {

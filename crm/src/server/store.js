@@ -42,6 +42,11 @@ export function createStore(db) {
       case "erase":
         return db.prepare(`UPDATE docs SET data = '{}', seq = ${NEXT_SEQ}, updated_by = ? WHERE collection = ? AND id = ? AND deleted = 1`)
           .bind(actor, op.collection, op.id);
+      // A live record erased at once, an entry taken back (undoCall): its tombstone has no leadId, so no restore of
+      // the lead brings it back, and its history rows go (writes), so nothing keeps what it said.
+      case "discard":
+        return db.prepare(`UPDATE docs SET data = '{}', deleted = 1, seq = ${NEXT_SEQ}, updated_by = ? WHERE collection = ? AND id = ? AND deleted = 0`)
+          .bind(actor, op.collection, op.id);
       default:
         throw new Error("Unknown op " + op.type);
     }
@@ -72,11 +77,13 @@ export function createStore(db) {
   };
   const leadMoves = (ops, type, actor) => ops.filter((op) => op.collection === "leads" && op.type === type).flatMap((op) => moveActivities(op.id, type === "remove", actor));
   // One counter bump, then the ops' statements. A lead's activities go to the trash before it and come back after it.
+  // A discarded record's history goes after its write, whose trigger adds a row.
   const writes = (ops, actor) => [
     ...leadMoves(ops, "remove", actor),
     db.prepare("UPDATE counter SET seq = seq + ? WHERE id = 1").bind(ops.length),
     ...ops.map((op, i) => statement(op, actor, ops.length - 1 - i)),
     ...leadMoves(ops, "restore", actor),
+    ...ops.filter((op) => op.type === "discard").map((op) => db.prepare("DELETE FROM history WHERE collection = ? AND id = ?").bind(op.collection, op.id)),
   ];
   async function batch(statements) {
     try {
@@ -114,10 +121,34 @@ export function createStore(db) {
         AND lower(trim(json_extract(data, '$.email'))) = lower(trim(?)) ORDER BY deleted, seq DESC LIMIT 1`, email);
       return row ? { lead: toRecord("leads", row), trashed: !!row.deleted } : null;
     },
+    /** The addresses every lead with an opt-out holds, live or in the trash, compared as optOutByAddress compares them. */
+    async closedAddresses() {
+      const rows = await many("SELECT lower(trim(json_extract(data, '$.email'))) AS email FROM docs WHERE collection = 'leads' AND json_extract(data, '$.optOutAt') IS NOT NULL");
+      return new Set(rows.map((row) => row.email).filter(Boolean));
+    },
     /** Of these leads, the ones that still hold data, by id: live, or in the trash (`trashed`). An erased lead is not among them. */
     async heldLeads(ids) {
       const rows = await many("SELECT id, data, seq, deleted FROM docs WHERE collection = 'leads' AND data != '{}' AND id IN (SELECT value FROM json_each(?))", JSON.stringify(ids));
       return new Map(rows.map((row) => [row.id, { lead: toRecord("leads", row), trashed: !!row.deleted }]));
+    },
+    /**
+     * The lead as it was before the commit that logged `activity`, or null if anything wrote the lead since. A contact
+     * is logged in one commit with its lead, the activity first (leadOps), so that commit gave the lead the next seq.
+     */
+    async leadBefore(lead, activity) {
+      if (lead[VERSION] !== activity[VERSION] + 1) return null;
+      const row = await one("SELECT before FROM history WHERE collection = 'leads' AND id = ? AND seq = ?", lead.id, lead[VERSION]);
+      return row?.before ? { ...LEAD_FIELDS, ...JSON.parse(row.before) } : null;
+    },
+    /**
+     * What the Gmail sync needs to know of the mail already logged, in one query: every activity id the CRM has held
+     * (live, in the trash or erased), and the lead each mail thread on a live activity belongs to, by "mailbox threadId".
+     */
+    async mailIndex() {
+      const rows = await many(`SELECT id, deleted, json_extract(data, '$.leadId') AS lead_id, json_extract(data, '$.mail.mailbox') AS mailbox,
+        json_extract(data, '$.mail.threadId') AS thread_id FROM docs WHERE collection = 'activities' ORDER BY seq`);
+      const threads = new Map(rows.filter((r) => !r.deleted && r.thread_id).map((r) => [`${r.mailbox} ${r.thread_id}`, r.lead_id]));
+      return { ids: new Set(rows.map((r) => r.id)), threads };
     },
     async activitiesOf(leadId, { deleted = false } = {}) {
       const rows = await many("SELECT id, data, seq, deleted FROM docs WHERE collection = 'activities' AND deleted = ? AND json_extract(data, '$.leadId') = ?", deleted ? 1 : 0, leadId);
@@ -163,6 +194,19 @@ export function createStore(db) {
           AND x.seq > (SELECT COALESCE(MAX(y.seq), 0) FROM history y WHERE y.collection = d.collection AND y.id = d.id AND y.deleted = 0))
         WHERE d.collection = 'leads' AND d.deleted = 1 AND d.data != '{}' ${before ? "AND COALESCE(h.seq, d.seq) < ?" : ""} ORDER BY deleted_seq DESC LIMIT ?`, ...(before ? [before] : []), TRASH_SHOWN + 1);
       return rows.map((row) => ({ lead: toRecord("leads", row), actor: row.actor, at: row.at, seq: row.deleted_seq }));
+    },
+    /**
+     * When a person last set the lead's status, follow-up and next step, each: the latest updatedAt of a version, not
+     * written by the Gmail sync (actor `… (gmail)`, sync.js), in which it differs from the one before (an empty lead
+     * before the first). Null for one never set.
+     */
+    async planSetAt(leadId) {
+      const at = "json_extract(after, '$.updatedAt')";
+      return one(`SELECT
+          max(CASE WHEN coalesce(json_extract(before, '$.status'), 'neu') IS NOT json_extract(after, '$.status') THEN ${at} END) AS status,
+          max(CASE WHEN json_extract(before, '$.followUp') IS NOT json_extract(after, '$.followUp') THEN ${at} END) AS followUp,
+          max(CASE WHEN coalesce(json_extract(before, '$.nextStep'), '') IS NOT coalesce(json_extract(after, '$.nextStep'), '') THEN ${at} END) AS nextStep
+        FROM history WHERE collection = 'leads' AND id = ? AND coalesce(actor, '') NOT LIKE '% (gmail)'`, leadId);
     },
     /** A lead's newest 100 versions, newest first: each with the data before and after, who wrote it and when, and whether it was deleted before. */
     async history(leadId) {

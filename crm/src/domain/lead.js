@@ -89,9 +89,20 @@ export const getsUnsubscribeLink = (lead) => lead.status !== "kunde";
 export const addressKey = (email) => str(email).replace(/[A-Z]/g, (c) => c.toLowerCase());
 /** The business among `leads` with an opt-out that holds this lead's email address, if any. */
 export const optOutByAddress = (leads, lead) => lead.email ? leads.find((x) => x.optOutAt && addressKey(x.email) === addressKey(lead.email)) : undefined;
+/**
+ * The business whose opt-out closes this lead's address: the lead itself, or, unless it is a Kunde (whose service mail
+ * still goes out), the one with an opt-out that `holderOf` gives for its address key.
+ */
+const closedBy = (lead, holderOf) => lead.optOutAt ? lead : getsUnsubscribeLink(lead) && lead.email ? holderOf(addressKey(lead.email)) : undefined;
+/** The business whose opt-out closes this lead's address, among `leads` (closedBy). */
+export const mailClosedBy = (leads, lead) => closedBy(lead, (key) => optOutByAddress(leads, { email: key }));
+/** Whether mail may go to this lead: it has an address that no opt-out closes (closedBy). `closed`: the address keys the businesses with an opt-out hold. */
+export const addressOpen = (lead, closed) => !!lead.email && !closedBy(lead, (key) => closed.has(key));
 /** Why no mail may go to this address: `holder` has an opt-out and the same address; `trashed`, it is in the Papierkorb. */
 export const addressOptOutText = (holder, trashed = false) => `Keine E-Mail an diese Adresse: \u201E${holder.name}\u201C${trashed ? " (im Papierkorb)" : ""} hat dieselbe Adresse und ein Opt-out seit ${dayLabel(holder.optOutAt)}`;
 export const isDue = (lead, today) => takesFollowUp(lead) && !!lead.followUp && lead.followUp <= today;
+/** A lead in work with no date for what comes next: Kontaktiert or Qualifiziert without a follow-up. Neu, Kunde and Disqualifiziert are never short of one. */
+export const lacksNextStep = (lead) => (lead.status === "kontaktiert" || lead.status === "qualifiziert") && !lead.followUp;
 /** Status and reason as one change; normalizeLead checks the pair. */
 export function transition(status, reason = null) {
   if (reason && status !== "disqualifiziert") throw new ValidationError("lostReason", "Ein Grund geh\xF6rt nur zu \u201EDisqualifiziert\u201C");

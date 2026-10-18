@@ -1,10 +1,11 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
-import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch } from "../domain/activity.js";
+import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, mailActivityId, byTimeline, sameMail } from "../domain/activity.js";
 import { normalizeLead, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
+import { dayLabel } from "../domain/dates.js";
 
 /**
  * The only write path. The web app (RPC) and agents (MCP) both call these,
@@ -14,6 +15,8 @@ const lines = (a) => (a || []).map((s) => String(s).trim()).filter(Boolean);
 const normalizeIcp = (icp) => ({ fit: lines(icp.fit), noFit: lines(icp.noFit), note: String(icp.note || "") });
 const ATTEMPTS = 3;
 const OPT_OUT_TEXT = "Opt-out: m\xF6chte keine Nachrichten mehr.";
+// What undoCall sets back: everything a call changes on a lead (planAfterCall) but an opt-out, which stays.
+const CALL_FIELDS = ["status", "lostReason", "followUp", "nextStep", "contactedAt"];
 
 /**
  * `pause(attempt)` waits before the retry after that attempt (retryPause in adapters/system.js, which the Worker passes).
@@ -61,9 +64,10 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
     }
     const activityOps = activity ? [{ type: "put", collection: "activities", id: activity.id, data: activity, trashed }] : [];
     if (isNew) return [...activityOps, { type: "put", collection: "leads", id: l.id, data: { ...l, ...next } }];
-    const diff = Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
+    const diff = changed(l, next);
     return activity || Object.keys(diff).length ? [...activityOps, patchOp(l, diff)] : [];
   }
+  const changed = (l, next) => Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
   // `l` itself is the base: its version symbol is not copied by a spread.
   const patchOp = (l, diff) => ({ type: "patch", collection: "leads", id: l.id, base: l, data: touch(diff) });
   /** The common shape: read the lead, compute a patch from it, write it only if the lead is still as read. Says whether anything changed. */
@@ -80,19 +84,47 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
   }
   /**
    * `sent`: sendEmail sent this mail; it passed assertAddressOpen before it went out and is logged as it happened.
-   * Any other outgoing E-Mail logged here is refused where sending is.
+   * Any other outgoing E-Mail logged here is refused where sending is. A Gmail message comes with its `mail`, the id
+   * it is logged under (mailActivityId) and when it came (`at`); one already logged under that id is not logged
+   * again (null), whoever came first: sendEmail or the sync. One the sync `found` is not logged either where the lead
+   * holds it already (sameMail); an entry made without Gmail takes it and the time it came, so it stands for no other
+   * mail, an answer to it goes into its thread, and it sorts where the mail came. `planOf` may be async.
    */
-  const logContact = (id, input, planOf, { sent = false } = {}) => retrying(async () => {
+  const logContact = (id, input, planOf, { sent = false, activityId = null, at = null, mail = null, found = false } = {}) => retrying(async () => {
     const l = await lead(id);
     assertMayContact(l, input.direction);
-    const activity = newActivityRecord({ ...input, leadId: id }, { id: ids.newId(), now: clock.now(), today: clock.today() });
-    assertHappened(activity, clock.today());
+    const today = clock.today();
+    const activity = newActivityRecord({ ...input, leadId: id }, { id: activityId || ids.newId(), now: at || clock.now(), today, mail });
+    assertHappened(activity, today);
+    const acts = await store.activitiesOf(id);
+    // The entry that is this message, else the earliest made without Gmail: each stands for one mail, the first found for it.
+    const same = acts.filter((a) => a.id === activity.id || found && sameMail(a, activity));
+    const held = same.find((a) => a.mail) ?? same.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)) || a.id.localeCompare(b.id))[0];
+    if (held) {
+      if (!held.mail) await commit([{ type: "patch", collection: "activities", id: held.id, base: held, data: { mail: activity.mail, createdAt: activity.createdAt } }]);
+      return null;
+    }
     if (!sent && activity.direction === "out" && activity.channel === "E-Mail") await assertAddressOpen(l);
-    const plan = planOf(l, await store.activitiesOf(id), activity);
+    const plan = await planOf(l, acts, activity, today);
     await commit(leadOps(l, plan, { activity }));
     return { activity, plan };
   });
   const logActivity = (id, input) => logContact(id, input, planAfterActivity);
+  /**
+   * What a mail the sync found changes: what any contact does, but what a person set since the mail came stays, as
+   * they decided it after the mail. A follow-up or next step set since stays; a status set since keeps the status and
+   * the whole plan (a business closed since stays closed, with its reason). Only an answer of ours still ends
+   * "Antworten" and dates the next follow-up, as it went out; it moves only a follow-up due by then, so a later one stays.
+   */
+  async function foundMailPlan(l, acts, activity, today) {
+    const plan = planAfterActivity(l, acts, activity, today);
+    if (!("status" in plan || "followUp" in plan || "nextStep" in plan)) return plan;
+    const setAt = await store.planSetAt(l.id);
+    const since = (field) => activity.createdAt < (setAt?.[field] ?? "");
+    const answered = plan.nextStep === "" && l.nextStep === "Antworten";
+    const kept = { status: since("status"), followUp: !answered && (since("followUp") || since("status")), nextStep: !answered && (since("status") || since("nextStep")) };
+    return Object.fromEntries(Object.entries(plan).filter(([field]) => !kept[field]));
+  }
   /** The opt-out, dated today. Once is enough: a lead already opted out stays as it is. */
   const recordOptOut = async (l, optOutText, trashed = false) => {
     if (!l.optOutAt) await commit(leadOps(l, optOutPatch(clock.today(), l), { optOutText, trashed }));
@@ -156,6 +188,12 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
     closeWithoutReply: (id) => changeLead(id, () => transition("disqualifiziert", "Nicht erreicht")),
     setFollowUp: (id, date) => changeLead(id, (l) => followUpPatch(l, date)),
     setNextStep: (id, text) => changeLead(id, () => ({ nextStep: String(text || "").trim() })),
+    /** A note, no contact: dated, below what Notizen holds now, so a note written meanwhile stays. */
+    addNote: async (id, text) => {
+      const note = String(text).trim();
+      if (!note) throw new ValidationError("text", "Die Notiz ist leer");
+      return changeLead(id, (l) => ({ notes: [l.notes, `${dayLabel(clock.today())}: ${note}`].filter(Boolean).join("\n\n") }));
+    },
     /**
      * Changes the given parts of a lead's Kundenakte. `before` is the Kundenakte as a form or an agent read it ({} for
      * none): if it changed since, nothing is saved, so a writer can never undo someone else's entry. Both sides are
@@ -177,6 +215,24 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
     meetingOutcome: (id, meeting) => changeLead(id, (l) => meetingPatch(l, meeting, clock.today())),
     /** A phone call and how it ended: logged, and the lead moved on by the outcome, in one write. */
     logCall: async (id, call) => logContact(id, callActivity(call, clock.today()), (l, acts, activity) => planAfterCall(l, acts, activity, call)),
+    /**
+     * Takes back a call logged by mistake: the call is erased (no restore of the lead brings it back, no Änderungen
+     * entry keeps it) and the lead's CALL_FIELDS return to what they were before it. Only the lead's newest activity,
+     * and only while nothing wrote the lead since the call; a call that recorded an opt-out cannot be taken back.
+     */
+    undoCall: (activityId) => retrying(async () => {
+      const call = await store.get("activities", activityId);
+      if (!call?.outcome) throw new ValidationError("activityId", "Anruf nicht gefunden");
+      const l = await lead(call.leadId);
+      const newest = (await store.activitiesOf(l.id)).sort(byTimeline).at(-1);
+      const before = newest?.id === call.id ? await store.leadBefore(l, call) : null;
+      if (!before) throw new ValidationError("activityId", "Nur der letzte Anruf l\xE4sst sich zur\xFCcknehmen, solange der Betrieb seitdem unver\xE4ndert ist.");
+      if (l.optOutAt && !before.optOutAt) throw new ValidationError("activityId", "Ein Opt-out l\xE4sst sich nicht zur\xFCcknehmen.");
+      // Checked against the lead before the call, so a first contact the call set may go again.
+      const next = normalizeLead({ ...l, ...Object.fromEntries(CALL_FIELDS.map((k) => [k, before[k]])) }, before, clock.today());
+      await commit([{ type: "discard", collection: "activities", id: call.id, base: call }, patchOp(l, changed(l, next))]);
+      return true;
+    }),
     /** The business asked not to be contacted again: record it (dated) and close the lead. */
     optOut: (id, note) => retrying(async () => recordOptOut(await lead(id), OPT_OUT_TEXT + (note ? " " + String(note).trim() : ""))),
     /**
@@ -208,17 +264,34 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
       if (base) await commit([{ type: "remove", collection: "templates", id, base }]);
     }),
     saveIcp: (icp) => commit([{ type: "put", collection: "settings", id: "icp", data: { ...normalizeIcp(icp), updatedAt: clock.now() } }]),
-    /** Sends from the signed-in user's Gmail, then logs the activity. */
-    async sendEmail(id, { subject, text, templateId }) {
+    /**
+     * Sends from the signed-in user's Gmail, then logs the activity under the id the sync gives the same message.
+     * `replyTo`: a mail of this lead it answers, in that mail's thread when the thread is in this user's mailbox (each
+     * mailbox has its own threads); else it starts one.
+     */
+    async sendEmail(id, { subject, text, templateId, replyTo = null }) {
       const l = await mailable(id);
-      const sent = await mailer.send({ leadId: id, to: l.email, subject, text, serviceMail: !getsUnsubscribeLink(l) });
+      const answered = replyTo ? (await store.activitiesOf(id)).find((a) => a.id === replyTo && a.mail) : null;
+      if (replyTo && !answered) throw new ValidationError("replyTo", "Die beantwortete E-Mail gibt es nicht mehr.");
+      const inThread = answered && answered.mail.mailbox === mailer.mailbox;
+      const sent = await mailer.send({ leadId: id, to: l.email, subject, text, serviceMail: !getsUnsubscribeLink(l), ...(inThread && { thread: { threadId: answered.mail.threadId, messageId: answered.mail.messageId } }) });
       try {
-        return { ...(await logContact(id, { direction: "out", channel: "E-Mail", text, templateId }, planAfterActivity, { sent: true })), gmail: sent };
+        const mail = { gmailId: sent.id, threadId: sent.threadId, mailbox: mailer.mailbox, subject, from: mailer.mailbox, to: l.email, messageId: sent.messageId };
+        const options = { sent: true, activityId: await mailActivityId(mailer.mailbox, sent.id), mail };
+        return { ...(await logContact(id, { direction: "out", channel: "E-Mail", text, templateId }, planAfterActivity, options)), gmail: sent };
       } catch (e) {
         // The mail is out; say so instead of inviting a second send.
         throw new ValidationError("activity", `E-Mail wurde gesendet, aber nicht eingetragen (${e.message}). Bitte manuell eintragen.`);
       }
     },
+    /**
+     * A message the Gmail sync found in `mail.mailbox`, to or from this lead, dated `date` (the day it came, `at`).
+     * Logged by the rules of any contact; an outgoing one is refused where sending is (an opt-out, a closed address),
+     * so it is never logged as sent. An incoming one is always logged, also on an opted-out lead. Null when the lead
+     * holds it already.
+     */
+    recordMail: async (leadId, { direction, date, at, text, mail }) => logContact(leadId, { direction, channel: "E-Mail", date, text }, foundMailPlan,
+      { activityId: await mailActivityId(mail.mailbox, mail.gmailId), at, mail, found: true }),
     /** Agents prepare, people send: a Gmail draft, nothing logged. */
     async draftEmail(id, { subject, text }) {
       const l = await mailable(id);

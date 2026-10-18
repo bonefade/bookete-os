@@ -1,7 +1,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createD1 } from "./d1.js";
-import { allowedUser, sessionUser, startLogin, finishLogin, safeNext, logoutEverywhere } from "../src/server/auth.js";
+import { allowedUser, sessionUser, startLogin, finishLogin, safeNext, logoutEverywhere, canReadGmail } from "../src/server/auth.js";
 import { readConfig } from "../src/server/config.js";
 import { sha256 } from "../src/server/crypto.js";
 
@@ -46,9 +46,9 @@ test("after login only same-site paths are followed", () => {
   assert.equal(safeNext("https://evil.com/#/betrieb/L1", base), "/");
 });
 
-function stubGoogle(profile) {
+function stubGoogle(profile, grant = { refresh_token: "rt" }) {
   globalThis.fetch = async (url) => {
-    if (String(url).includes("/token")) return Response.json({ access_token: "at", refresh_token: "rt" });
+    if (String(url).includes("/token")) return Response.json({ access_token: "at", ...grant });
     if (String(url).includes("userinfo")) return Response.json(profile);
     throw new Error("unexpected fetch " + url);
   };
@@ -71,6 +71,24 @@ test("login returns to the full MCP authorize URL and stores the Gmail token enc
   const user = await env.DB.prepare("SELECT refresh_token FROM users WHERE email = 'jo@bookete.com'").first();
   assert.ok(user.refresh_token && user.refresh_token !== "rt");
   assert.equal((await env.DB.prepare("SELECT count(*) AS n FROM sessions").first()).n, 1);
+});
+
+test("the scopes Google granted with the Gmail token decide whether the sync may read Gmail", async () => {
+  const env = { DB: createD1() };
+  const profile = { email: "jo@bookete.com", email_verified: true, name: "Jo" };
+  const compose = "openid email profile https://www.googleapis.com/auth/gmail.compose";
+  stubGoogle(profile, { refresh_token: "rt", scope: compose });
+  await login(env, "/");
+  assert.equal(canReadGmail(await allowedUser(env, config, "jo@bookete.com")), false);
+  stubGoogle(profile, { refresh_token: "rt2", scope: compose + " https://www.googleapis.com/auth/gmail.readonly" });
+  await login(env, "/");
+  assert.equal(canReadGmail(await allowedUser(env, config, "jo@bookete.com")), true);
+  // A sign-in that brings no new token keeps the token and the scopes it was granted with.
+  stubGoogle(profile, { scope: "openid email profile" });
+  await login(env, "/");
+  assert.equal(canReadGmail(await allowedUser(env, config, "jo@bookete.com")), true);
+  const start = await startLogin(new Request("https://crm.bookete.com/auth/login"), config);
+  assert.match(new URL(start.headers.get("Location")).searchParams.get("scope"), /gmail\.readonly/);
 });
 
 test("login refuses unlisted and unverified accounts, and a forged state", async () => {

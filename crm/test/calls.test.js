@@ -7,13 +7,15 @@ import { COMMANDS } from "../src/server/commands.js";
 import { handleMcp } from "../src/server/mcp.js";
 import { ValidationError } from "../src/domain/errors.js";
 import { countTouches, hasReply, meetingDue } from "../src/domain/activity.js";
+import { BACKUP_FORMAT } from "../src/domain/backup.js";
 
 const clock = { today: () => "2026-10-15", now: () => "2026-10-15T10:00:00.000Z" };
 function setup() {
-  const store = createStore(createD1());
+  const db = createD1();
+  const store = createStore(db);
   let n = 0;
   const uc = createUseCases({ store, clock, ids: { newId: () => `id${++n}` }, actor: "jo@bookete.com (test)" });
-  return { store, uc };
+  return { db, store, uc };
 }
 const rejects = (promise, field) => assert.rejects(promise, (e) => e instanceof ValidationError && e.field === field);
 const mcp = async (context, name, args) => (await (await handleMcp(new Request("https://crm/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) }), context)).json()).result;
@@ -177,4 +179,68 @@ test("on the appointment's day: Kunde, no deal with a reason, or a new appointme
   await rejects(uc.meetingOutcome(open, { result: "kein-abschluss", reason: "Zu klein", time: "10:00" }), "time");
   await rejects(uc.meetingOutcome(open, { result: "neuer-termin", date: "2026-10-20", reason: "Zu klein" }), "lostReason");
   assert.equal((await store.get("leads", open)).status, "qualifiziert");
+});
+
+test("a call logged by mistake is taken back: the lead is as before it, and nothing brings the call back", async () => {
+  const { db, store, uc } = setup();
+  const id = await uc.addLead({ name: "Krone", phone: "+43 1" });
+  await uc.setNextStep(id, "Anrufen");
+  const before = await store.get("leads", id);
+  const { activity } = await uc.logCall(id, { outcome: "termin", date: "2026-10-22" });
+  assert.deepEqual(shape(await store.get("leads", id)), ["qualifiziert", "2026-10-22", "Termin", null]);
+  assert.equal(COMMANDS.undoCall[0].safeParse({ activityId: activity.id }).success, true);
+  assert.equal(await uc.undoCall(activity.id), true);
+  const l = await store.get("leads", id);
+  assert.deepEqual([...shape(l), l.contactedAt], [...shape(before), null]);
+  assert.deepEqual(await store.activitiesOf(id), []);
+  await uc.deleteLead(id);
+  await uc.restoreLead(id);
+  assert.deepEqual(await store.activitiesOf(id), []);
+  assert.equal(await store.get("activities", activity.id), null);
+  assert.equal((await db.prepare("SELECT count(*) AS n FROM history WHERE collection = 'activities' AND id = ?").bind(activity.id).first()).n, 0);
+  await rejects(uc.undoCall(activity.id), "activityId");
+});
+
+test("only the newest call is taken back, only while the lead is unchanged since, and never an opt-out", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Krone", phone: "+43 1" });
+  const first = (await uc.logCall(id, { outcome: "nicht-erreicht" })).activity;
+  const second = (await uc.logCall(id, { outcome: "rueckruf", date: "2026-10-20" })).activity;
+  await rejects(uc.undoCall(first.id), "activityId");
+  await uc.undoCall(second.id);
+  assert.deepEqual(shape(await store.get("leads", id)), ["kontaktiert", "2026-10-17", "", null]);
+  // The undo wrote the lead: the call before it stays.
+  await rejects(uc.undoCall(first.id), "activityId");
+  const changed = (await uc.logCall(id, { outcome: "nicht-erreicht" })).activity;
+  await uc.setNextStep(id, "Mittags anrufen");
+  await rejects(uc.undoCall(changed.id), "activityId");
+  const mail = (await uc.logActivity(id, { direction: "in", channel: "E-Mail", text: "Hallo" })).activity;
+  await rejects(uc.undoCall(mail.id), "activityId");
+  // An import adds an activity without writing its lead: the call is no longer the newest.
+  const last = (await uc.logCall(id, { outcome: "nicht-erreicht" })).activity;
+  await uc.importBackup({ format: BACKUP_FORMAT, data: { activities: [{ id: "B1", leadId: id, date: "2026-10-15", direction: "in", channel: "E-Mail", text: "Alt", createdAt: "2026-10-15T11:00:00.000Z" }] } });
+  await rejects(uc.undoCall(last.id), "activityId");
+  const closed = await uc.addLead({ name: "Post", phone: "+43 2" });
+  const optOut = (await uc.logCall(closed, { outcome: "kein-interesse", reason: "Keine Kontaktaufnahme gew\xFCnscht" })).activity;
+  await assert.rejects(uc.undoCall(optOut.id), { message: "Ein Opt-out l\xE4sst sich nicht zur\xFCcknehmen." });
+  assert.ok((await store.get("leads", closed)).optOutAt);
+});
+
+test("MCP records an appointment's outcome by the web's rules, and hasEmail is false where no mail may go", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Krone", email: "info@krone.at", status: "qualifiziert" });
+  let r = await mcp({ store, clock, uc }, "meeting_outcome", { id, result: "kein-abschluss" });
+  assert.ok(r.isError, JSON.stringify(r));
+  r = await mcp({ store, clock, uc }, "meeting_outcome", { id, result: "kein-abschluss", reason: "Kein Bedarf" });
+  assert.ok(!r.isError, JSON.stringify(r));
+  assert.deepEqual(shape(await store.get("leads", id)), ["disqualifiziert", null, "", "Kein Bedarf"]);
+  const old = await uc.addLead({ name: "Alte Krone", email: " Info@Krone.at" });
+  await uc.optOut(old);
+  await uc.deleteLead(old);
+  const customer = await uc.addLead({ name: "Kunde Krone", email: "info@krone.at", status: "kunde", contactedAt: "2026-10-01" });
+  const open = await uc.addLead({ name: "Linde", email: "linde@example.at" });
+  const former = await uc.addLead({ name: "Ex", email: "ex@example.at", status: "kunde", contactedAt: "2026-10-01" });
+  await uc.optOut(former);
+  const { leads } = JSON.parse((await mcp({ store, clock, uc }, "search_leads", { query: "" })).content[0].text);
+  assert.deepEqual(Object.fromEntries(leads.map((l) => [l.id, l.hasEmail])), { [id]: false, [customer]: true, [open]: true, [former]: false });
 });

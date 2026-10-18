@@ -38,7 +38,7 @@ test("MCP exposes exactly these tools: no delete, no send", async () => {
   const { result } = await call(mcpContext(), "tools/list");
   assert.deepEqual(result.tools.map((t) => t.name).sort(), [
     "change_status", "create_gmail_draft", "create_lead", "get_lead", "list_templates",
-    "log_activity", "log_call", "render_template", "search_leads", "set_follow_up", "update_account", "update_lead",
+    "log_activity", "log_call", "meeting_outcome", "render_template", "search_leads", "set_follow_up", "update_account", "update_lead",
   ]);
 });
 
@@ -156,6 +156,8 @@ test("a mail, sent or drafted, ends with the lead's unsubscribe link and carries
   assert.doesNotMatch(head, /List-Unsubscribe/);
   assert.equal(Buffer.from(body.replace(/\r\n/g, ""), "base64").toString(), "Grüß Gott");
   assert.throws(() => mimeMessage({ from: { email: "jo@bookete.com", name: "Jo" }, to: "a@example.at", subject: "Hi", text: "t", unsubscribe: "https://x\r\nBcc: x@evil.test" }));
+  // The Message-ID answered comes from a mail someone else wrote.
+  assert.throws(() => mimeMessage({ from: { email: "jo@bookete.com", name: "Jo" }, to: "a@example.at", subject: "Hi", text: "t", inReplyTo: "<x@y>\r\nBcc: x@evil.test" }), /Header injection/);
 });
 
 test("configuration fails closed", () => {

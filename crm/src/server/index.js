@@ -1,11 +1,12 @@
 import { OAuthProvider, AuthorizationError, CimdFetchError } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 import { readConfig } from "./config.js";
-import { allowedUser, sessionUser, startLogin, finishLogin, logout, logoutEverywhere } from "./auth.js";
+import { allowedUser, sessionUser, startLogin, finishLogin, logout, logoutEverywhere, canReadGmail } from "./auth.js";
 import { createStore } from "./store.js";
 import { createMailer } from "./gmail.js";
 import { COMMANDS } from "./commands.js";
 import { handleMcp } from "./mcp.js";
+import { syncMail } from "./sync.js";
 import { isUnsubscribePath, isUnsubscribeLink, unsubscribeLeadId } from "./unsubscribe.js";
 import { createUseCases } from "../application/use-cases.js";
 import { systemClock, uuidIds, retryPause } from "../adapters/system.js";
@@ -154,7 +155,7 @@ async function app(request, env, config) {
   if (url.pathname === "/authorize") return user ? authorize(request, env, config, user) : Response.redirect(`${config.PUBLIC_URL}/auth/login?next=${encodeURIComponent(url.pathname + url.search)}`, 302);
   if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
   if (!user) return Response.json({ error: "Nicht angemeldet" }, { status: 401 });
-  if (route === "GET /api/me") return Response.json({ email: user.email, name: user.name, gmail: !!user.refreshToken, version: pkg.version });
+  if (route === "GET /api/me") return Response.json({ email: user.email, name: user.name, gmail: !!user.refreshToken, caps: { gmailRead: canReadGmail(user) }, version: pkg.version });
   if (route === "GET /api/sync") return Response.json(await createStore(env.DB).changes(Math.max(0, parseInt(url.searchParams.get("since"), 10) || 0)));
   if (route === "GET /api/history") {
     const query = LeadQuery.safeParse(Object.fromEntries(url.searchParams));
@@ -176,6 +177,11 @@ async function mcp(request, env, ctx, config) {
 
 let config, provider;
 export default {
+  /** The cron (wrangler.jsonc `triggers`): the Gmail sync. */
+  async scheduled(controller, env, ctx) {
+    config ??= readConfig(env);
+    ctx.waitUntil(syncMail({ env, config, clock: systemClock, ids: uuidIds, pause: retryPause }));
+  },
   async fetch(request, env, ctx) {
     config ??= readConfig(env);
     provider ??= new OAuthProvider({

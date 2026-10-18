@@ -13,7 +13,7 @@ import { systemClock } from "../src/adapters/system.js";
 
 // The authorization walk: every command and API route, called without a valid session, is refused
 // before its input is read. The exact list makes each new command a conscious addition to this walk.
-const RPC = ["addLead", "updateLead", "updateField", "deleteLead", "restoreLead", "purgeLead", "changeStatus", "setLostReason", "closeWithoutReply", "setFollowUp", "setNextStep", "logActivity", "logCall", "meetingOutcome", "optOut", "clearOptOut", "saveTemplate", "deleteTemplate", "saveIcp", "saveAccount", "sendEmail", "importBackup"];
+const RPC = ["addLead", "updateLead", "updateField", "deleteLead", "restoreLead", "purgeLead", "changeStatus", "setLostReason", "closeWithoutReply", "setFollowUp", "setNextStep", "logActivity", "logCall", "meetingOutcome", "optOut", "clearOptOut", "saveTemplate", "deleteTemplate", "saveIcp", "saveAccount", "sendEmail", "importBackup", "undoCall", "addNote"];
 
 const kv = () => {
   const m = new Map();
@@ -110,6 +110,7 @@ test("a signed-in user can see which version is deployed", async () => {
   ]);
   const me = await (await fetchAs(e, "__Host-crm-session=jo-tok", "GET", "/api/me")).json();
   assert.equal(me.version, JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
+  assert.deepEqual([me.gmail, me.caps], [false, { gmailRead: false }]);
 });
 
 const config = { PUBLIC_URL: "https://crm.bookete.com", CONSENT_SECRET: "c".repeat(32) };
