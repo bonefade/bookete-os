@@ -229,9 +229,12 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       if (onSearch !== S().ui.searchOpen) setSearch(onSearch);
       return;
     }
+    const route = parseRoute(location.hash);
+    // A lead page opened by a link or a reload was opened from no tab: it belongs to Betriebe, as a template to Vorlagen.
+    if (shown === null && LEAD_VIEWS.has(route.view)) route.tab = "betriebe";
     shown = location.hash;
     saveScroll();
-    const next = enterRoute(S().ui, parseRoute(location.hash));
+    const next = enterRoute(S().ui, route);
     show(next, next.view ? 0 : next.scroll[next.tab] || 0);
     if (onSearch) setSearch(true);
   }

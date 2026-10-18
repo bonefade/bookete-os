@@ -800,6 +800,27 @@ test("the tabs show on every screen, shut while a form holds input; a lead page'
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }
 });
+test("a lead page opened by a link or a reload belongs to Betriebe; one opened from Heute keeps Heute", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  const ready = () => {
+    const store = createStore(initialState());
+    store.data("leads", [{ ...LEAD_FIELDS, id: "L1", name: "Krone", status: "neu" }]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    return store;
+  };
+  const current = (tabsEl) => tabsEl.innerHTML.match(/data-tab="(\w+)" aria-current/)?.[1];
+  try {
+    const linked = fakeBrowser("#/betrieb/L1", ready(), {});
+    assert.equal(current(linked.tabsEl), "betriebe");
+    await linked.click({ tab: "betriebe" });
+    assert.equal(linked.h.location.hash, "#/betriebe");
+    const fromHeute = fakeBrowser("#/heute", ready(), {});
+    await fromHeute.click({ open: "L1" });
+    assert.deepEqual([fromHeute.h.location.hash, current(fromHeute.tabsEl)], ["#/betrieb/L1", "heute"]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
 test("the top bar's field opens the search over any screen, which stays as it is, first with the recently changed leads", async () => {
   const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
   const lead = (id, name, updatedAt) => ({ ...LEAD_FIELDS, id, name, status: "kontaktiert", updatedAt });

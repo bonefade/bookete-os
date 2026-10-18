@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.16.2 (2026-10-18)
+
+### Fixed
+- A business's page opened by a link or a reload now marks Betriebe as its tab, and that tab leads to the Betriebe list. Before, it marked Heute. A page opened from a tab still keeps that tab.
+
 ## 1.16.1 (2026-10-18)
 
 ### Fixed
