@@ -16,6 +16,7 @@
   --pine:#2F5D50; --pine-soft:#E2ECE7; --due:#B5412E; --due-soft:#F7E4DF; --brass:#9A7424; --brand:#013E37;
   box-sizing:border-box;
   --topbar:60px;
+  --tabbar:56px;
   color-scheme:light;
 }
 @media (prefers-color-scheme: dark){
@@ -59,7 +60,7 @@ label>input,label>select,label>textarea{margin-top:4px}
 /* tabs: at the bottom on a phone, a rail on the left from tablet width (at the end) */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
 .tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:680px}
-.tab{border:none;border-radius:0;background:none;color:var(--muted);flex-direction:column;gap:0;padding:8px 4px 6px;min-height:56px;font-size:.8rem;position:relative}
+.tab{border:none;border-radius:0;background:none;color:var(--muted);flex-direction:column;gap:0;padding:8px 4px 6px;min-height:var(--tabbar);font-size:.8rem;position:relative}
 .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tab[aria-current="page"]{color:var(--pine);font-weight:600}
 /* A shut tab takes no click, on its icon and label either, whichever element a browser hands the click to. */
@@ -198,6 +199,8 @@ label.drop>input{width:20px;min-height:20px;flex:none;margin:0;padding:0}
 .brand svg{height:24px;aspect-ratio:5/3}
 .brand .wm{font:500 1.15rem/1 Manrope,system-ui,sans-serif;letter-spacing:-.02em}
 .brand .sub{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+/* On the narrowest phones the search field needs the room of "CRM" to show its whole placeholder. */
+@media (max-width:359px){.brand .sub{display:none}}
 
 /* ---- v5: global search ---- */
 :root{--mark:#F3DFA2}
@@ -222,8 +225,9 @@ label.drop>input{width:20px;min-height:20px;flex:none;margin:0;padding:0}
 mark{background:var(--mark);color:inherit;border-radius:3px;padding:0 1px}
 kbd{font:inherit;font-size:.8rem;border:1px solid var(--line);border-radius:5px;padding:0 5px;background:var(--surface)}
 @media (hover:none){.skeys{display:none}}
-/* The search opens over the screen, under the top bar, and leaves it as it is; the tabs stay in reach and close it. */
-.sbox{position:fixed;left:0;right:0;bottom:0;top:calc(env(safe-area-inset-top,0px) + var(--topbar));z-index:8}
+/* The search opens over the screen, between the top bar and the tabs, and leaves it as it is; the tabs stay in reach and close it.
+   It ends above the tabs at the bottom (their height and border), so no result, picked by key or scrolled to, hides under them. */
+.sbox{position:fixed;left:0;right:0;bottom:calc(var(--tabbar) + 1px + env(safe-area-inset-bottom,0px));top:calc(env(safe-area-inset-top,0px) + var(--topbar));z-index:8}
 .sbox[hidden]{display:none}
 /* The page's scroll padding keeps a focused field clear of the top bar. The search field sits in that bar, so the same
    padding would scroll the screen under the search: on the click into the field, which its margin cancels, and on
@@ -243,7 +247,7 @@ html:has(#sbox:not([hidden])){scroll-padding-top:0;overflow:hidden}
   .tabs .in{display:flex;flex-direction:column}
   .tab{min-height:68px}
   #app{margin-left:var(--rail)}
-  .sbox{left:var(--rail)}
+  .sbox{left:var(--rail);bottom:0}
   .wrap{padding-bottom:calc(48px + env(safe-area-inset-bottom,0px))}
   .toast{bottom:calc(24px + env(safe-area-inset-bottom,0px));left:calc(50% + var(--rail) / 2)}
 }

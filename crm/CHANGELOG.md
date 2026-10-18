@@ -2,6 +2,12 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.16.3 (2026-10-18)
+
+### Fixed
+- **Search on a phone:** the results now end above the tabs at the bottom. Before, the last results and one picked with the arrow keys could sit hidden under the tabs.
+- On the narrowest phones (320px), the top bar leaves out "CRM" so the search field shows its whole "Suchen …".
+
 ## 1.16.2 (2026-10-18)
 
 ### Fixed

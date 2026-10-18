@@ -747,13 +747,18 @@ test("five tabs, at the bottom on a phone and on the left from tablet width, and
   // From tablet width, if tall enough for the five tabs, a rail on the left, under the top bar, with the screens, the
   // search and the toast right of it; never hidden. A shut tab takes no click on its icon or label.
   const wide = page.match(/@media \(min-width:760px\) and \(min-height:480px\)\{\n  :root\{--rail:[^]*?\n\}/)?.[0] ?? "";
-  for (const rule of [/\.tabs\{top:calc\(env\(safe-area-inset-top,0px\) \+ var\(--topbar\)\);right:auto;width:var\(--rail\)/, /\.tabs \.in\{display:flex;flex-direction:column\}/, /#app\{margin-left:var\(--rail\)\}/, /\.sbox\{left:var\(--rail\)\}/, /\.toast\{[^}]*left:calc\(50% \+ var\(--rail\) \/ 2\)\}/]) assert.match(wide, rule);
+  for (const rule of [/\.tabs\{top:calc\(env\(safe-area-inset-top,0px\) \+ var\(--topbar\)\);right:auto;width:var\(--rail\)/, /\.tabs \.in\{display:flex;flex-direction:column\}/, /#app\{margin-left:var\(--rail\)\}/, /\.sbox\{left:var\(--rail\);bottom:0\}/, /\.toast\{[^}]*left:calc\(50% \+ var\(--rail\) \/ 2\)\}/]) assert.match(wide, rule);
   assert.match(page, /\.tab:disabled\{pointer-events:none\}/);
   assert.doesNotMatch(page, /\.tabs\[hidden\]/);
   assert.match(page, /<header class="brandbar">[^]*<input type="search" id="gq"[^]*<\/header>/);
   // The search's own box, shut until the field opens it.
   assert.match(page, /<div class="sbox" id="sbox" hidden><\/div>/);
   assert.match(page, /\.sbox\[hidden\]\{display:none\}/);
+  // With the tabs at the bottom it ends above them, by their own height, so a result picked by key never hides under them.
+  assert.match(page, /\.tab\{[^}]*min-height:var\(--tabbar\);/);
+  assert.match(page, /\.sbox\{position:fixed;left:0;right:0;bottom:calc\(var\(--tabbar\) \+ 1px \+ env\(safe-area-inset-bottom,0px\)\);/);
+  // At 320px "CRM" makes room for the whole placeholder.
+  assert.match(page, /@media \(max-width:359px\)\{\.brand \.sub\{display:none\}\}/);
   // While it shows, neither the click into the field, a key typed, nor a wheel or swipe outside it scrolls the screen under it.
   assert.match(page, /#gq\{scroll-margin-top:calc\(-1 \* \(env\(safe-area-inset-top,0px\) \+ var\(--topbar\) \+ 64px\)\)\}/);
   assert.match(page, /html\{scroll-padding-top:calc\(env\(safe-area-inset-top,0px\) \+ var\(--topbar\) \+ 64px\);/);
