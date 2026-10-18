@@ -1524,6 +1524,44 @@ test("Betriebe counts, filters and ranks a lead with mail only where its address
   assert.deepEqual(freshLeads(stateWith([leads[1], leads[2], leads[0]].map((l) => ({ ...l, fit: 1 })))).map((l) => l.id), ["L1", "L3"]);
 });
 
+test("the composer shows the Gmail signature as text, with a switch to leave it out; without one it says why", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    for (const [signature, shown] of [
+      [{ has: true, text: "Jo Meindl\nbookete <b>" }, /<label class="check"><input type="checkbox" id="cSig" checked> Mit Signatur<\/label><p class="hint sig">Jo Meindl\nbookete &lt;b&gt;<\/p>/],
+      [{ has: true, text: "" }, /id="cSig" checked> Mit Signatur<\/label><p class="note">Signatur ohne Text/],
+      [{ has: false, text: "" }, /In Gmail ist keine Signatur hinterlegt/],
+      [{ failed: true }, /id="cSig" checked> Mit Signatur<\/label><p class="note">Vorschau nicht geladen/],
+      [null, /Ohne Signatur: <a href="\/auth\/login">Gmail neu verbinden<\/a>/],
+    ]) {
+      const store = createStore(initialState());
+      store.set((s) => ({ ...s, caps: { db: true, gmail: true, gmailRead: true } }));
+      store.data("leads", [{ ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-10", email: "k@krone.at", updatedAt: "v1" }]);
+      for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+      const sent = [];
+      let asked = 0;
+      const uc = { signature: async () => (asked++, signature), sendEmail: async (l, msg) => sent.push(msg.signed) };
+      const { root, app, click, change } = fakeBrowser("#/betrieb/L1", store, uc);
+      app.onDataChanged();
+      await click({ compose: "E-Mail" });
+      await new Promise((r) => setTimeout(r, 0));
+      assert.match(root.innerHTML, shown);
+      if (!signature?.has) continue;
+      await click({ act: "sendEmail" });
+      // Left out for one mail: no preview, and the next mail has it again. Gmail is asked once per page.
+      await click({ compose: "E-Mail" });
+      change({ id: "cSig", checked: false });
+      assert.doesNotMatch(root.innerHTML, /class="hint sig"/);
+      await click({ act: "sendEmail" });
+      await click({ compose: "E-Mail" });
+      assert.match(root.innerHTML, /id="cSig" checked/);
+      assert.deepEqual([sent, asked], [[true, false], 1]);
+    }
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
 test("Mehr says whether Gmail is connected, and asks to connect it again where it cannot read the answers", () => {
   const line = (caps) => moreView({ ...stateWith([]), caps: { db: true, ...caps }, me: { email: "jo@bookete.com" } }).match(/ · Gmail ([^]*?)<\/p>/)[1];
   assert.equal(line({ gmail: false, gmailRead: false }), 'nicht verbunden – <a href="/auth/login">neu anmelden</a>');

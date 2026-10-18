@@ -351,11 +351,21 @@ function composerHtml(state, l, acts, today, offersMailto) {
     ${gmail ? "" : `<label>Datum<input type="date" id="cDate" value="${esc(c.date)}" max="${esc(today)}"></label>`}
     <textarea id="cText" placeholder="Nachricht">${esc(c.text)}</textarea>
     ${c.missing?.length ? `<p class="hint">Noch leer: ${esc(c.missing.map((m) => "{" + m + "}").join(", "))}. Erg\xE4nze den Betrieb oder passe den Text an.</p>` : ""}
+    ${gmail ? signatureHtml(state.ui.signature, c.signed !== false) : ""}
     ${gmail && getsUnsubscribeLink(l) ? `<p class="hint">Ein Abmeldelink wird angeh\xE4ngt, solange ${esc(l.name)} kein Kunde ist.</p>` : ""}
     ${steps}${afterHtml}
     ${gmail ? `<button class="primary full" style="margin-top:8px" data-act="sendEmail">Per Gmail senden</button>` : ""}
     ${copy ? `<div class="two" style="margin-top:8px">${copy}<button${gmail ? "" : ' class="primary"'} data-act="logActivity">Gesendet</button></div>` : ""}
   </div>`;
+}
+/** What the composer says about the Gmail signature (loadSignature), with the switch to leave it out and a preview as text. */
+function signatureHtml(sig, on) {
+  if (sig === undefined) return `<p class="note">Signatur wird geladen \u2026</p>`;
+  if (sig === null) return `<p class="note">Ohne Signatur: <a href="/auth/login">Gmail neu verbinden</a>, dann h\xE4ngt das CRM Ihre Gmail-Signatur an.</p>`;
+  if (!sig.failed && !sig.has) return `<p class="note">In Gmail ist keine Signatur hinterlegt.</p>`;
+  const preview = sig.failed ? `<p class="note">Vorschau nicht geladen; die Signatur wird beim Senden angeh\xE4ngt.</p>`
+    : sig.text ? `<p class="hint sig">${esc(sig.text)}</p>` : `<p class="note">Signatur ohne Text (ein Bild, etwa ein Logo).</p>`;
+  return `<label class="check"><input type="checkbox" id="cSig"${on ? " checked" : ""}> Mit Signatur</label>${on ? preview : ""}`;
 }
 /** The status chip's menu: the usual next moves from this status, then setting it directly, then the opt-out. */
 function statusMenuHtml(l, acts, ui, today) {

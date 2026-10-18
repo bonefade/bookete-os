@@ -31,7 +31,7 @@ const time = z.string().regex(/^\d{2}:\d{2}$/);
 const SpokenReason = z.enum(SPOKEN_REASONS);
 export const CallInput = z.object({ outcome: z.enum(CALL_OUTCOMES.map(([k]) => k)), date: date.optional(), time: time.optional(), reason: SpokenReason.optional(), note: z.string().max(2000).optional() }).strict();
 export const MeetingInput = z.object({ id, result: z.enum(["kunde", "kein-abschluss", "neuer-termin"]), reason: SpokenReason.optional(), date: date.optional(), time: time.optional() }).strict();
-const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish(), replyTo: id.nullish() });
+const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish(), replyTo: id.nullish(), signed: z.boolean().optional() });
 
 /** Web-app commands: name → input schema and the use case it runs. */
 export const COMMANDS = {
@@ -58,6 +58,7 @@ export const COMMANDS = {
   deleteTemplate: [z.object({ id }), (uc, a) => uc.deleteTemplate(a.id)],
   saveIcp: [z.object({ icp: z.object({ fit: z.array(z.string().max(500)).max(50), noFit: z.array(z.string().max(500)).max(50), note: z.string().max(2000).optional() }) }), (uc, a) => uc.saveIcp(a.icp)],
   sendEmail: [Email, (uc, a) => uc.sendEmail(a.id, a)],
+  signature: [z.object({}), (uc) => uc.signature()],
   // Records are normalized by the use case. At most IMPORT_CHUNK per call, all collections together, so no request
   // costs more queries than a full chunk of activities; the client sends one collection at a time (chunkBackup).
   importBackup: [z.object({ backup: z.object({ format: z.string(), data: z.record(z.string(), z.array(z.looseObject({ id }))).refine((data) => Object.values(data).flat().length <= IMPORT_CHUNK, `At most ${IMPORT_CHUNK} records per call`) }).loose() }), (uc, a) => uc.importBackup(a.backup)],

@@ -1,19 +1,29 @@
 import { z } from "zod";
 import { decrypt, base64url, fromBase64url } from "./crypto.js";
 import { ValidationError } from "../domain/errors.js";
-import { unsubscribeUrl, unsubscribeLine } from "./unsubscribe.js";
+import { unsubscribeUrl, unsubscribeLine, unsubscribeHtml } from "./unsubscribe.js";
+import { canReadGmail } from "./auth.js";
 
 const utf8 = (text) => new TextEncoder().encode(text);
 const b64 = (text) => btoa(String.fromCharCode(...utf8(text)));
 // RFC 2047 encoded word, so umlauts survive in names and subjects.
 const word = (text) => /^[\x20-\x7e]*$/.test(text) ? text : `=?UTF-8?B?${b64(text)}?=`;
 
+const escHtml = (text) => text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[c]);
+const part = (type, body) => [`Content-Type: ${type}; charset=UTF-8`, "Content-Transfer-Encoding: base64", "", b64(body).replace(/.{76}/g, "$&\r\n")];
+// "_" is no base64 character, so no part's body can hold the boundary.
+const BOUNDARY = "=_bookete-crm";
 /**
- * A plain-text RFC 5322 message, base64url as the Gmail API wants it. `unsubscribe` adds the one-click headers (RFC 8058);
- * `inReplyTo`, the Message-ID of the mail it answers, the headers that keep it in that thread (RFC 5322 §3.6.4).
+ * An RFC 5322 message, base64url as the Gmail API wants it: `text`, then the unsubscribe line when `unsubscribe` is
+ * given, with the one-click headers (RFC 8058); `inReplyTo`, the Message-ID of the mail it answers, the headers that keep
+ * it in that thread (RFC 5322 §3.6.4). Plain text; with a `signature` ({ html, text }, from Gmail), also an HTML part
+ * carrying it as Gmail shows it, and the text after a "-- " line (RFC 3676 §4.3).
  */
-export function mimeMessage({ from, to, subject, text, unsubscribe, inReplyTo }) {
+export function mimeMessage({ from, to, subject, text, unsubscribe, inReplyTo, signature }) {
   if (/[\r\n]/.test(to + subject + from.email + from.name + (unsubscribe ?? "") + (inReplyTo ?? ""))) throw new Error("Header injection");
+  // A signature that is only an image (a logo) shows in the HTML part alone.
+  const plain = text + (signature?.text ? `\n\n-- \n${signature.text}` : "") + (unsubscribe ? unsubscribeLine(unsubscribe) : "");
+  const html = signature && `<div dir="ltr">${escHtml(text).replace(/\n/g, "<br>")}</div><br><div class="gmail_signature">${signature.html}</div>${unsubscribe ? unsubscribeHtml(unsubscribe) : ""}`;
   const lines = [
     `From: ${word(from.name)} <${from.email}>`,
     `To: ${to}`,
@@ -21,10 +31,9 @@ export function mimeMessage({ from, to, subject, text, unsubscribe, inReplyTo })
     ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`] : []),
     ...(unsubscribe ? [`List-Unsubscribe: <${unsubscribe}>`, "List-Unsubscribe-Post: List-Unsubscribe=One-Click"] : []),
     "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=UTF-8",
-    "Content-Transfer-Encoding: base64",
-    "",
-    b64(text).replace(/.{76}/g, "$&\r\n"),
+    ...(html
+      ? [`Content-Type: multipart/alternative; boundary="${BOUNDARY}"`, "", `--${BOUNDARY}`, ...part("text/plain", plain), `--${BOUNDARY}`, ...part("text/html", html), `--${BOUNDARY}--`]
+      : part("text/plain", plain)),
   ];
   return base64url(utf8(lines.join("\r\n")));
 }
@@ -47,6 +56,7 @@ const History = z.looseObject({
 });
 const List = z.looseObject({ nextPageToken: z.string().optional(), messages: z.array(Ref).default([]) });
 const Message = Ref.extend({ internalDate: z.coerce.number().int().positive(), payload: Part });
+const SendAs = z.looseObject({ sendAs: z.array(z.looseObject({ sendAsEmail: z.string(), signature: z.string().default("") })).default([]) });
 
 /** Bytes in the charset a part names; UTF-8 when it names none or one this runtime does not know. */
 function decodeBytes(bytes, charset) {
@@ -87,6 +97,7 @@ const QUOTE_STARTS = [
   /^>/m,
 ];
 const MAIL_TEXT_MAX = 2000;
+const tidy = (text) => text.replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
 /** The text of a mail without the quoted history it answers, at most MAIL_TEXT_MAX characters. */
 export function mailText(payload) {
   const plain = partOf(payload, "text/plain");
@@ -96,7 +107,7 @@ export function mailText(payload) {
   const raw = decodeBytes(fromBase64url(part.body.data), charset).replace(/\r\n?/g, "\n");
   const text = plain ? raw : htmlText(raw);
   const cut = Math.min(...QUOTE_STARTS.map((re) => text.search(re)).filter((i) => i >= 0), text.length);
-  return text.slice(0, cut).replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAIL_TEXT_MAX);
+  return tidy(text.slice(0, cut)).slice(0, MAIL_TEXT_MAX);
 }
 
 /**
@@ -127,12 +138,26 @@ export async function createMailer(config, user) {
   }
   // Every mail goes to one lead and ends with that lead's unsubscribe link, in the text and in the headers;
   // only a mail marked `serviceMail` goes without, so a caller that forgets the flag still sends the link.
-  const raw = async ({ leadId, to, subject, text, serviceMail = false, inReplyTo }) => {
+  // `signed`: with the user's Gmail signature, when the grant can read it.
+  const raw = async ({ leadId, to, subject, text, serviceMail = false, inReplyTo, signed = false }) => {
     const from = { email: user.email, name: user.name };
-    if (serviceMail) return mimeMessage({ from, to, subject, text, inReplyTo });
-    const unsubscribe = await unsubscribeUrl(config, leadId);
-    return mimeMessage({ from, to, subject, text: text + unsubscribeLine(unsubscribe), unsubscribe, inReplyTo });
+    const sig = signed ? await signature() : null;
+    const unsubscribe = serviceMail ? undefined : await unsubscribeUrl(config, leadId);
+    return mimeMessage({ from, to, subject, text, unsubscribe, inReplyTo, signature: sig?.html ? sig : undefined });
   };
+  /**
+   * The signature Gmail adds to this user's mail: their send-as address's, as HTML ("" for none) and as text ("" too for
+   * one that is only an image). Null when
+   * the grant cannot read it (no gmail.readonly yet). Fails closed: an API error throws, so no mail goes out without the
+   * signature it was to carry.
+   */
+  async function signature() {
+    if (!canReadGmail(user)) return null;
+    const { sendAs } = SendAs.parse(await call("settings/sendAs"));
+    // The mail goes out from the user's own address (raw), so its signature; an alias's is another's.
+    const html = (sendAs.find((s) => s.sendAsEmail.toLowerCase() === user.email.toLowerCase())?.signature ?? "").trim();
+    return { html, text: tidy(htmlText(html)) };
+  }
   /**
    * One message: its labels, when Gmail got it, the addresses in From, To and Cc, its subject and Message-ID, and whether
    * a machine sent it on its own (`automated`, RFC 3834's Auto-Submitted: an out-of-office reply); with `full`, also its
@@ -181,5 +206,6 @@ export async function createMailer(config, user) {
     /** One page of the messages a Gmail search finds, newest first. */
     search: async (q, pageToken) => List.parse(await call("messages?" + query({ q, maxResults: 500, pageToken }))),
     message,
+    signature,
   };
 }

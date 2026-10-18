@@ -27,7 +27,7 @@ afterEach(() => { [globalThis.fetch, console.error] = [realFetch, realError]; })
 function fakeGmail() {
   const boxes = new Map();
   const box = (email) => {
-    if (!boxes.has(email)) boxes.set(email, { messages: new Map(), history: [], historyId: 1000, oldest: 0, n: 0 });
+    if (!boxes.has(email)) boxes.set(email, { messages: new Map(), history: [], historyId: 1000, oldest: 0, n: 0, signature: "" });
     return boxes.get(email);
   };
   const addressesIn = (m) => [m.from, m.to, m.cc].join(" ").toLowerCase();
@@ -40,6 +40,8 @@ function fakeGmail() {
     calls: 0,
     /** What was sent: the raw message and the thread Gmail was asked to put it in. */
     sent: [],
+    /** The raw messages of the drafts made. */
+    drafts: [],
     box,
     /**
      * A message arriving in `email`'s mailbox now, in a history record of its own or, `join`, in the last one; its Gmail
@@ -62,6 +64,8 @@ function fakeGmail() {
       const path = u.pathname.replace("/gmail/v1/users/me/", "");
       const p = u.searchParams;
       if (path === "profile") return Response.json({ historyId: String(b.historyId) });
+      if (path === "settings/sendAs" && b.signature === null) return new Response("{}", { status: 500 });
+      if (path === "settings/sendAs") return Response.json({ sendAs: [{ sendAsEmail: "alias@bookete.com", signature: "<b>Alias</b>" }, { sendAsEmail: init.headers.Authorization.slice("Bearer at:".length).toUpperCase(), signature: b.signature }] });
       if (path === "history") {
         const start = Number(p.get("startHistoryId"));
         if (start < b.oldest) return new Response("{}", { status: 404 });
@@ -76,6 +80,10 @@ function fakeGmail() {
         const found = [...b.messages.values()].filter((m) => Date.parse(m.at) > after && wanted.some((a) => addressesIn(m).includes(a))).reverse();
         const offset = Number(p.get("pageToken") || 0);
         return Response.json({ messages: found.slice(offset, offset + 3).map(({ id, threadId }) => ({ id, threadId })), ...(found.length > offset + 3 && { nextPageToken: String(offset + 3) }) });
+      }
+      if (path === "drafts") {
+        gmail.drafts.push(Buffer.from(JSON.parse(init.body).message.raw, "base64url").toString());
+        return Response.json({ id: `d${gmail.drafts.length}` });
       }
       if (path === "messages/send") {
         const { raw: encoded, threadId } = JSON.parse(init.body);
@@ -117,6 +125,9 @@ async function setup({ users = { "jo@bookete.com": READ } } = {}) {
     sender: async () => createUseCases({ store, clock, ids, actor: "jo@bookete.com (web)", mailer: await createMailer(config, await allowedUser({ DB: db }, config, "jo@bookete.com")) }),
   };
 }
+/** A mail's parts, decoded: the text, then the HTML when it has one. */
+const parts = (raw) => [...raw.matchAll(/Content-Type: text\/(?:plain|html); charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+?)(?:\r\n--|$)/g)]
+  .map(([, b]) => Buffer.from(b.replace(/\r\n/g, ""), "base64").toString());
 const texts = async (store, id) => (await store.activitiesOf(id)).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)).map((a) => `${a.direction} ${a.text}`);
 
 test("the first run logs a lead's mail of the last 30 days, oldest first; later runs what Gmail adds", async () => {
@@ -322,6 +333,61 @@ test("a mail sent from the CRM and found again stays on its own entry, not on on
   const sent = await (await s.sender()).sendEmail(id, { subject: "Tische", text: "Per CRM gesendet" });
   assert.equal(await s.uc.recordMail(id, { direction: "out", date: "2026-10-15", at: sent.activity.createdAt, text: "Per CRM gesendet", mail: sent.activity.mail }), null);
   assert.deepEqual((await s.store.activitiesOf(id)).map((a) => `${a.text} ${a.mail?.gmailId ?? "-"}`).sort(), ["Per CRM gesendet jo-1", "Per Hand eingetragen -"]);
+});
+
+test("a mail from the CRM carries the user's Gmail signature, as HTML and as text after \"-- \", before the Abmeldelink; a draft too", async () => {
+  const s = await setup();
+  const box = s.gmail.box("jo@bookete.com");
+  box.signature = '<div>Jo Meindl<br><a href="https://bookete.com">bookete.com</a></div>';
+  const id = await s.uc.addLead({ name: "Krone", email: "info@krone.at" });
+  const kunde = await s.uc.addLead({ name: "Post", email: "info@post.at" });
+  await s.uc.changeStatus(kunde, "kunde");
+  const sender = await s.sender();
+  assert.deepEqual(await sender.signature(), { has: true, text: "Jo Meindl\nbookete.com" });
+  await sender.sendEmail(id, { subject: "Tische", text: "Grüß Gott <Chef>" });
+  const raw = s.gmail.sent.at(-1).raw;
+  assert.match(raw, /^Content-Type: multipart\/alternative; boundary="=_bookete-crm"\r$/m);
+  const [plain, html] = parts(raw);
+  assert.match(plain, /^Grüß Gott <Chef>\n\n-- \nJo Meindl\nbookete\.com\n\nSie möchten keine E-Mails mehr von uns\? Abmelden: https:\/\/crm\.bookete\.com\/\S+$/);
+  assert.match(html, /^<div dir="ltr">Grüß Gott &lt;Chef&gt;<\/div><br><div class="gmail_signature"><div>Jo Meindl<br><a href="https:\/\/bookete\.com">bookete\.com<\/a><\/div><\/div><p [^>]+>Sie möchten keine E-Mails mehr von uns\? <a href="https:\/\/crm\.bookete\.com\/[^"]+">Abmelden<\/a><\/p>$/);
+  // Logged as written, without the signature.
+  assert.deepEqual(await texts(s.store, id), ["out Grüß Gott <Chef>"]);
+  // A Kunde's service mail: signed, no Abmeldelink.
+  await sender.sendEmail(kunde, { subject: "Rechnung", text: "Anbei" });
+  assert.deepEqual(parts(s.gmail.sent.at(-1).raw).map((p) => /Abmelden/.test(p)), [false, false]);
+  // Left out, or none in Gmail: plain text, as before.
+  await sender.sendEmail(id, { subject: "Kurz", text: "Danke", signed: false });
+  box.signature = "";
+  assert.deepEqual(await sender.signature(), { has: false, text: "" });
+  await sender.sendEmail(id, { subject: "Kurz", text: "Bis bald" });
+  for (const { raw: plainOnly } of s.gmail.sent.slice(-2)) {
+    assert.doesNotMatch(plainOnly, /multipart/);
+    assert.doesNotMatch(parts(plainOnly)[0], /-- \n/);
+  }
+  box.signature = "<b>Jo</b>";
+  await sender.draftEmail(id, { subject: "Entwurf", text: "Hallo" });
+  assert.match(parts(s.gmail.drafts.at(-1))[0], /^Hallo\n\n-- \nJo\n\n/);
+  // Only a logo: in the HTML part, and no empty "-- " block in the text.
+  box.signature = '<div><img src="https://lh3.googleusercontent.com/logo.png" width="120"></div>';
+  assert.deepEqual(await sender.signature(), { has: true, text: "" });
+  await sender.sendEmail(kunde, { subject: "Logo", text: "Hallo" });
+  const [logoText, logoHtml] = parts(s.gmail.sent.at(-1).raw);
+  assert.deepEqual([logoText, /<img src="https:\/\/lh3\.googleusercontent\.com\/logo\.png"/.test(logoHtml)], ["Hallo", true]);
+  // When Gmail cannot give the signature, nothing goes out and nothing is logged.
+  box.signature = null;
+  const before = [s.gmail.sent.length, (await s.store.activitiesOf(id)).length];
+  await assert.rejects(sender.sendEmail(id, { subject: "Tische", text: "Noch einmal" }), { message: "Gmail-Fehler 500" });
+  assert.deepEqual([s.gmail.sent.length, (await s.store.activitiesOf(id)).length], before);
+});
+
+test("without the gmail.readonly grant, mail goes out without a signature and the composer is told so", async () => {
+  const s = await setup({ users: { "jo@bookete.com": "openid email profile https://www.googleapis.com/auth/gmail.compose" } });
+  s.gmail.box("jo@bookete.com").signature = "<b>Jo</b>";
+  const id = await s.uc.addLead({ name: "Krone", email: "info@krone.at" });
+  const sender = await s.sender();
+  assert.equal(await sender.signature(), null);
+  await sender.sendEmail(id, { subject: "Tische", text: "Grüß Gott" });
+  assert.doesNotMatch(s.gmail.sent.at(-1).raw, /multipart/);
 });
 
 test("a mail in both mailboxes is logged once", async () => {

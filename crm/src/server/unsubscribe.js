@@ -43,5 +43,8 @@ export async function unsubscribeLeadId(config, pathname) {
   return await crypto.subtle.verify("HMAC", await key(config.CONSENT_SECRET), mac, id) ? new TextDecoder().decode(id) : null;
 }
 
+const UNSUBSCRIBE_ASK = "Sie m\xF6chten keine E-Mails mehr von uns?";
 /** The line a mail with the link ends with. */
-export const unsubscribeLine = (url) => `\n\nSie m\xF6chten keine E-Mails mehr von uns? Abmelden: ${url}`;
+export const unsubscribeLine = (url) => `\n\n${UNSUBSCRIBE_ASK} Abmelden: ${url}`;
+/** The same line in a mail's HTML part; `url` comes from unsubscribeUrl, so it holds no character HTML would read. */
+export const unsubscribeHtml = (url) => `<p style="font-size:12px;color:#666">${UNSUBSCRIBE_ASK} <a href="${url}">Abmelden</a></p>`;

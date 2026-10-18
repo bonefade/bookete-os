@@ -69,6 +69,7 @@ or overwriting data by mistake, not about outside access.
 
 All deployed by CI in one push to `main` (`.github/workflows/ci.yml`, `vars.CRM_DEPLOY`), then checked against the live `app.js`.
 
+- CRM 1.18.0: the user's Gmail signature on every mail sent and every agent draft (HTML part plus text, `crm/src/server/gmail.js` `signature`), with a text preview and "Mit Signatur" in the composer (owner's picks: HTML mail, sends and drafts, show with a switch).
 - CRM 1.17.0: the lead page redesign the owner approved on the design canvas (one feed, one composer, status from outcomes, one next-step line) and Heute as one queue; Gmail replies and threads from both mailboxes every 5 minutes (`gmail.readonly`, migration 0004, `crm/src/server/sync.js`); answers in their thread; undo of a call (`undoCall`); MCP `meeting_outcome`; a closed address no longer counts as "mit E-Mail". Replaces "tasks as their own records" (owner's pick Q3) and "detect replies". Papierkorb retention decided: kept until erased.
 - CRM 1.16.5: the closed-address hint shows a German date, and on a lead whose own opt-out arrives while the sheet is open it no longer names the lead as holding "dieselbe Adresse"; a test pins that sheet for a Kunde with Gmail connected (`addressOptOutText`, `crm/src/domain/lead.js`).
 - CRM 1.16.4: the Papierkorb reads one more than a page and offers older ones only when they exist (`trash`, `crm/src/server/store.js`).

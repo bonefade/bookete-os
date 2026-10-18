@@ -29,8 +29,9 @@ export function coalesced(run) {
  */
 export function createApi(onWrite) {
   const inFlight = new Map();
+  const post = async (name, body) => (await call("/api/rpc/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body })).result;
   const send = async (name, body) => {
-    const { result } = await call("/api/rpc/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+    const result = await post(name, body);
     await onWrite();
     return result;
   };
@@ -57,6 +58,8 @@ export function createApi(onWrite) {
     setFollowUp: (lead, date) => rpc("setFollowUp", { id: lead.id, date }),
     setNextStep: (lead, text) => rpc("setNextStep", { id: lead.id, text }),
     addNote: (lead, text) => rpc("addNote", { id: lead.id, text }),
+    // A read: nothing to sync after it.
+    signature: () => post("signature", "{}"),
     logActivity: (lead, _acts, input) => rpc("logActivity", { id: lead.id, input }),
     logCall: (lead, call) => rpc("logCall", { id: lead.id, ...call }),
     undoCall: (activity) => rpc("undoCall", { activityId: activity.id }),

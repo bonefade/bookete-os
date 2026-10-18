@@ -267,14 +267,14 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
     /**
      * Sends from the signed-in user's Gmail, then logs the activity under the id the sync gives the same message.
      * `replyTo`: a mail of this lead it answers, in that mail's thread when the thread is in this user's mailbox (each
-     * mailbox has its own threads); else it starts one.
+     * mailbox has its own threads); else it starts one. `signed`: with the user's Gmail signature.
      */
-    async sendEmail(id, { subject, text, templateId, replyTo = null }) {
+    async sendEmail(id, { subject, text, templateId, replyTo = null, signed = true }) {
       const l = await mailable(id);
       const answered = replyTo ? (await store.activitiesOf(id)).find((a) => a.id === replyTo && a.mail) : null;
       if (replyTo && !answered) throw new ValidationError("replyTo", "Die beantwortete E-Mail gibt es nicht mehr.");
       const inThread = answered && answered.mail.mailbox === mailer.mailbox;
-      const sent = await mailer.send({ leadId: id, to: l.email, subject, text, serviceMail: !getsUnsubscribeLink(l), ...(inThread && { thread: { threadId: answered.mail.threadId, messageId: answered.mail.messageId } }) });
+      const sent = await mailer.send({ leadId: id, to: l.email, subject, text, serviceMail: !getsUnsubscribeLink(l), signed, ...(inThread && { thread: { threadId: answered.mail.threadId, messageId: answered.mail.messageId } }) });
       try {
         const mail = { gmailId: sent.id, threadId: sent.threadId, mailbox: mailer.mailbox, subject, from: mailer.mailbox, to: l.email, messageId: sent.messageId };
         const options = { sent: true, activityId: await mailActivityId(mailer.mailbox, sent.id), mail };
@@ -292,10 +292,18 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
      */
     recordMail: async (leadId, { direction, date, at, text, mail }) => logContact(leadId, { direction, channel: "E-Mail", date, text }, foundMailPlan,
       { activityId: await mailActivityId(mail.mailbox, mail.gmailId), at, mail, found: true }),
-    /** Agents prepare, people send: a Gmail draft, nothing logged. */
+    /** Agents prepare, people send: a Gmail draft with the user's signature, ready to send as it is; nothing logged. */
     async draftEmail(id, { subject, text }) {
       const l = await mailable(id);
-      return mailer.draft({ leadId: id, to: l.email, subject, text, serviceMail: !getsUnsubscribeLink(l) });
+      return mailer.draft({ leadId: id, to: l.email, subject, text, serviceMail: !getsUnsubscribeLink(l), signed: true });
+    },
+    /**
+     * What "Mit Signatur" adds to a mail: whether the signed-in user has a Gmail signature (`has`) and its text ("" for
+     * one that is only an image); null when Gmail cannot give it.
+     */
+    async signature() {
+      const sig = mailer && await mailer.signature();
+      return sig ? { has: !!sig.html, text: sig.text } : null;
     },
     /**
      * Restores records from a backup (the Claude artifact's or this app's). Only records the CRM has never

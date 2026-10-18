@@ -91,7 +91,7 @@ const TOOLS = {
       if (template.purpose === "leitfaden") throw new ValidationError("templateId", "Ein Gespr\xE4chsleitfaden ist keine Nachricht");
       return fillTemplate(template.body, lead);
     }],
-  create_gmail_draft: ["Create a Gmail draft to the lead's email address in the signed-in user's mailbox. Nothing is sent or logged; a person reviews and sends it. The draft ends with the lead's unsubscribe link, unless the lead is a Kunde. Refused if the lead has an opt-out, or, unless the lead is a Kunde, any lead with the same address (also one in the Papierkorb).",
+  create_gmail_draft: ["Create a Gmail draft to the lead's email address in the signed-in user's mailbox. Nothing is sent or logged; a person reviews and sends it. The draft ends with the user's Gmail signature when Gmail has one, so do not sign the text, and with the lead's unsubscribe link, unless the lead is a Kunde. Refused if the lead has an opt-out, or, unless the lead is a Kunde, any lead with the same address (also one in the Papierkorb).",
     z.object({ id, subject: z.string().min(1).max(300), text: z.string().min(1).max(20000) }),
     async ({ id: leadId, ...msg }, { uc }) => uc.draftEmail(leadId, msg)],
 };

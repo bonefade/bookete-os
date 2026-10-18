@@ -188,6 +188,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     // The tabs show on every screen; while a form holds input they are shut, as the search field is, so nothing typed is lost.
     tabsEl.innerHTML = tabBar(st, today, holdsInput(st.ui));
     if (view === "detail") loadHistory(st);
+    if (st.ui.compose?.channel === "E-Mail" && st.caps.gmail) loadSignature();
     return true;
   }
   // The lead whose history is on its way, as id@updatedAt, so a redraw meanwhile asks for it only once.
@@ -207,6 +208,23 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       if (S().ui.leadId !== lead.id) return;
       // Failed, it stays `rows: null` until the lead changes, so the page does not ask again on every redraw.
       ui({ changes: { leadId: lead.id, at: lead.updatedAt, rows } });
+      safeRender();
+    });
+  }
+  let signatureLoading = false;
+  /**
+   * The user's Gmail signature for the composer's preview, once per page: `ui.signature` is { has, text } (use case
+   * `signature`), null when the grant cannot read it, or { failed } (sending reads it again).
+   */
+  function loadSignature() {
+    if (S().ui.signature !== undefined || signatureLoading) return;
+    signatureLoading = true;
+    uc.signature().catch((e) => {
+      console.error(e);
+      return { failed: true };
+    }).then((signature) => {
+      signatureLoading = false;
+      ui({ signature });
       safeRender();
     });
   }
@@ -664,7 +682,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const lead = currentLead(st);
       const c = st.ui.compose;
       if (!confirm(`E-Mail an ${lead.email} jetzt senden?`)) return;
-      if (await run(() => uc.sendEmail(lead, { subject: c.subject, text: c.text, templateId: c.templateId, replyTo: c.thread?.replyTo || null }), "Gesendet und eingetragen")) composeSaved(c);
+      if (await run(() => uc.sendEmail(lead, { subject: c.subject, text: c.text, templateId: c.templateId, replyTo: c.thread?.replyTo || null, signed: c.signed !== false }), "Gesendet und eingetragen")) composeSaved(c);
     },
     importPick: () => root.querySelector("#importFile")?.click(),
     showTrash: () => loadTrash(),
@@ -797,6 +815,10 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       return render();
     }
     if (t.id === "cCh" && c) return t.value ? sheet("compose", { channel: t.value }) : undefined;
+    if (t.id === "cSig" && c) {
+      ui({ compose: { ...c, signed: t.checked } });
+      return render();
+    }
     // The date changes what logging plans, so the line under "Danach" is drawn again.
     if (t.id === "cDate" && c) return sheet("compose", { date: t.value });
     if (t.id === "cFu" && c) return sheet("compose", { followUp: t.value || null, fuEdit: false });
