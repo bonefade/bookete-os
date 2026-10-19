@@ -127,6 +127,13 @@ function agreedDate(date, time, today) {
   if (time && !TIME_RE.test(time)) throw new ValidationError("time", "Uhrzeit ung\xFCltig");
   return atTime(time);
 }
+/**
+ * Agreeing on an appointment, on a call, by mail, by message or in person: Qualifiziert (a Kunde stays Kunde), with
+ * the appointment's day from today on as the next step.
+ */
+export function planMeeting(lead, { date, time }, today) {
+  return { ...(lead.status !== "kunde" && { status: "qualifiziert" }), followUp: date, nextStep: "Termin" + agreedDate(date, time, today) };
+}
 /** An appointment that has come: a qualified lead whose next step is the Termin and whose day is here or past. */
 export const meetingDue = (lead, today) => lead.status === "qualifiziert" && !!lead.followUp && lead.followUp <= today && /^Termin\b/.test(lead.nextStep || "");
 /** How the appointment went: they became a customer, it ended without a deal (and why), or a new appointment. */
@@ -139,7 +146,7 @@ export function meetingPatch(lead, { result, reason, date, time }, today) {
     if (!SPOKEN_REASONS.includes(reason)) throw new ValidationError("lostReason", "Bitte einen Grund w\xE4hlen");
     return { status: "disqualifiziert", lostReason: reason, nextStep: "" };
   }
-  if (result === "neuer-termin") return { followUp: date, nextStep: "Termin" + agreedDate(date, time, today) };
+  if (result === "neuer-termin") return planMeeting(lead, { date, time }, today);
   throw new ValidationError("result", "Wie war der Termin?");
 }
 /**
@@ -151,7 +158,6 @@ export function meetingPatch(lead, { result, reason, date, time }, today) {
 export function planAfterCall(lead, acts, activity, { date, time }, policy = SEQUENCE_POLICY) {
   // A call is logged on its day (callActivity), so that is today.
   const patch = planAfterActivity(lead, acts, activity, activity.date, policy);
-  const at = atTime(time);
   const kunde = lead.status === "kunde";
   switch (activity.outcome) {
     case "nicht-erreicht": {
@@ -166,9 +172,9 @@ export function planAfterCall(lead, acts, activity, { date, time }, policy = SEQ
       return { ...patch, followUp: addDays(activity.date, policy.callRetryDays), ...(!kunde && { nextStep: "" }) };
     }
     case "rueckruf":
-      return { ...patch, followUp: date, nextStep: "R\xFCckruf" + at };
+      return { ...patch, followUp: date, nextStep: "R\xFCckruf" + atTime(time) };
     case "termin":
-      return { ...patch, ...(!kunde && { status: "qualifiziert" }), followUp: date, nextStep: "Termin" + at };
+      return { ...patch, ...planMeeting(lead, { date, time }, activity.date) };
     default: {
       if (!kunde) return { ...patch, status: "disqualifiziert", lostReason: activity.reason, nextStep: "" };
       // The opt-out reason is an opt-out on a customer too.

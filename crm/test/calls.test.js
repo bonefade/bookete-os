@@ -53,6 +53,31 @@ test("Rückruf and Termin need a date from today on; Termin qualifies the lead",
   assert.deepEqual((await store.activitiesOf(id)).map((a) => a.text), ["R\xFCckruf am 20.10.2026 um 11:30", "Termin vereinbart: 22.10.2026"]);
 });
 
+test("an appointment agreed by mail or in person qualifies the lead like a Termin on a call, and logs no call", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Krone", email: "krone@example.at" });
+  await uc.logActivity(id, { direction: "in", channel: "E-Mail", text: "Gerne am Dienstag" });
+  const before = (await store.activitiesOf(id)).length;
+  await rejects(uc.scheduleMeeting(id, {}), "date");
+  await rejects(uc.scheduleMeeting(id, { date: "2026-10-14" }), "date");
+  await rejects(uc.scheduleMeeting(id, { date: "2026-10-20", time: "9 Uhr" }), "time");
+  await uc.scheduleMeeting(id, { date: "2026-10-20", time: "15:00" });
+  assert.deepEqual(shape(await store.get("leads", id)), ["qualifiziert", "2026-10-20", "Termin um 15:00", null]);
+  assert.equal((await store.activitiesOf(id)).length, before);
+  assert.equal(meetingDue(await store.get("leads", id), "2026-10-20"), true);
+  // A first appointment met in person dates the first contact; a customer stays Kunde.
+  const met = await uc.addLead({ name: "Post" });
+  await uc.scheduleMeeting(met, { date: "2026-10-15" });
+  assert.deepEqual([...shape(await store.get("leads", met)), (await store.get("leads", met)).contactedAt], ["qualifiziert", "2026-10-15", "Termin", null, "2026-10-15"]);
+  const kunde = await uc.addLead({ name: "Linde", status: "kunde" });
+  await uc.scheduleMeeting(kunde, { date: "2026-10-22" });
+  assert.deepEqual(shape(await store.get("leads", kunde)), ["kunde", "2026-10-22", "Termin", null]);
+  // After an opt-out nobody may contact them, a Kunde included.
+  await uc.optOut(kunde);
+  await rejects(uc.scheduleMeeting(kunde, { date: "2026-10-23" }), "optOutAt");
+  assert.equal(COMMANDS.scheduleMeeting[0].safeParse({ id: "a", date: "2026-10-20", outcome: "termin" }).success, false);
+});
+
 test("Kein Interesse needs a reason and disqualifies with it; the opt-out reason is an opt-out", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Krone", phone: "+43 1" });

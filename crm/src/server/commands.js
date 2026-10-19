@@ -47,6 +47,7 @@ export const COMMANDS = {
   logCall: [CallInput.extend({ id }), (uc, { id: leadId, ...call }) => uc.logCall(leadId, call)],
   undoCall: [z.object({ activityId: id }), (uc, a) => uc.undoCall(a.activityId)],
   meetingOutcome: [MeetingInput, (uc, { id: leadId, ...meeting }) => uc.meetingOutcome(leadId, meeting)],
+  scheduleMeeting: [z.object({ id, date, time: time.optional() }).strict(), (uc, { id: leadId, ...meeting }) => uc.scheduleMeeting(leadId, meeting)],
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],
   setFollowUp: [z.object({ id, date: z.union([date, z.literal("")]).nullable() }), (uc, a) => uc.setFollowUp(a.id, a.date)],
   setNextStep: [z.object({ id, text: z.string().max(500) }), (uc, a) => uc.setNextStep(a.id, a.text)],

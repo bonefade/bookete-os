@@ -400,6 +400,37 @@ test("Betriebe: a status select, and with Disqualifiziert a reason and a contact
   assert.deepEqual(names(leadsView(stateWith(leads, { status: "alle", reason: "Zu klein", contacted: "nein" }), TODAY)).length, 7);
 });
 
+// The regression: "Termin eintragen" opened the call sheet, so an appointment agreed by mail was saved as a phone call.
+test("Termin eintragen, in the status menu and on a mail thread, saves the appointment and logs no call", async () => {
+  const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-12", email: "krone@example.at", phone: "+43 1" };
+  const mail = { id: "A1", leadId: "L1", date: "2026-10-14", channel: "E-Mail", direction: "in", text: "Gerne Dienstag", createdAt: "2026-10-14T09:00:00.000Z", mail: { gmailId: "g1", threadId: "t1", mailbox: "jo@bookete.com", subject: "Tische", from: "krone@example.at", to: "jo@bookete.com", messageId: "" } };
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    for (const opener of [{ act: "statusMenu" }, null]) {
+      const calls = [];
+      const uc = { logCall: async (...a) => calls.push(["logCall", ...a]), scheduleMeeting: async (l, m) => (calls.push(["scheduleMeeting", l.id, m]), {}) };
+      const store = createStore(initialState());
+      store.data("leads", [lead]);
+      store.data("activities", [mail]);
+      for (const c of ["templates", "settings"]) store.data(c, []);
+      const { root, click, change, field } = fakeBrowser("#/betrieb/L1", store, uc);
+      if (opener) await click(opener);
+      // Click what the page draws: the menu item, or the thread's button.
+      const act = (label) => root.innerHTML.match(new RegExp(`data-act="(\\w+)"[^>]*>(?:<span><b>)?${label}`))[1];
+      await click({ act: act("Termin eintragen") });
+      // An open form holds input: search stays shut, as for the call sheet.
+      assert.equal(field.disabled, true);
+      await change({ id: "agDate", value: "2026-10-20" });
+      await change({ id: "agTime", value: "15:00" });
+      assert.match(root.innerHTML, /Beim Speichern: Status wird Qualifiziert \xB7 N\xE4chster Schritt [^<]*20\. Okt\.[^<]*Termin um 15:00/);
+      await click({ act: root.innerHTML.match(/class="primary" data-act="(\w+)"[^>]*>Speichern</)[1] });
+      assert.deepEqual(calls, [["scheduleMeeting", "L1", { date: "2026-10-20", time: "15:00" }]]);
+    }
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
 test("Heute offers the new leads to write to first, the best first", async () => {
   const leads = [
     { ...LEAD_FIELDS, id: "L1", name: "Frisch", status: "neu", fit: 1 },
@@ -429,7 +460,7 @@ test("the lead view: the status chip opens the usual moves and setting it direct
   assert.match(view, /<button class="pill" data-act="statusMenu" aria-expanded="false">Kontaktiert ▾<\/button>/);
   assert.doesNotMatch(view, /data-status=|data-act="optOut"/);
   const menu = detailView(stateWith([lead], { leadId: "L1", statusMenu: true }), TODAY);
-  assert.deepEqual([...menu.matchAll(/class="mitem[^"]*" data-act="(\w+)"/g)].map((m) => m[1]), ["callTermin", "lostPick", "closeWithoutReply", "statusDirect", "optOut"]);
+  assert.deepEqual([...menu.matchAll(/class="mitem[^"]*" data-act="(\w+)"/g)].map((m) => m[1]), ["terminOpen", "lostPick", "closeWithoutReply", "statusDirect", "optOut"]);
   // Ohne Antwort abschließen waits for the last of the five contacts.
   assert.match(menu, /data-act="closeWithoutReply" disabled>/);
   const direct = detailView(stateWith([lead], { leadId: "L1", statusMenu: "direct" }), TODAY);

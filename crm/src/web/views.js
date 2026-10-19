@@ -2,7 +2,7 @@ import { STAGES, STAGE_LABEL, LOST_REASONS, SPOKEN_REASONS, BUSINESS_TYPES, RESE
 import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, regionCounts, toolCounts, contactCounts, callList, freshLeads, awaitsAnswer, todayQueue, queueList, roundList } from './selectors.js';
 import { addDays, dayLabel, daysBetween, toDateString } from '../domain/dates.js';
 import { channelLink } from './platform.js';
-import { countTouches, hasReply, isReply, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity } from '../domain/activity.js';
+import { countTouches, hasReply, isReply, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting } from '../domain/activity.js';
 import { esc, fmtDate, fmtDateWithYear, relDate, options, describeChange, statusMove, actorName, fmtTime } from './format.js';
 import { fold, searchTokens, searchLeads } from '../domain/search.js';
 import { hitLabel, markRanges, markHtml, snippetHtml } from './search.js';
@@ -279,10 +279,16 @@ const nextAfter = (l, patch) => ["followUp" in patch ? patch.followUp : l.follow
 /** What saving the call sheet will do, before it is saved: "Beim Speichern: Status wird Qualifiziert · Nächster Schritt …". */
 function callPreview(l, acts, call, today) {
   if (!call.outcome) return "";
+  return planPreview(l, () => {
+    const input = callInput(call);
+    return planAfterCall(l, acts, callActivity(input, today), input);
+  });
+}
+/** What saving a lead patch that `plan` gives will do, or why it would be refused. */
+function planPreview(l, plan) {
   let patch;
   try {
-    const input = callInput(call);
-    patch = planAfterCall(l, acts, callActivity(input, today), input);
+    patch = plan();
   } catch (e) {
     return e.message;
   }
@@ -374,7 +380,7 @@ function statusMenuHtml(l, acts, ui, today) {
   const item = (act, title, sub, disabled = false) => `<button class="mitem" data-act="${act}"${disabled ? " disabled" : ""}><span><b>${title}</b><small>${sub}</small></span><span aria-hidden="true">›</span></button>`;
   const direct = ui.statusMenu === "direct" ? `<div class="chips" style="margin:6px 0 4px">${STAGES.map(([k, v]) => `<button class="chip${k === "disqualifiziert" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}">${v}</button>`).join("")}</div>` : item("statusDirect", `${FIELD_LABEL.status} direkt setzen …`, "f\xFCr den seltenen Fall, fragt einmal nach");
   return `<div class="card menu"><p class="note" style="margin:0 0 4px">Normaler Weg ab ${esc(STAGE_LABEL[l.status])}</p>
-    ${takesCall(l, today) ? item("callTermin", "Termin eintragen", `wird ${STAGE_LABEL.qualifiziert}`) : ""}
+    ${takesCall(l, today) ? item("terminOpen", "Termin eintragen", `wird ${STAGE_LABEL.qualifiziert}`) : ""}
     ${lost ? item("lostPick", "Grund \xE4ndern", esc(l.lostReason)) : item("lostPick", "Absage eintragen", `wird ${STAGE_LABEL.disqualifiziert}, mit Grund`)}
     ${l.status === "kontaktiert" ? item("closeWithoutReply", "Ohne Antwort abschlie\xDFen", `ab Kontakt ${SEQUENCE_POLICY.maxTouches} von ${SEQUENCE_POLICY.maxTouches}`, !sequenceExhausted(l, acts)) : ""}
     ${direct}
@@ -434,7 +440,7 @@ function feedHtml(state, l, acts, today, clamp) {
     return `<div class="card thread"><div class="th-head"><b>${esc(subject)}</b>${newest === last && last.direction === "in" ? `<span class="pill new">Neue Antwort</span>` : ""}</div>
       <p class="note" style="margin:0 0 8px">${msgs.length} Nachricht${msgs.length > 1 ? "en" : ""} \xB7 Gmail \xB7 ${mine(last) ? "Ihr Postfach" : `Postfach von ${esc(actorName(last.mail.mailbox))}`}</p>
       ${entry(last)}${older}
-      <div class="two">${l.optOutAt ? "" : `<button data-act="reply" data-thread="${esc(last.mail.threadId)}">Antworten</button>`}${takesCall(l, today) ? `<button data-act="callTermin">Termin eintragen</button>` : ""}</div></div>`;
+      <div class="two">${l.optOutAt ? "" : `<button data-act="reply" data-thread="${esc(last.mail.threadId)}">Antworten</button>`}${takesCall(l, today) ? `<button data-act="terminOpen">Termin eintragen</button>` : ""}</div></div>`;
   };
   // Feed items sort by day, then by when they were written; a history entry's day is the viewer's local day.
   const items = [];
@@ -495,7 +501,7 @@ export function detailView(state, today) {
   const actions = ui.compose ? "" : `<div class="acts">${act(l.optOutAt ? "" : tel, "Anrufen", calls ? ' data-act="callOpen"' : "")}${write("E-Mail", "E-Mail", !!l.email)}${write("WhatsApp", "WhatsApp", !l.optOutAt && !!channelLink(l, "WhatsApp"))}${write("Instagram", "Instagram", !l.optOutAt && !!l.instagram)}<button data-compose="in">Eintragen</button></div>`;
   const filled = QUICK_FIELDS.filter((f) => l[f.key] && f.key !== "fit" && f.key !== "type").map((f) => FIELD_LABEL[f.key]).slice(0, 4).join(", ");
   const infoOpen = ui.infoOpen || (ui.editField && ui.editField !== "notes");
-  const sheet = calls && (ui.call || ui.round?.list === "calls") ? callHtml(l, acts, ui, today, state.data.templates) : meetingDue(l, today) ? meetingHtml(ui, today) : "";
+  const sheet = calls && ui.termin ? terminHtml(l, ui.termin, today) : calls && (ui.call || ui.round?.list === "calls") ? callHtml(l, acts, ui, today, state.data.templates) : meetingDue(l, today) ? meetingHtml(ui, today) : "";
   return `<div class="bar"><button class="link" data-act="back">‹ Zur\xFCck</button><h2>${esc(l.name)}</h2><button class="link" data-act="edit">Bearbeiten</button></div>
 <div class="wrap lead">
   ${roundBar(state, l, today)}
@@ -539,6 +545,17 @@ function callHtml(l, acts, ui, today, templates) {
     ${fields}${c.outcome ? `<label>Notiz <small>optional</small><input id="agNote" value="${esc(c.note || "")}"></label>` : ""}
     ${preview ? `<p class="hint">${esc(preview)}</p>` : ""}
     <div class="two" style="margin-top:8px"><button data-act="callCancel">Abbrechen</button><button class="primary" data-act="callSave"${c.outcome ? "" : " disabled"}>${ui.round?.list === "calls" ? "Speichern und weiter ›" : "Speichern"}</button></div>
+  </div></div>`;
+}
+/** An appointment agreed by mail, message or in person: its day as the next step, and no call logged. */
+function terminHtml(l, t, today) {
+  const preview = t.date ? planPreview(l, () => planMeeting(l, t, today)) : "";
+  return `<div class="sec"><div class="card sheet">
+    <h3>Termin mit ${esc(l.name)}</h3>
+    <p class="note" style="margin:0 0 8px">Per E-Mail, Nachricht oder vor Ort vereinbart. Ein Termin am Telefon geht \xFCber \u201EAnrufen\u201C.</p>
+    ${agreedFields(today, t)}
+    ${preview ? `<p class="hint">${esc(preview)}</p>` : ""}
+    <div class="two" style="margin-top:8px"><button data-act="terminCancel">Abbrechen</button><button class="primary" data-act="terminSave"${t.date ? "" : " disabled"}>Speichern</button></div>
   </div></div>`;
 }
 /** On the appointment's day: how it went. */

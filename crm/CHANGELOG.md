@@ -2,6 +2,10 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.18.2 (2026-10-19)
+
+- **Termin eintragen** (the status menu, or a mail thread) opens its own small form now: date, time, Speichern. Before, it opened the call form and saved the appointment as a phone call, so a Termin agreed by mail counted as a call and as "erreicht" in Diese Woche. Calls logged that way before stay as they are. A Termin agreed on the phone still goes through "Anrufen". "Termine" in Diese Woche counts only Termine agreed on a call, so one entered this way is not in it.
+
 ## 1.18.1 (2026-10-19)
 
 - **Betriebe:** the list filter takes a space again, so you can filter for a name of two words ("Gasthaus Krone"). Before, a space typed at the end vanished at once.

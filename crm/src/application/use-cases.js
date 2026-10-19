@@ -1,6 +1,6 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
-import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, mailActivityId, byTimeline, sameMail } from "../domain/activity.js";
+import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, planMeeting, mailActivityId, byTimeline, sameMail } from "../domain/activity.js";
 import { normalizeLead, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
@@ -213,6 +213,14 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
     logActivity,
     /** How an appointment went, on a Qualifiziert lead. */
     meetingOutcome: (id, meeting) => changeLead(id, (l) => meetingPatch(l, meeting, clock.today())),
+    /**
+     * An appointment agreed by mail, message or in person: the lead moves on as for a Termin on a call, and no call is
+     * logged. Refused after an opt-out, as a call is: a Kunde would keep its status and take the date.
+     */
+    scheduleMeeting: (id, meeting) => changeLead(id, (l) => {
+      assertMayContact(l, "out");
+      return planMeeting(l, meeting, clock.today());
+    }),
     /** A phone call and how it ended: logged, and the lead moved on by the outcome, in one write. */
     logCall: async (id, call) => logContact(id, callActivity(call, clock.today()), (l, acts, activity) => planAfterCall(l, acts, activity, call)),
     /**
