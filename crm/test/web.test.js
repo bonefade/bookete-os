@@ -1608,6 +1608,9 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
   const steps = [...page.split('class="card checks">')[1].split("</ol>")[0].matchAll(/<li class="(\w+)"><b>([^<]*)<\/b>/g)].map(([, cls, b]) => cls + " " + b);
   assert.deepEqual(steps, ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo bookete-Konto angelegt", "todo Widget auf der Website", "todo Google-Profil verknüpft", "todo Team eingeschult", "todo Live"]);
   assert.match(page, /data-step="abo">Erledigt<\/button><button data-skip="abo">/);
+  // A later step can be done or left out before the first open one; "Live" is never left out.
+  assert.match(page, /<li class="todo"><b>Widget auf der Website<\/b>[^]*?data-step="widget">Erledigt<\/button><button class="more" data-skip="widget">/);
+  assert.match(page, /<li class="todo"><b>Live<\/b>[^]*?data-step="live">Erledigt<\/button><\/span>/);
   assert.match(page, /data-step-undo="vertrag"/);
   // A customer live already, from before, ticks its list once: its first open step has the buttons too.
   state.ui.leadId = "K2";

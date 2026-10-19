@@ -439,7 +439,8 @@ function nextStepHtml(l, acts, ui, today) {
 }
 /**
  * A Kunde's care on its page: who looks after it, its phase, and the onboarding as a checklist. The first open step
- * has its buttons; a done one can be opened again. Gekündigt shows the steps as they stood. A step without a day
+ * stands out with its buttons, and every other open step can be done or left out before it; a done one can be opened
+ * again. Gekündigt shows the steps as they stood. A step without a day
  * belongs to a customer from before whose care is not stored yet.
  */
 function customerHtml(state, l, c, today) {
@@ -449,7 +450,7 @@ function customerHtml(state, l, c, today) {
   const phases = `<div class="chips">${PHASES.map(([k, label]) => `<button class="chip${k === "gekuendigt" ? " lostc" : ""}" data-phase="${k}" aria-pressed="${c.phase === k}">${label}</button>`).join("")}</div>`;
   const cancel = state.ui.cancelPick ? `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Warum gek\xFCndigt?</p><div class="chips">${CANCEL_REASONS.map((r) => `<button class="chip lostc" data-cancel="${esc(r)}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="cancelPickClose">Abbrechen</button></div>` : "";
   const steps = onboardingOf(c);
-  // The first open step can be ticked in every phase but Gekündigt: a customer from before, live already, ticks its list once.
+  // Steps can be ticked in every phase but Gekündigt: a customer from before, live already, ticks its list once.
   const open = c.phase !== "gekuendigt" ? steps.find((s) => !s.at) : null;
   const rows = steps.map((s) => {
     if (s.at) return `<li class="ok"><b>${esc(s.title)}${s.skipped ? " \xB7 entf\xE4llt" : ""}</b><small>${esc(fmtDate(s.at))} \xB7 ${esc(actorName(s.by))}${s.skipped && s.skipped !== "entf\xE4llt" ? " \xB7 " + esc(s.skipped) : ""}</small>${c.phase === "gekuendigt" ? "" : `<button class="more" data-step-undo="${s.id}">Wieder offen</button>`}</li>`;
@@ -457,7 +458,9 @@ function customerHtml(state, l, c, today) {
     const late = c.phase === "onboarding" && s.due && s.due < today;
     const when = c.phase === "onboarding" && s.due ? `<small${late ? ' class="late"' : ""}>${late ? "f\xE4llig war " : ""}${esc(fmtDate(s.due))}</small>` : "";
     if (s === open) return `<li class="now"><b>${esc(s.title)}</b>${when}<div class="two"><button class="primary" data-step="${s.id}">Erledigt</button>${s.id === "live" ? "" : `<button data-skip="${s.id}">Entf\xE4llt \u2026</button>`}</div></li>`;
-    return `<li class="todo"><b>${esc(s.title)}</b>${when}</li>`;
+    // A later step can be done or left out before the first open one: the first open one stays the next step.
+    const early = c.phase === "gekuendigt" ? "" : `<span class="early"><button class="more" data-step="${s.id}">Erledigt</button>${s.id === "live" ? "" : `<button class="more" data-skip="${s.id}">Entf\xE4llt \u2026</button>`}</span>`;
+    return `<li class="todo"><b>${esc(s.title)}</b>${when}${early}</li>`;
   }).join("");
   const where = c.phase === "gekuendigt" ? ` \xB7 ${esc(c.cancelReason)}` : c.phase === "live" && c.liveAt ? ` seit ${esc(fmtDate(c.liveAt))}` : ` \xB7 Tag ${c.since ? Math.max(0, daysBetween(c.since, today)) : 0} von ${ONBOARDING.at(-1)[2]}`;
   const att = attentionOf(c, today);

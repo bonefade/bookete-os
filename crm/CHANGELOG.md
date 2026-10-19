@@ -2,6 +2,10 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.21.1 (2026-10-19)
+
+- **Onboarding steps in any order:** every open step now has "Erledigt" and "Entfällt …", not only the first. A customer who booked the Abo but has not signed the website contract yet gets "Abo abgeschlossen" ticked while "Vertrag unterschrieben" stays open, and remains its next step. Any step but "Live" can be left out, with a word why.
+
 ## 1.21.0 (2026-10-19)
 
 - **Check-ins:** a customer who goes live gets a check-in 14 days later, a second 90 days after going live, then one every 90 days. Each is the customer's next step on its day, so it shows in Heute. On the customer's page, "Check-in eintragen" asks how it went (Gut, Offene Fragen, Unzufrieden), with a note and, if you like, the day of the next one; "Unzufrieden" asks for that day. A mail or message of ours leaves the check-in planned, as the onboarding step is in onboarding. A live customer from before, or one stored as Live by 1.20.0, gets its first check-in 14 days after you first change something on it, as its next step. A customer live again after a cancellation starts that day: its first check-in 14 days on, an unhappy check-in from before past.

@@ -327,3 +327,14 @@ test("a care keeps its last 40 check-ins", () => {
   assert.equal(kept.length, 40);
   assert.equal(kept[0].at, "2020-01-06");
 });
+
+test("a later step can be done or left out first: the first open step stays the next step", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Linde", status: "kunde" });
+  // The Abo is booked; the website contract is not signed yet.
+  await uc.changeCustomer(id, { step: "abo" });
+  await uc.changeCustomer(id, { step: "google", skip: "kein Google-Profil" });
+  const l = await store.get("leads", id);
+  assert.deepEqual(l.customer.steps.map((s) => s.id), ["abo", "google"]);
+  assert.deepEqual(next(l), ["2026-10-15", "Vertrag unterschrieben"]);
+});
