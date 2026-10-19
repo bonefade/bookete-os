@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createStore, initialState } from "../src/web/store.js";
-import { TABS, tabBar, todayView, leadsView, kundenView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar } from "../src/web/views.js";
+import { TABS, tabBar, todayView, leadsView, kundenView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar, unshownSheets, quickField } from "../src/web/views.js";
 import { LEAD_FIELDS } from "../src/domain/lead.js";
-import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
+import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, draftsOf, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
 import { describeChange, fmtDate } from "../src/web/format.js";
 import { scoped, activitiesByLead, freshLeads } from "../src/web/selectors.js";
 import { createApi, coalesced } from "../src/web/api.js";
@@ -667,7 +667,7 @@ test("a double click on Zurück steps back once", () => {
 
 // mountApp in a fake browser: just enough of document, window and the screen's root for the app to draw into
 // and for a test to click its buttons.
-function fakeBrowser(hash, store, uc) {
+function fakeBrowser(hash, store, uc, deviceDrafts) {
   const h = fakeHistory(hash);
   const on = {};
   // What the test typed into the Kundenakte form, by field name; a checkbox takes true or false.
@@ -718,7 +718,7 @@ function fakeBrowser(hash, store, uc) {
   // The search field in the top bar, outside the screen; focus() fires a focus handler if there is one, as a browser does.
   const field = { value: "", disabled: false, on: {}, addEventListener(type, f) { field.on[type] = f; }, focus() { field.on.focus?.(); }, select() {}, blur() {} };
   const tabsEl = { innerHTML: "" };
-  const app = mountApp({ root, tabsEl, searchEl: field, searchBox: search, toastEl, store, clock: { today: () => "2026-10-15" } });
+  const app = mountApp({ root, tabsEl, searchEl: field, searchBox: search, toastEl, store, clock: { today: () => "2026-10-15" }, ...(deviceDrafts && { deviceDrafts }) });
   // A lead page loads its history on open; for a test's use cases that have none it stays on its way, so nothing
   // draws after the test.
   app.connect(uc && { history: () => new Promise(() => {}), ...uc });
@@ -728,9 +728,11 @@ function fakeBrowser(hash, store, uc) {
     field.on.input();
   };
   const press = (key, mods = {}) => on.keydown({ key, target: { tagName: "BODY" }, preventDefault() {}, ...mods });
-  const input = (id, value) => rootOn.input({ target: { id, value } });
+  const input = (id, value, dataset = {}) => rootOn.input({ target: { id, value, dataset } });
+  // A form sent to the server, as the Abmelden button sends its own.
+  const submit = (action) => rootOn.submit({ target: { hasAttribute: () => true, getAttribute: () => action }, preventDefault() {} });
   const change = (target) => rootOn.change({ target: { dataset: {}, ...target } });
-  return { h, root, app, click, press, input, change, typed, toastEl, field, type, results, search, tabsEl, focused };
+  return { h, root, app, click, press, input, change, submit, typed, toastEl, field, type, results, search, tabsEl, focused };
 }
 /** A drawn form's fields as form.elements holds them, by position and by name, with what the test typed over them. */
 function formElements(html, typed = {}) {
@@ -1504,6 +1506,108 @@ test("a round lasts while moving between leads and ends on a tab; an open outcom
   assert.equal(enterRoute(next, parseRoute("#/heute")).round, null);
   const left = enterRoute(ui, parseRoute("#/heute"));
   assert.deepEqual([left.call, left.meeting], [null, null]);
+});
+
+test("what a lead page holds unsaved stays with its lead: leaving keeps it, coming back opens it again", () => {
+  const draft = { compose: { text: "Hallo" }, editField: "notes", editDraft: { value: "neu", from: "" } };
+  const ui = { ...initialState().ui, view: "detail", leadId: "L1", ...draft, statusMenu: true };
+  const other = enterRoute(ui, parseRoute("#/betrieb/L2"));
+  assert.deepEqual([other.compose, other.editField, other.editDraft, other.statusMenu, other.drafts], [null, null, null, false, { L1: draft }]);
+  const back = enterRoute(enterRoute(other, parseRoute("#/heute")), parseRoute("#/betrieb/L1"));
+  assert.deepEqual([back.compose, back.editField, back.editDraft, back.drafts], [draft.compose, "notes", draft.editDraft, {}]);
+  // Cancelled or saved, nothing is left to keep.
+  assert.deepEqual(enterRoute({ ...back, compose: null, editField: null, editDraft: null }, parseRoute("#/heute")).drafts, {});
+  // The device keeps every lead's draft, the one on screen too; a lead gone takes its draft along once the data is there.
+  const st = stateWith([{ id: "L1", name: "Krone" }], { ...back, drafts: { L9: { compose: { text: "x" } } } });
+  assert.deepEqual(draftsOf(st), { L1: draft });
+  assert.deepEqual(Object.keys(draftsOf({ ...st, status: { ...st.status, leads: false } })), ["L9", "L1"]);
+  // A quick edit in Infos draws what was typed over the stored value, a choice as an input.
+  assert.match(quickField({ city: "Graz" }, { key: "city" }, "city", { value: "Wien", from: "Graz" }), /<input id="qe" data-field="city" type="text" value="Wien"/);
+  assert.match(quickField({ fit: 2 }, { key: "fit", options: () => [[3, "gut"], [2, "passt"]] }, "fit", { value: "3", from: "2" }), /<option value="3" selected>/);
+});
+
+test("a note being typed survives a redraw, leaving the page and a reload; signing out forgets it", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  const device = { kept: null, read: () => device.kept, write: (v) => (device.kept = v) };
+  const ready = (notes = "alt") => {
+    const store = createStore(initialState());
+    store.data("leads", [{ ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-12", notes }]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    return store;
+  };
+  const textarea = (html) => html.match(/<textarea id="qe"[^>]*>([^<]*)<\/textarea>/)?.[1];
+  try {
+    const page = fakeBrowser("#/betrieb/L1", ready(), {}, device);
+    await page.click({ edit: "notes" });
+    page.input("qe", "alt, dazu neu", { field: "notes" });
+    // A sync draws the page again: the field holds what was typed, not the stored note.
+    page.app.onDataChanged();
+    assert.equal(textarea(page.root.innerHTML), "alt, dazu neu");
+    await page.click({ act: "back" });
+    assert.equal(textarea(page.root.innerHTML), undefined);
+    assert.deepEqual(device.kept, { L1: { editField: "notes", editDraft: { value: "alt, dazu neu", from: "alt" } } });
+    // The page opened again, after a reload: the note being typed is back, and the tabs stay shut over it.
+    const reload = fakeBrowser("#/betrieb/L1", ready(), {}, device);
+    assert.equal(textarea(reload.root.innerHTML), "alt, dazu neu");
+    assert.equal(reload.field.disabled, true);
+    assert.doesNotMatch(reload.root.innerHTML, /Inzwischen ge\xE4ndert/);
+    // Someone changed the note meanwhile: saving would replace that, and the page says so.
+    assert.match(fakeBrowser("#/betrieb/L1", ready("alt, von Anna"), {}, device).root.innerHTML, /Inzwischen ge\xE4ndert\. Speichern ersetzt den neuen Stand\./);
+    reload.submit("/auth/logout");
+    assert.equal(device.kept, null);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("Kontaktiert on a new lead asks how the contact was: a visit is logged with a note, a call and a mail go their own way", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  const ready = (status) => {
+    const store = createStore(initialState());
+    store.data("leads", [{ ...LEAD_FIELDS, id: "L1", name: "Krone", status, contactedAt: status === "neu" ? null : "2026-10-12", phone: "+43 1" }]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    return store;
+  };
+  try {
+    const calls = [];
+    const uc = { logActivity: async (l, acts, input) => (calls.push(["logActivity", l.id, input]), { plan: { followUp: "2026-10-19" } }), changeStatus: async (l, s) => calls.push(["changeStatus", l.id, s]) };
+    const page = fakeBrowser("#/betrieb/L1", ready("neu"), uc);
+    await page.click({ status: "kontaktiert" });
+    assert.deepEqual(calls, []);
+    assert.match(page.root.innerHTML, /Wie war der Kontakt\?<\/p><div class="chips"><button class="chip" data-cp="Vor Ort" aria-pressed="false">Vor Ort<\/button>/);
+    // A call opens the call sheet, which logs it with its outcome; no e-mail address, no mail.
+    assert.match(page.root.innerHTML, /<button class="chip" data-compose="E-Mail" disabled>E-Mail<\/button>[^]*<button class="chip" data-act="callOpen">Telefon<\/button>/);
+    assert.equal(page.field.disabled, true);
+    await page.click({ cp: "Vor Ort" });
+    assert.match(page.root.innerHTML, /<textarea id="cpText" rows="2" placeholder="Vor Ort besucht"><\/textarea><p class="note after">Danach: Nachfassen [^<]*\(\+\d+ Tage, Kontakt 1 von \d\)<\/p>/);
+    await page.click({ act: "contactSave" });
+    assert.deepEqual(calls, [["logActivity", "L1", { direction: "out", channel: "Vor Ort", date: "2026-10-15", text: "Vor Ort besucht" }]]);
+    assert.doesNotMatch(page.root.innerHTML, /Wie war der Kontakt/);
+    // With a note, the note is logged.
+    await page.click({ status: "kontaktiert" });
+    await page.click({ cp: "WhatsApp" });
+    page.input("cpText", "  Chef war da, Karte dagelassen ");
+    await page.click({ act: "contactSave" });
+    assert.deepEqual(calls[1][2], { direction: "out", channel: "WhatsApp", date: "2026-10-15", text: "Chef war da, Karte dagelassen" });
+    // Telefon opens the call sheet in its place.
+    await page.click({ status: "kontaktiert" });
+    await page.click({ act: "callOpen" });
+    assert.doesNotMatch(page.root.innerHTML, /Wie war der Kontakt/);
+    // Any other move stays one tap.
+    const later = fakeBrowser("#/betrieb/L1", ready("qualifiziert"), uc);
+    await later.click({ status: "kontaktiert" });
+    assert.deepEqual(calls.at(-1), ["changeStatus", "L1", "kontaktiert"]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("a sheet the lead page can no longer draw closes, so no hidden input keeps the tabs shut", () => {
+  const live = { id: "L1", name: "Krone", status: "kunde", wonAt: "2026-09-01", customer: { phase: "live", since: "2026-09-01", liveAt: "2026-09-10", nextCheckIn: "2026-10-20" }, todos: [{ id: "t1", text: "Anrufen", due: "", done: "" }] };
+  const open = { view: "detail", leadId: "L1", checkIn: { result: "gut" }, contactPick: { channel: "", text: "" }, call: {}, todoEdit: { id: "t1", text: "x" } };
+  assert.deepEqual(unshownSheets(stateWith([live], open), TODAY), { call: null, termin: null, contactPick: null });
+  const neu = { id: "L1", name: "Krone", status: "neu", todos: [{ id: "t1", text: "Anrufen", due: "", done: TODAY }] };
+  assert.deepEqual(unshownSheets(stateWith([neu], open), TODAY), { checkIn: null, todoEdit: null });
 });
 
 // Mail in a lead's feed, as the Gmail sync logs it: a sent mail in both mailboxes, then an answer only in Anna's.

@@ -1,6 +1,7 @@
 import { createStore, initialState } from './store.js';
 import { mountApp } from './controller.js';
 import { createApi, coalesced } from './api.js';
+import { deviceValue } from './platform.js';
 import { systemClock } from '../adapters/system.js';
 import { COLLECTIONS } from '../domain/constants.js';
 
@@ -13,7 +14,8 @@ const app = mountApp({
   searchBox: document.getElementById("sbox"),
   toastEl: document.getElementById("toast"),
   store,
-  clock: systemClock
+  clock: systemClock,
+  deviceDrafts: deviceValue("crm.drafts")
 });
 
 // Live sync: pull everything written since the last seq. Runs on a timer, on tab focus and after each own write.

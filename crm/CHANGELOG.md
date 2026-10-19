@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.23.0 (2026-10-19)
+
+- **Nothing you type is lost.** A note, a message, a call note, a todo or a quick edit in Notizen or Infos stays with its business until you save or cancel it: through a sync, switching apps, "Zurück", another business or tab, and a reload. Open the business again and it is there. It is kept on this device only; signing out clears it. If someone changed a field while your edit of it waited, the page says so before you save. Bearbeiten, Kundenakte and Vorlage, the full forms, are not kept yet.
+- **"Kontaktiert" on a new lead asks how:** Vor Ort, Telefon, E-Mail, WhatsApp, Instagram or LinkedIn. A visit or a message is logged right there, with a note if you like, and the follow-up is planned as for any first contact. Telefon opens the call sheet and E-Mail the composer, which log it their own way. From any other status, "Kontaktiert" stays one tap.
+
 ## 1.22.0 (2026-10-19)
 
 - **Todos on every business,** lead or customer: as many as you need, each with a text and, if you like, the day it is due. Tap one to change its text or its day, tick it when done, tap × to remove it; the done ones fold away under "n erledigt". A todo due shows the business in Heute (under Überfällig or Heute fällig, marked "Todo"), as its next step does, and counts in "Nächste 7 Tage". "Später" in a Heute round moves whatever puts the business on today's list, its todos due and its next step if due, so it leaves the list; in a round of calls or first contacts it moves the next step, as before. An answer to write, an appointment's outcome and a customer's Achtung still show before a todo. At most 50 open; the newest 100 done are kept. Todos belong to nobody; either of you does them. The one next step stays as it is, for the follow-ups, the onboarding and the check-ins.

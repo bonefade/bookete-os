@@ -44,3 +44,25 @@ export function saveFile(filename, text) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1e3);
 }
+/**
+ * A value this browser keeps under `key`, as JSON. The browser may keep none (a private window, site data blocked or
+ * cleared) and then throws: reading gives null and writing does nothing, as nothing kept here is needed to work.
+ */
+export function deviceValue(key) {
+  return {
+    read() {
+      try {
+        return JSON.parse(localStorage.getItem(key) || "null");
+      } catch {
+        return null;
+      }
+    },
+    write(value) {
+      try {
+        if (value === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, JSON.stringify(value));
+      } catch {
+      }
+    }
+  };
+}

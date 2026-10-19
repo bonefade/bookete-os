@@ -10,9 +10,9 @@ import { fillTemplate, defaultTemplate, DEFAULT_SCRIPT } from '../domain/templat
 import { lastChannel } from '../domain/activity.js';
 import { relDate, actorName } from './format.js';
 import { PHASE_LABEL, customerOf } from '../domain/customer.js';
-import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput } from './views.js';
+import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, contactText } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -50,7 +50,25 @@ const sheetKey = (ui) => ui.termin ? "termin" : ui.meeting ? "meeting" : "call";
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 /** A screen holding input not yet saved: search stays shut there, so that it cannot leave the screen by accident. */
 // The call sheet holds input once an outcome is picked: its fields show only then.
-const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.todoDraft?.text?.trim() || u.todoEdit || u.meeting || u.quick || u.icpEdit);
+const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.todoDraft?.text?.trim() || u.todoEdit || u.meeting || u.contactPick || u.quick || u.icpEdit);
+/**
+ * What a lead page holds open and not yet saved: the composer, the sheets, a todo, a quick edit with what is typed
+ * in it. It belongs to its lead until saved or cancelled: leaving the page keeps it in `ui.drafts` under the lead's
+ * id, coming back opens it again, and the device keeps all of them (draftsOf), through a reload or the phone
+ * dropping the page.
+ */
+const DRAFT_KEYS = ["compose", "call", "termin", "meeting", "checkIn", "contactPick", "todoDraft", "todoEdit", "editField", "editDraft"];
+function draftOf(ui) {
+  const open = DRAFT_KEYS.filter((k) => ui[k]);
+  return open.length ? Object.fromEntries(open.map((k) => [k, ui[k]])) : null;
+}
+/** Every lead's draft, the one on screen included, without those of leads gone once the data is there. */
+export function draftsOf(st) {
+  const u = st.ui;
+  const all = { ...u.drafts, ...(LEAD_VIEWS.has(u.view) && u.leadId && { [u.leadId]: draftOf(u) }) };
+  const known = isReady(st) && new Set(st.data.leads.map((l) => l.id));
+  return Object.fromEntries(Object.entries(all).filter(([id, d]) => d && (!known || known.has(id))));
+}
 /**
  * The UI state for an address. What a lead page has open lasts only while that lead is on screen: leaving it, or
  * opening another, starts fresh. The quick-add and ICP forms close on any address, as they show on their tab only;
@@ -60,7 +78,16 @@ const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField 
  */
 export function enterRoute(ui, route) {
   const sameLead = LEAD_VIEWS.has(route.view) && LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
-  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, cancelPick: false, checkIn: null, todoDraft: null, todoEdit: null, todosDone: false, call: null, termin: null, meeting: null, editField: null, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false }) };
+  let page = {};
+  if (!sameLead) {
+    // The draft of the lead left goes to `drafts`; the one of the lead opened comes back out of it onto the page.
+    const drafts = { ...ui.drafts };
+    if (LEAD_VIEWS.has(ui.view) && ui.leadId) drafts[ui.leadId] = draftOf(ui);
+    const opened = LEAD_VIEWS.has(route.view) && drafts[route.leadId];
+    if (opened) delete drafts[route.leadId];
+    page = { ...Object.fromEntries(DRAFT_KEYS.map((k) => [k, null])), ...opened, drafts: Object.fromEntries(Object.entries(drafts).filter(([, d]) => d)), lostPick: false, cancelPick: false, todosDone: false, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false };
+  }
+  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...page };
   if (route.view) return next;
   return { ...next, round: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
 }
@@ -159,10 +186,23 @@ export function pickLostReason(uc, lead, reason) {
 const confirmOptOut = (lead) => confirm(`\u201E${lead.name}\u201C m\xF6chte keine Nachrichten mehr?
 
 Der Betrieb wird geschlossen und jede weitere Nachricht blockiert.`);
-export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: store2, clock }) {
+/**
+ * `deviceDrafts` keeps the drafts on this device (read, write; null clears), so they outlast the page. Signing out
+ * clears them, as the next to sign in here may be someone else.
+ */
+export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: store2, clock, deviceDrafts = { read: () => null, write() {} } }) {
   let uc = null;
   const S = () => store2.get();
   const ui = (p) => store2.ui(p);
+  store2.ui({ drafts: deviceDrafts.read() || {} });
+  let kept = JSON.stringify(draftsOf(S()));
+  store2.subscribe((st) => {
+    const drafts = draftsOf(st);
+    const json = JSON.stringify(drafts);
+    if (json === kept) return;
+    kept = json;
+    deviceDrafts.write(Object.keys(drafts).length ? drafts : null);
+  });
   function toast(msg) {
     toastEl.textContent = msg;
     toastEl.classList.add("on");
@@ -188,11 +228,10 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     tabsEl.innerHTML = tabBar(st, today, holdsInput(st.ui));
   }
   function render() {
-    // A todo being changed that the other user ticked or removed meanwhile: its form is gone, so is the edit.
-    const editing = S().ui.todoEdit;
-    if (editing && !(currentLead(S())?.todos || []).some((t) => t.id === editing.id && !t.done)) ui({ todoEdit: null });
-    const st = S();
     const today = clock.today();
+    const unshown = unshownSheets(S(), today);
+    if (Object.keys(unshown).length) ui(unshown);
+    const st = S();
     const view = st.ui.view;
     if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
     lockForInput(st, today);
@@ -257,6 +296,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
   // No inline onsubmit: the Content-Security-Policy blocks inline handlers.
   root.addEventListener("submit", (ev) => {
     if (!ev.target.hasAttribute("action")) ev.preventDefault();
+    else if (ev.target.getAttribute("action").startsWith("/auth/logout")) deviceDrafts.write(null);
   });
   root.addEventListener("focusout", () => {
     if (pending) {
@@ -418,7 +458,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     const tpl = mode === "out" ? defaultTemplate(lead, acts, st.data.templates) : null;
     const filled = tpl ? fillTemplate(tpl.body, lead) : { text: "", missing: [] };
     const subject = thread ? (/^re:/i.test(thread.subject) ? thread.subject : "Re: " + thread.subject) : mailSubject(lead);
-    ui({ compose: { direction: mode, templateId: tpl?.id || "", channel: channel || lastChannel(acts) || (lead.instagram ? "Instagram" : "E-Mail"), date: clock.today(), subject, text: filled.text, missing: filled.missing, thread, followUp: null, fuEdit: false }, call: null, termin: null, statusMenu: false });
+    ui({ compose: { direction: mode, templateId: tpl?.id || "", channel: channel || lastChannel(acts) || (lead.instagram ? "Instagram" : "E-Mail"), date: clock.today(), subject, text: filled.text, missing: filled.missing, thread, followUp: null, fuEdit: false }, call: null, termin: null, contactPick: null, statusMenu: false });
     render();
     root.querySelector("#cText")?.scrollIntoView({ block: "center" });
   }
@@ -465,7 +505,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       return;
     }
     if (changed) toast("Gespeichert");
-    ui({ editField: null });
+    ui({ editField: null, editDraft: null });
     render();
   }
   searchEl.addEventListener("keydown", (ev) => {
@@ -508,7 +548,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (t.id !== "qe") return;
     if (ev.key === "Escape") {
       ev.preventDefault();
-      ui({ editField: null });
+      ui({ editField: null, editDraft: null });
       render();
     } else if (ev.key === "Enter" && (t.tagName !== "TEXTAREA" || ev.metaKey || ev.ctrlKey)) {
       ev.preventDefault();
@@ -579,7 +619,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     },
     /** The call sheet, opened by the call itself (the tel link goes on to dial) or from the composer. */
     callOpen: () => {
-      ui({ call: S().ui.call || {}, termin: null, compose: null, statusMenu: false });
+      ui({ call: S().ui.call || {}, termin: null, compose: null, contactPick: null, statusMenu: false });
       render();
     },
     /** An appointment agreed outside a call: its own sheet, which logs no call. */
@@ -609,6 +649,23 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
         (res) => res.plan.followUp && c.direction === "out" ? "Eingetragen \xB7 nachfassen " + relDate(res.plan.followUp, clock.today()) : "Eingetragen"
       );
       if (r) composeSaved(c);
+    },
+    async contactSave() {
+      const st = S();
+      const lead = currentLead(st);
+      const { channel, text } = st.ui.contactPick;
+      const r = await run(
+        () => uc.logActivity(lead, actsOf(st, lead.id), { direction: "out", channel, date: clock.today(), text: text.trim() || contactText(channel) }),
+        (res) => res.plan.followUp ? "Kontaktiert \xB7 nachfassen " + relDate(res.plan.followUp, clock.today()) : "Kontaktiert"
+      );
+      if (r) {
+        ui({ contactPick: null });
+        render();
+      }
+    },
+    contactCancel: () => {
+      ui({ contactPick: null });
+      render();
     },
     callSave: () => logCall(currentLead(S()), callInput(S().ui.call)),
     terminSave: () => saveTermin(currentLead(S()), S().ui.termin),
@@ -685,7 +742,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       render();
     },
     qeCancel: () => {
-      ui({ editField: null });
+      ui({ editField: null, editDraft: null });
       render();
     },
     qeSave: () => saveQuickEdit(),
@@ -780,6 +837,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     // Back to writing with nothing written yet: the template fills it again.
     if (d.mode) return d.mode === "out" && !st.ui.compose.text ? startCompose("out", st.ui.compose.channel, st.ui.compose.thread) : sheet("compose", { direction: d.mode });
     if (d.ch) return sheet("compose", { channel: d.ch });
+    if (d.cp) return sheet("contactPick", { channel: d.cp });
     if (d.feed) {
       ui({ feed: d.feed });
       return render();
@@ -787,7 +845,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (d.tpl) return openTemplate(d.tpl);
     if (d.edit) {
       if (st.ui.editField === d.edit) return;
-      ui({ editField: d.edit });
+      ui({ editField: d.edit, editDraft: null });
       render();
       const x = root.querySelector("#qe");
       if (x) {
@@ -822,7 +880,12 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
         return render();
       }
       if (lead.status === d.status) return;
-      ui({ statusMenu: false, lostPick: false });
+      // A new lead becomes Kontaktiert by its first contact: the question how logs it and plans the follow-up.
+      if (d.status === "kontaktiert" && lead.status === "neu") {
+        ui({ contactPick: S().ui.contactPick || { channel: "", text: "" }, statusMenu: false, lostPick: false });
+        return render();
+      }
+      ui({ statusMenu: false, lostPick: false, contactPick: null });
       return run(() => uc.changeStatus(lead, d.status), "Status: " + STAGE_LABEL[d.status]);
     }
     if (d.lost) {
@@ -910,7 +973,10 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       // Typed text is input to keep: search and the tabs shut while it is there.
       return lockForInput(S(), clock.today());
     }
+    // A quick edit keeps what is typed, with the value it was typed over, so a redraw or a return draws it back.
+    if (t.id === "qe" && S().ui.editField) return ui({ editDraft: { value: t.value, from: S().ui.editDraft?.from ?? String(currentLead(S())?.[t.dataset.field] ?? "") } });
     if (t.id === "teText" && S().ui.todoEdit) return ui({ todoEdit: { ...S().ui.todoEdit, text: t.value } });
+    if (t.id === "cpText" && S().ui.contactPick) return ui({ contactPick: { ...S().ui.contactPick, text: t.value } });
     if (t.id === "ciNote" && S().ui.checkIn) return ui({ checkIn: { ...S().ui.checkIn, note: t.value } });
     if (t.id === "cSubj" && c) return ui({ compose: { ...c, subject: t.value } });
     if (t.id === "cText" && c) {
