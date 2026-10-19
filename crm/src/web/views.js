@@ -114,7 +114,8 @@ export const SORTS = {
   status: (a, b) => STAGES.findIndex(([k]) => k === b.status) - STAGES.findIndex(([k]) => k === a.status) || b.fit - a.fit
 };
 export function leadsView(state, today) {
-  const { status, reason, contacted, q, quick, sort } = state.ui;
+  const { status, reason, contacted, q: typed, quick, sort } = state.ui;
+  const q = typed.trim();
   const base = scoped(state);
   // Reason and contacted are offered, and filter, only with Disqualifiziert; there the status says neither.
   const disq = status === "disqualifiziert";
@@ -145,7 +146,7 @@ export function leadsView(state, today) {
   ${quickForm}
   ${filterBar(state, own)}
   <div class="toolbar">
-    <input type="search" id="q" placeholder="Liste filtern \u2026" value="${esc(q)}" aria-label="Liste filtern">
+    <input type="search" id="q" placeholder="Liste filtern \u2026" value="${esc(typed)}" aria-label="Liste filtern">
     <select id="sort" aria-label="Sortierung">${options([["prio", "\u2195 Fit"], ["nachfassen", "\u2195 Nachfassen"], ["status", "\u2195 Status"], ["name", "\u2195 Name"]], sort)}</select>
   </div>
   <p class="note count">${list.length} Betriebe${list.length ? ` \xB7 ${list.filter((l) => mailOpen(state, l)).length} mit E-Mail` : ""}${hidden ? ` \xB7 <button class="more" data-act="toSearch"${quick ? " disabled" : ""}>${hidden} weitere Treffer au\xDFerhalb der Filter</button>` : ""}</p>

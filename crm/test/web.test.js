@@ -1094,6 +1094,26 @@ test("while the lead page holds unsaved input the field is shut, and it opens ag
   }
 });
 
+test("the Betriebe filter keeps a space as typed, so a name of two words can be typed", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const store = createStore(initialState());
+    store.data("leads", [["L1", "Gasthaus Krone"], ["L2", "Gasthaus Post"], ["L3", "Krone Bar"]].map(([id, name]) => ({ ...LEAD_FIELDS, id, name, status: "neu" })));
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const { root, input } = fakeBrowser("#/betriebe", store, {});
+    const shown = () => ["Gasthaus Krone", "Gasthaus Post", "Krone Bar"].filter((name) => root.innerHTML.includes(name));
+    // Only a space filters nothing out.
+    input("q", " ");
+    assert.deepEqual(shown(), ["Gasthaus Krone", "Gasthaus Post", "Krone Bar"]);
+    input("q", "Gasthaus ");
+    assert.match(root.innerHTML, /id="q" placeholder="Liste filtern …" value="Gasthaus "/);
+    input("q", "Gasthaus Kr");
+    assert.deepEqual(shown(), ["Gasthaus Krone"]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
 test("the quick-add form on Betriebe and the ICP form on Mehr shut the field while they show", async () => {
   const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
   try {

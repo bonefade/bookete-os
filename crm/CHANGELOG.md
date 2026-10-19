@@ -2,6 +2,10 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.18.1 (2026-10-19)
+
+- **Betriebe:** the list filter takes a space again, so you can filter for a name of two words ("Gasthaus Krone"). Before, a space typed at the end vanished at once.
+
 ## 1.18.0 (2026-10-18)
 
 - **Your Gmail signature** now goes with every mail sent with "Per Gmail senden", as Gmail shows it, logo and links included, and with every draft an agent makes. The composer shows it below the text; untick "Mit Signatur" to leave it out of one mail. If a template ends with your name or a greeting the signature repeats, take that line out of the template. It needs Gmail connected again once (Mehr → Gmail neu verbinden), as for answers in 1.17.0.

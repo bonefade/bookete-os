@@ -783,7 +783,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     const c = S().ui.compose;
     if (t.id === "q") {
       const pos = t.selectionStart;
-      ui({ q: t.value.trim() });
+      // Kept as typed: the field is drawn back from it, so a trimmed copy would take a space just typed.
+      ui({ q: t.value });
       render();
       const n = root.querySelector("#q");
       n.focus();
