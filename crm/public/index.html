@@ -390,6 +390,8 @@ select.chip{width:auto;min-height:36px;padding:6px 12px}
    The rail needs the height of all the tabs, so a phone on its side, as wide as a tablet, keeps them at the bottom. */
 @media (min-width:760px) and (min-height:480px){
   :root{--rail:calc(88px + env(safe-area-inset-left,0px))}
+  /* The top bar has the rail's colour and a line below it, so bar and rail read as one frame, not a rail cut off at the top. */
+  .brandbar{background:var(--surface);border-bottom:1px solid var(--line)}
   .tabs{top:calc(env(safe-area-inset-top,0px) + var(--topbar));right:auto;width:var(--rail);border-top:none;border-right:1px solid var(--line);padding:8px 0 0 env(safe-area-inset-left,0px);align-items:flex-start}
   .tabs .in{display:flex;flex-direction:column}
   .tab{min-height:68px}

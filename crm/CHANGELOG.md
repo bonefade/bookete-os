@@ -2,6 +2,10 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.25.2 (2026-10-19)
+
+- **On a laptop or tablet** the top bar has the colour of the tabs on the left, with a line below it, so the two read as one frame instead of the tabs looking cut off at the top.
+
 ## 1.25.1 (2026-10-19)
 
 - **Each note is a box of its own** in the timeline, so one note is told from the next at a glance; more room between the filters, the box for a new note and the notes.
