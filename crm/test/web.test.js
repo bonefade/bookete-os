@@ -1592,7 +1592,7 @@ test("the Kunden tab lists the customers by phase and owner, the next step due f
   };
   const rows = (html) => [...html.matchAll(/data-open="(\w+)"><span class="q-name">[^]*?<span class="q-ch">([^<]*)<\/span><span class="q-why[^"]*">([^<]*)<\/span><span class="q-go">([^<]*) ›/g)].map(([, id, ph, why, who]) => [id, ph, why, who]);
   // Active: not the cancelled one; the overdue step first.
-  assert.deepEqual(rows(view({})), [["K2", "Live", "Angebot Website · seit 3 Tagen", "anna"], ["K1", "Onboarding 1/7", "Abo abgeschlossen · morgen", "jo"]]);
+  assert.deepEqual(rows(view({})), [["K2", "Live", "Angebot Website · seit 3 Tagen", "anna"], ["K1", "Onboarding 1/8", "Abo abgeschlossen · morgen", "jo"]]);
   assert.match(view({}), /<p>2 aktiv · 1 im Onboarding<\/p>/);
   assert.deepEqual(rows(view({ kPhase: "gekuendigt" })), [["K3", "Gekündigt", "Preis", "–"]]);
   assert.deepEqual(rows(view({ kOwner: "ich" })).map(([id]) => id), ["K1"]);
@@ -1607,13 +1607,13 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
   state.me = ME;
   const page = detailView(state, TODAY);
   assert.match(page, /data-status="kunde" aria-pressed="true">Kunde</);
-  assert.match(page, /class="chips phchips"><span class="note">Phase<\/span><button class="chip" data-phase="onboarding" aria-pressed="true">Onboarding 1\/7</);
+  assert.match(page, /class="chips phchips"><span class="note">Phase<\/span><button class="chip" data-phase="onboarding" aria-pressed="true">Onboarding 1\/8</);
   // The phase is on the customer card too.
   assert.match(page.split('class="sec cust"')[1], /data-phase="onboarding" aria-pressed="true">Onboarding</);
   assert.doesNotMatch(page, /Für das Gespräch|class="sec desk seq"/);
   assert.match(page, /<select id="kOwnerOf"><option value="">–<\/option><option value="jo@bookete.com" selected>jo \(ich\)<\/option><option value="anna@bookete.com">anna<\/option><\/select>/);
   const steps = [...page.split('class="card checks">')[1].split("</ol>")[0].matchAll(/<li class="(\w+)"><b>([^<]*)<\/b>/g)].map(([, cls, b]) => cls + " " + b);
-  assert.deepEqual(steps, ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo bookete-Konto angelegt", "todo Widget auf der Website", "todo Google-Profil verknüpft", "todo Team eingeschult", "todo Live"]);
+  assert.deepEqual(steps, ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo bookete-Konto angelegt", "todo Widget auf der Website", "todo Google-Profil verknüpft", "todo Team eingeschult", "todo Account übergeben", "todo Live"]);
   assert.match(page, /data-step="abo">Erledigt<\/button><button data-skip="abo">/);
   // A later step can be done or left out before the first open one; "Live" is never left out.
   assert.match(page, /<li class="todo"><b>Widget auf der Website<\/b>[^]*?data-step="widget">Erledigt<\/button><button class="more" data-skip="widget">/);

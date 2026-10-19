@@ -21,6 +21,7 @@ export const ONBOARDING = [
   ["widget", "Widget auf der Website", 4],
   ["google", "Google-Profil verkn\xFCpft", 7],
   ["team", "Team eingeschult", 10],
+  ["uebergabe", "Account \xFCbergeben", 12],
   ["live", "Live", 14],
 ];
 /** How a check-in went. "unzufrieden" puts the customer on Achtung until the next check-in. */
