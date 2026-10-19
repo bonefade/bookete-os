@@ -2,6 +2,18 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.24.0 (2026-10-19)
+
+- **Kontaktiert means you spoke with them:** a visit, a call that got through, or an answer from them. A mail, a DM or a call nobody picked up is an attempt: it shows in the feed, but the lead stays Neu and gets no date, so it doesn't fill Heute. The lead page says when it was last tried ("Nie gesprochen, angeschrieben am …"). The composer says so too before you send to a new lead.
+- **New leads already tried** are no longer under "Bereit zum Anschreiben". The call list has them; after a call that didn't get through, a new lead comes back two days later, and after five days of calls without getting through it is closed as "Nicht erreicht". Mails don't count towards that.
+- **A new lead has no date.** Its next step is text only, and a date set on it earlier goes away with its next change. For something with a date, add a todo.
+- **Back to Neu:** a Kontaktiert lead, or one closed as "Nicht erreicht", that nobody has spoken with can be set back to Neu, which clears its first-contact date, follow-up and next step; the app asks first. Once someone has spoken with them, or a conversation outside the CRM was entered, it can't.
+- **The "Nachfass-Folge" card** shows only while the sequence runs, on a lead set Kontaktiert by hand that nobody has spoken with yet.
+- **"Kontaktiert" on a new lead** now asks where you spoke: Vor Ort, Am Telefon (the call sheet) or "Sie haben geantwortet" (enter their answer).
+- **A closed lead** you write to stays closed; their answer reopens it.
+- **After a visit** the composer offers the "Auf Antwort" template, as after a call that got through.
+- **"Betriebe" is now "Leads"** in the tab and in Heute.
+
 ## 1.23.0 (2026-10-19)
 
 - **Nothing you type is lost.** A note, a message, a call note, a todo or a quick edit in Notizen or Infos stays with its business until you save or cancel it: through a sync, switching apps, "Zurück", another business or tab, and a reload. Open the business again and it is there. It is kept on this device only; signing out clears it. If someone changed a field while your edit of it waited, the page says so before you save. Bearbeiten, Kundenakte and Vorlage, the full forms, are not kept yet.

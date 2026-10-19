@@ -21,13 +21,23 @@ function fakeMailer() {
 
 const rejects = (promise, field) => assert.rejects(promise, (e) => e instanceof ValidationError && e.field === field);
 
-test("first outgoing message moves the lead to kontaktiert with a follow-up 3 days later", async () => {
+test("a message of ours leaves a new lead Neu with no date; speaking with them makes it Kontaktiert with a follow-up", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Gasthaus Krone" });
-  await uc.logActivity(id, { direction: "out", channel: "E-Mail", text: "Hallo" });
+  await uc.logActivity(id, { direction: "out", channel: "E-Mail", text: "Hallo", date: "2026-10-14" });
+  const tried = await store.get("leads", id);
+  assert.deepEqual([tried.status, tried.followUp, tried.nextStep, tried.contactedAt], ["neu", null, "", null]);
+  // A visit is a conversation, not a step of the mail sequence: the next follow-up comes after the usual 4 days.
+  await uc.logActivity(id, { direction: "out", channel: "Vor Ort", text: "Besucht" });
   const lead = await store.get("leads", id);
-  assert.equal(lead.status, "kontaktiert");
-  assert.equal(lead.followUp, "2026-10-18");
+  assert.deepEqual([lead.status, lead.followUp, lead.contactedAt], ["kontaktiert", "2026-10-19", "2026-10-15"]);
+  // A disqualified lead written to stays closed; their answer reopens it.
+  const closed = await uc.addLead({ name: "Zu" });
+  await uc.changeStatus(closed, "disqualifiziert", "Kein Bedarf");
+  await uc.logActivity(closed, { direction: "out", channel: "WhatsApp", text: "Doch?", date: "2026-10-14" });
+  assert.equal((await store.get("leads", closed)).status, "disqualifiziert");
+  await uc.logActivity(closed, { direction: "in", channel: "WhatsApp", text: "Doch!" });
+  assert.deepEqual([(await store.get("leads", closed)).status, (await store.get("leads", closed)).nextStep], ["kontaktiert", "Antworten"]);
 });
 
 test("an opt-out blocks outgoing contact, reopening and direct edits on every write path", async () => {
@@ -302,7 +312,7 @@ test("a note goes below what Notizen holds when it is saved, so one written mean
 test("a deleted lead waits in the trash and comes back with its activities", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Weg" });
-  await uc.logActivity(id, { direction: "out", channel: "Telefon", text: "Angerufen" });
+  await uc.logActivity(id, { direction: "in", channel: "Telefon", text: "Hat angerufen" });
   await uc.deleteLead(id);
   await uc.deleteLead(id);
   assert.deepEqual((await store.trash()).map((t) => [t.lead.name, t.actor]), [["Weg", "jo@bookete.com (test)"]]);
@@ -310,7 +320,7 @@ test("a deleted lead waits in the trash and comes back with its activities", asy
   await uc.restoreLead(id);
   await uc.restoreLead(id);
   assert.equal((await store.get("leads", id)).status, "kontaktiert");
-  assert.deepEqual((await store.activitiesOf(id)).map((a) => a.text), ["Angerufen"]);
+  assert.deepEqual((await store.activitiesOf(id)).map((a) => a.text), ["Hat angerufen"]);
   assert.deepEqual(await store.trash(), []);
   assert.deepEqual((await store.changes(seq)).changes.map((c) => [c.collection, !!c.record]), [["leads", true], ["activities", true]]);
 });

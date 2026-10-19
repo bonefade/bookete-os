@@ -2,11 +2,11 @@ import { STAGES, STAGE_LABEL, OPT_OUT_REASON, LOST_REASONS, SPOKEN_REASONS, BUSI
 import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, dueByTodo, regionCounts, toolCounts, contactCounts, callList, freshLeads, awaitsAnswer, todayQueue, queueList, roundList } from './selectors.js';
 import { addDays, dayLabel, daysBetween, toDateString } from '../domain/dates.js';
 import { channelLink } from './platform.js';
-import { countTouches, hasReply, isReply, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting, byTimeline } from '../domain/activity.js';
+import { countTouches, hasSpoken, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting, byTimeline } from '../domain/activity.js';
 import { esc, fmtDate, fmtDateWithYear, relDate, options, describeChange, statusMove, actorName, fmtTime } from './format.js';
 import { fold, searchTokens, searchLeads } from '../domain/search.js';
 import { hitLabel, markRanges, markHtml, snippetHtml } from './search.js';
-import { isPipeline, takesFollowUp, isDue, lacksNextStep, getsUnsubscribeLink, addressKey, optOutByAddress, mailClosedBy, addressOptOutText } from '../domain/lead.js';
+import { isPipeline, takesFollowUp, takesDate, isDue, lacksNextStep, getsUnsubscribeLink, addressKey, optOutByAddress, mailClosedBy, addressOptOutText } from '../domain/lead.js';
 import { lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
@@ -21,7 +21,7 @@ export const ICONS = {
   vorlagen: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>',
   mehr: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>'
 };
-export const TABS = [["heute", "Heute"], ["betriebe", "Betriebe"], ["kunden", "Kunden"], ["vorlagen", "Vorlagen"], ["mehr", "Mehr"]];
+export const TABS = [["heute", "Heute"], ["betriebe", "Leads"], ["kunden", "Kunden"], ["vorlagen", "Vorlagen"], ["mehr", "Mehr"]];
 /** The tabs, shut while `locked`: a form holds input a tab would drop. Heute counts what its queue holds. */
 export function tabBar(state, today, locked) {
   const open = isReady(state) ? queueList(state, today).length : 0;
@@ -105,7 +105,7 @@ export function todayView(state, today) {
   const fresh = freshLeads(state);
   const side = `${week}
   <div class="sec"><h3>N\xE4chste 7 Tage</h3>${days ? `<ul class="days card">${days}</ul>` : `<div class="empty">Nichts geplant.</div>`}</div>
-  <div class="sec"><h3>Bereit zum Anschreiben <small>${fresh.length}</small></h3>${fresh.length ? `<p class="note" style="margin:0 0 8px">${fresh.length} ${fresh.length === 1 ? "neuer Betrieb" : "neue Betriebe"} ohne Kontakt, die besten zuerst.</p><button class="full" data-act="freshStart">Erstkontakte starten ›</button>` : `<div class="empty">Keine neuen Betriebe in dieser Auswahl.</div>`}</div>`;
+  <div class="sec"><h3>Bereit zum Anschreiben <small>${fresh.length}</small></h3>${fresh.length ? `<p class="note" style="margin:0 0 8px">${fresh.length} ${fresh.length === 1 ? "neuer Lead" : "neue Leads"} ohne Kontakt, die besten zuerst.</p><button class="full" data-act="freshStart">Erstkontakte starten ›</button>` : `<div class="empty">Keine neuen Leads in dieser Auswahl.</div>`}</div>`;
   return `<div class="wrap wide">
   <div class="head"><div><h1>Heute</h1><p>${esc(date)}${state.ui.region !== "alle" ? " \xB7 " + esc(state.ui.region) : ""}${open ? ` \xB7 ${open} offen` : ""}</p></div>${open ? `<button class="primary" data-act="queueStart">Abarbeiten ›</button>` : ""}</div>
   ${filterBar(state, scope)}
@@ -119,7 +119,7 @@ export function todayView(state, today) {
   </div><aside class="t-side">${side}</aside></div>`)}
 </div>`;
 }
-/** The Betriebe status filter: [value, label, test]. Offen is the pipeline. */
+/** The Leads status filter: [value, label, test]. Offen is the pipeline. */
 /** A customer's phase as chips, one tap each; `progress` names how far its onboarding is on the chip of its phase. */
 const phaseChips = (c, progress = false) => PHASES.map(([k, label]) => `<button class="chip${k === "gekuendigt" ? " lostc" : ""}" data-phase="${k}" aria-pressed="${c.phase === k}">${esc(progress && c.phase === k ? phaseText(c) : label)}</button>`).join("");
 /** How far a customer's onboarding is: "Onboarding 3/7", or its phase. */
@@ -187,15 +187,15 @@ export function leadsView(state, today) {
     <div class="two"><button data-act="quickCancel">Abbrechen</button><button class="primary" data-act="quickSave">Hinzuf\xFCgen</button></div>
     <p class="note">Den Rest kann Claude recherchieren und erg\xE4nzen.</p></div>` : "";
   return `<div class="wrap wide">
-  <div class="head"><h1>Betriebe</h1><button class="primary" data-act="quick"${state.caps.db ? "" : " disabled"}>+ Neu</button></div>
+  <div class="head"><h1>Leads</h1><button class="primary" data-act="quick"${state.caps.db ? "" : " disabled"}>+ Neu</button></div>
   ${quickForm}
   ${filterBar(state, own)}
   <div class="toolbar">
     <input type="search" id="q" placeholder="Liste filtern \u2026" value="${esc(typed)}" aria-label="Liste filtern">
     <select id="sort" aria-label="Sortierung">${options([["prio", "\u2195 Fit"], ["nachfassen", "\u2195 Nachfassen"], ["status", "\u2195 Status"], ["name", "\u2195 Name"]], sort)}</select>
   </div>
-  <p class="note count">${list.length} Betriebe${list.length ? ` \xB7 ${list.filter((l) => mailOpen(state, l)).length} mit E-Mail` : ""}${hidden ? ` \xB7 <button class="more" data-act="toSearch"${quick ? " disabled" : ""}>${hidden} weitere Treffer au\xDFerhalb der Filter</button>` : ""}</p>
-  ${loadingOr(state, list.length ? rowsOf(state, list, today) : `<div class="empty">${state.data.leads.length ? "Nichts in dieser Ansicht." : "Noch keine Betriebe."}</div>`)}
+  <p class="note count">${list.length} Leads${list.length ? ` \xB7 ${list.filter((l) => mailOpen(state, l)).length} mit E-Mail` : ""}${hidden ? ` \xB7 <button class="more" data-act="toSearch"${quick ? " disabled" : ""}>${hidden} weitere Treffer au\xDFerhalb der Filter</button>` : ""}</p>
+  ${loadingOr(state, list.length ? rowsOf(state, list, today) : `<div class="empty">${state.data.leads.length ? "Nichts in dieser Ansicht." : "Noch keine Leads."}</div>`)}
 </div>`;
 }
 export function searchRow(state, r, i, tokens, today) {
@@ -332,7 +332,8 @@ export function unshownSheets(state, today) {
     ...(!calls && (u.call || u.termin) && { call: null, termin: null }),
     ...(u.meeting && !meetingDue(l, today) && { meeting: null }),
     ...(u.checkIn && !(l.status === "kunde" && customerOf(l)?.phase === "live") && { checkIn: null }),
-    ...(u.contactPick && l.status !== "neu" && { contactPick: null }),
+    // A question kept from 1.23.0 with a message picked: only a visit is logged here now.
+    ...(u.contactPick && (l.status !== "neu" || u.contactPick.channel && u.contactPick.channel !== "Vor Ort") && { contactPick: null }),
     ...(u.todoEdit && !todosOf(l).some((t) => t.id === u.todoEdit.id && !t.done) && { todoEdit: null }),
   };
 }
@@ -365,22 +366,19 @@ function planPreview(l, plan) {
   const next = status === "disqualifiziert" ? "kein n\xE4chster Schritt" : followUp ? `${FIELD_LABEL.nextStep} ${fmtDate(followUp)}${nextStep ? " \xB7 " + nextStep : ""}` : "";
   return `Beim Speichern: ${[move, next].filter(Boolean).join(" \xB7 ")}`;
 }
-/** The note a first contact is logged with when none is typed. */
-export const contactText = (channel) => channel === "Vor Ort" ? "Vor Ort besucht" : `\xDCber ${channel} kontaktiert`;
+/** The note a visit is logged with when none is typed. */
+export const VISIT_NOTE = "Vor Ort besucht";
 /**
- * "Kontaktiert" on a new lead asks how: a call opens the call sheet and an e-mail the composer, each logging the
- * contact their own way; a visit or a message elsewhere is logged here, today, with a note if any. Logged, the
- * contact makes the lead Kontaktiert and plans its follow-up, as any first contact does.
+ * "Kontaktiert" on a new lead asks where we spoke with them (spokeWith), as only that makes a lead Kontaktiert: a
+ * visit is logged here, today, with a note if any, and plans the follow-up; a call opens the call sheet, and their
+ * answer the composer's "Antwort eintragen", each logging it their own way.
  */
 function contactPickHtml(l, acts, p, calls, today) {
-  // A visit first: what a new lead's first contact most often is.
-  const chips = ["Vor Ort", ...CHANNELS.filter((ch) => ch !== "Vor Ort")].map((ch) => ch === "Telefon" ? `<button class="chip" data-act="callOpen"${calls ? "" : " disabled"}>${ch}</button>`
-    : ch === "E-Mail" ? `<button class="chip" data-compose="E-Mail"${l.email ? "" : " disabled"}>${ch}</button>`
-    : `<button class="chip" data-cp="${esc(ch)}" aria-pressed="${p.channel === ch}">${esc(ch)}</button>`).join("");
+  const chips = `<button class="chip" data-cp="Vor Ort" aria-pressed="${p.channel === "Vor Ort"}">Vor Ort</button><button class="chip" data-act="callOpen"${calls ? "" : " disabled"}>Am Telefon</button><button class="chip" data-compose="in">Sie haben geantwortet</button>`;
   const activity = { direction: "out", channel: p.channel, date: today, createdAt: new Date().toISOString() };
   const after = p.channel ? afterLine(l, acts, activity, planAfterActivity(l, acts, activity, today), today) : "";
-  const form = p.channel ? `<textarea id="cpText" rows="2" placeholder="${esc(contactText(p.channel))}">${esc(p.text)}</textarea>${after ? `<p class="note after">${esc(after)}</p>` : ""}` : "";
-  return `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Wie war der Kontakt?</p><div class="chips">${chips}</div>${form}
+  const form = p.channel ? `<textarea id="cpText" rows="2" placeholder="${VISIT_NOTE}">${esc(p.text)}</textarea>${after ? `<p class="note after">${esc(after)}</p>` : ""}` : "";
+  return `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Wo haben Sie mit ihnen gesprochen?</p><div class="chips">${chips}</div>${form}
     <div class="two" style="margin-top:8px"><button data-act="contactCancel">Abbrechen</button>${p.channel ? `<button class="primary" data-act="contactSave">Eintragen</button>` : ""}</div></div>`;
 }
 /**
@@ -393,7 +391,7 @@ function afterLine(l, acts, activity, patch, today, chosen = null) {
   if (chosen) return `Danach: ${nextStep || "Nachfassen"} ${fmtDate(chosen)}`;
   if (activity.direction === "in") return `Danach: ${nextStep || "Nachfassen"}, ${relDate(followUp, today)}`;
   const all = [...acts, activity];
-  const touch = (patch.status || l.status) === "kontaktiert" && !hasReply(all) ? `, Kontakt ${countTouches(all)} von ${SEQUENCE_POLICY.maxTouches}` : "";
+  const touch = (patch.status || l.status) === "kontaktiert" && !hasSpoken(all) ? `, Kontakt ${countTouches(all)} von ${SEQUENCE_POLICY.maxTouches}` : "";
   return `Danach: ${nextStep || "Nachfassen"} ${fmtDate(followUp)}${patch.followUp ? ` (+${daysBetween(activity.date, followUp)} Tage${touch})` : ""}`;
 }
 /** The call that may be taken back: the newest activity, when it is a call, and not on an opted-out lead. The server checks the rest. */
@@ -418,7 +416,9 @@ function composerHtml(state, l, acts, today, offersMailto) {
   const activity = { direction: c.direction, channel: c.channel, date: c.date, createdAt: new Date().toISOString() };
   const patch = planAfterActivity(l, acts, activity, today);
   const after = afterLine(l, acts, activity, patch, today, c.followUp);
-  const afterHtml = after ? `<p class="note after">${esc(after)} <button class="more" data-act="composeFu">\xC4ndern</button></p>${c.fuEdit ? `<input type="date" id="cFu" value="${esc(c.followUp || nextAfter(l, patch)[0] || "")}" min="${esc(today)}" aria-label="${FIELD_LABEL.followUp}">` : ""}` : "";
+  // A message of ours to a new lead is an attempt: it plans nothing, and the composer says why.
+  const afterHtml = after ? `<p class="note after">${esc(after)} <button class="more" data-act="composeFu">\xC4ndern</button></p>${c.fuEdit ? `<input type="date" id="cFu" value="${esc(c.followUp || nextAfter(l, patch)[0] || "")}" min="${esc(today)}" aria-label="${FIELD_LABEL.followUp}">` : ""}`
+    : l.status === "neu" && !patch.status && c.direction === "out" ? `<p class="note after">Bleibt Neu: Kontaktiert ist ein Lead erst, wenn jemand mit ihnen gesprochen hat.</p>` : "";
   if (c.direction === "in") {
     return `<div class="card compose">${head}${tabs}${closedBox}
     <label>Datum<input type="date" id="cDate" value="${esc(c.date)}" max="${esc(today)}"></label>
@@ -465,6 +465,7 @@ function statusMenuHtml(l, acts, today) {
   return `<div class="card menu">
     ${takesCall(l, today) ? item("terminOpen", "Termin eintragen", `wird ${STAGE_LABEL.qualifiziert}`) : ""}
     ${l.status === "kontaktiert" ? item("closeWithoutReply", "Ohne Antwort abschlie\xDFen", `ab Kontakt ${SEQUENCE_POLICY.maxTouches} von ${SEQUENCE_POLICY.maxTouches}`, !sequenceExhausted(l, acts)) : ""}
+    ${l.status === "neu" && sequenceExhausted(l, acts) ? item("closeWithoutReply", "Ohne Antwort abschlie\xDFen", `${SEQUENCE_POLICY.maxTouches} Tage angerufen, nie erreicht`) : ""}
     <button class="mitem danger" data-act="optOut"><span><b>Keine Kontaktaufnahme gew\xFCnscht</b></span></button>
   </div>`;
 }
@@ -485,12 +486,14 @@ function nextStepHtml(l, acts, ui, today) {
   const due = isDue(l, today);
   const what = l.nextStep || nextActionHint(l, acts);
   const line = lacksNextStep(l) ? `<b>Kein n\xE4chster Schritt</b>` : l.followUp ? `${FIELD_LABEL.nextStep}: ${due && l.followUp < today ? "f\xE4llig " : ""}${esc(relDate(l.followUp, today))}${what ? " \xB7 " + esc(what) : ""}` : `${FIELD_LABEL.nextStep}: ${esc(what || "nichts geplant")}`;
+  // A Neu lead has no date (takesDate): only the next step's text.
+  const date = takesDate(l) ? `<label style="margin:0">${FIELD_LABEL.followUp}</label>
+    <div class="furow" style="margin-top:4px"><input type="date" id="fu" value="${esc(l.followUp || "")}" aria-label="${FIELD_LABEL.followUp}"><button data-fu="1">Morgen</button><button data-fu="3">+3 T</button><button data-fu="7">+1 Wo</button><button data-fu="clear">Keins</button></div>` : "";
   const edit = ui.nextEdit ? `<div class="nedit"><label>${FIELD_LABEL.nextStep}<input id="nextStep" value="${esc(l.nextStep || "")}" placeholder="${esc(nextActionHint({ ...l, nextStep: "" }, acts) || "z. B. Di vor 15 Uhr anrufen")}"></label>
-    <label style="margin:0">${FIELD_LABEL.followUp}</label>
-    <div class="furow" style="margin-top:4px"><input type="date" id="fu" value="${esc(l.followUp || "")}" aria-label="${FIELD_LABEL.followUp}"><button data-fu="1">Morgen</button><button data-fu="3">+3 T</button><button data-fu="7">+1 Wo</button><button data-fu="clear">Keins</button></div>
+    ${date}
     <button class="more" data-act="nextEdit">Fertig</button></div>` : "";
   return `<div class="next${lacksNextStep(l) ? " lacks" : due ? " due" : ""}"><span>${line}</span>${ui.nextEdit ? "" : `<button class="more" data-act="nextEdit">\xC4ndern</button>`}</div>
-    ${l.status === "kontaktiert" && hasReply(acts) ? `<p class="note" style="margin:4px 0 0">Die Antwort hat die Nachfass-Folge angehalten.</p>` : ""}${edit}`;
+    ${edit}`;
 }
 /**
  * A Kunde's care on its page: who looks after it and its phase (also in the header), the check-ins once live, and
@@ -560,38 +563,28 @@ function todosHtml(l, ui, today) {
   </div></div>`;
 }
 /**
- * The sequence on a wide screen, as a checklist: a row per day we made contact (as countTouches counts them), the
- * answer that stopped it, with what we would have done without it, and the contacts still to come.
+ * The sequence on a wide screen, as a checklist: a row per day we made contact (as countTouches counts them) and the
+ * contacts still to come. Only for a lead in it: Kontaktiert and never spoken with (set so by hand), as speaking with
+ * them ends it.
  */
-function sequenceHtml(l, acts, today) {
-  if (l.status !== "kontaktiert") return "";
-  const max = SEQUENCE_POLICY.maxTouches, cadence = SEQUENCE_POLICY.cadence;
-  const sorted = [...acts].sort(byTimeline);
-  const replyAt = sorted.findIndex(isReply);
-  const reply = replyAt < 0 ? null : sorted[replyAt];
+function sequenceHtml(l, acts) {
+  if (l.status !== "kontaktiert" || hasSpoken(acts)) return "";
+  const max = SEQUENCE_POLICY.maxTouches;
   // One row per day, with every contact of that day.
   const days = [];
-  for (const a of replyAt < 0 ? sorted : sorted.slice(0, replyAt)) {
+  for (const a of [...acts].sort(byTimeline)) {
     const day = days.at(-1)?.date === a.date ? days.at(-1) : (days.push({ date: a.date, acts: [] }), days.at(-1));
     day.acts.push(a);
   }
   const n = days.length;
-  const row = (done, title, sub, cls = "") => `<li class="${done ? "ok" : "todo"}${cls}"><b>${title}</b>${sub ? `<small>${sub}</small>` : ""}</li>`;
+  const row = (done, title, sub) => `<li class="${done ? "ok" : "todo"}"><b>${title}</b>${sub ? `<small>${sub}</small>` : ""}</li>`;
   const how = (a) => a.outcome ? `Anruf \xB7 ${esc(OUTCOME_LABEL[a.outcome])}` : esc(a.channel);
   const rows = days.map((d, i) => row(true, `${i ? "Nachfassen" : "Erstkontakt"} \xB7 ${d.acts.map(how).join(", ")}`, esc(fmtDate(d.date))));
-  if (reply) {
-    // Without the answer the sequence would have gone on by its cadence from the last contact.
-    const would = n && n < max ? `Ohne Antwort ginge es am ${esc(fmtDate(addDays(days.at(-1).date, cadence[Math.min(n - 1, cadence.length - 1)])))} weiter.` : "";
-    const answer = reply.direction === "in" && !l.optOutAt ? (reply.mail?.threadId ? `<button data-act="reply" data-thread="${esc(reply.mail.threadId)}">Antworten</button>` : `<button data-compose="${esc(reply.channel)}">Antworten</button>`) : "";
-    const termin = takesCall(l, today) ? `<button data-act="terminOpen">Termin eintragen</button>` : "";
-    rows.push(`<li class="now"><b>${reply.direction === "in" ? `Antwort \xB7 ${esc(reply.channel)}` : how(reply)}</b><small>${esc(fmtDate(reply.date))}</small>${would ? `<small>${would}</small>` : ""}${answer || termin ? `<div class="two">${answer}${termin}</div>` : ""}</li>`);
-  }
   for (let k = n + 1; k <= max; k++) {
-    const sub = reply ? "angehalten" : k === n + 1 && l.followUp ? `f\xE4llig ${esc(fmtDate(l.followUp))}` : k === max ? "danach: Ohne Antwort abschlie\xDFen" : "";
+    const sub = k === n + 1 && l.followUp ? `f\xE4llig ${esc(fmtDate(l.followUp))}` : k === max ? "danach: Ohne Antwort abschlie\xDFen" : "";
     rows.push(row(false, `Kontakt ${k}`, sub));
   }
-  const state = reply ? " \xB7 angehalten" : n >= max ? " \xB7 ohne Antwort" : "";
-  return `<div class="sec desk seq"><h3>Nachfass-Folge <small>${Math.min(n, max)} von ${max}${state}</small></h3><ol class="card checks">${rows.join("")}</ol>${!reply && n >= max ? `<p class="note">Alle Kontakte ohne Antwort. Abschlie\xDFen?</p>` : ""}</div>`;
+  return `<div class="sec desk seq"><h3>Nachfass-Folge <small>${Math.min(n, max)} von ${max}${n >= max ? " \xB7 ohne Antwort" : ""}</small></h3><ol class="card checks">${rows.join("")}</ol>${n >= max ? `<p class="note">Alle Kontakte ohne Antwort. Abschlie\xDFen?</p>` : ""}</div>`;
 }
 /**
  * The lead's feed, newest first: the notes pinned on top, mail grouped by its Gmail thread, single messages and
@@ -650,7 +643,7 @@ function roundBar(state, l, today) {
   const part = q ? [["replies", "Neue Antworten"], ["attention", "Kunden: Achtung"], ["overdue", "\xDCberf\xE4llig"], ["today", "Heute f\xE4llig"]].find(([k]) => q[k].some((x) => x.id === l.id)) : null;
   const label = r.list === "calls" ? "Anrufliste" : r.list === "fresh" ? "Erstkontakte" : `Heute${part ? " \xB7 " + part[1] : ""}`;
   const later = state.ui.later ? `<div class="chips later"><button class="chip" data-later="1">Morgen</button><button class="chip" data-later="7">N\xE4chste Woche</button><input type="date" id="laterDate" min="${esc(addDays(today, 1))}" aria-label="Sp\xE4ter am"></div>` : "";
-  return `<div class="l-round"><div class="qbar"><span class="q-pos"><b>${label}</b> \xB7 ${r.seen.length + 1} von ${r.seen.length + 1 + rest.length}</span>${takesFollowUp(l) || r.list === "queue" && dueByTodo(l, today) ? `<button class="link" data-act="later" aria-expanded="${!!state.ui.later}">Sp\xE4ter ▾</button>` : ""}<button class="primary" data-act="roundNext">Weiter ›</button></div>${later}</div>`;
+  return `<div class="l-round"><div class="qbar"><span class="q-pos"><b>${label}</b> \xB7 ${r.seen.length + 1} von ${r.seen.length + 1 + rest.length}</span>${takesDate(l) || r.list === "queue" && dueByTodo(l, today) ? `<button class="link" data-act="later" aria-expanded="${!!state.ui.later}">Sp\xE4ter ▾</button>` : ""}<button class="primary" data-act="roundNext">Weiter ›</button></div>${later}</div>`;
 }
 export function detailView(state, today) {
   if (!isReady(state)) return loadingOr(state, "");
@@ -671,12 +664,15 @@ export function detailView(state, today) {
   // With Gmail connected, mail that gets the Abmeldelink goes out only by Gmail: a mailto would send it without the
   // link. A Kunde's service mail has no Abmeldelink and keeps its mailto.
   const onlyByGmail = state.caps.gmail && !!l.email && getsUnsubscribeLink(l);
-  const touchTxt = l.status === "kontaktiert" && !hasReply(acts) ? `Kontakt ${t} von ${SEQUENCE_POLICY.maxTouches}` : t ? `${t} Kontakt${t > 1 ? "e" : ""}` : "";
+  const touchTxt = l.status === "neu" ? "" : l.status === "kontaktiert" && !hasSpoken(acts) ? `Kontakt ${t} von ${SEQUENCE_POLICY.maxTouches}` : t ? `${t} Kontakt${t > 1 ? "e" : ""}` : "";
+  // A lead tried but never spoken with says when it was last tried, and how.
+  const tried = !l.contactedAt && [...acts].filter((a) => a.direction === "out").sort(byTimeline).at(-1);
+  const since = l.contactedAt ? "seit " + fmtDate(l.contactedAt) : tried ? `Nie gesprochen, ${tried.channel === "Telefon" ? "angerufen" : tried.channel === "Vor Ort" ? "besucht" : "angeschrieben"} am ${fmtDate(tried.date)}` : "Nie kontaktiert";
   // Whether the page offers a mail link to an address, the composer's or a Kundenakte contact's: this lead's own
   // address as above, closed or only by Gmail; another (an agency's), which Gmail does not send to from here, is
   // closed when a business with an opt-out holds it, except on a Kunde.
   const offersMailto = (email) => !(addressKey(email) === addressKey(l.email) ? closedTo || onlyByGmail : getsUnsubscribeLink(l) && optOutByAddress(state.data.leads, { email }));
-  const sub = [l.type, l.city, touchTxt, l.contactedAt ? "seit " + fmtDate(l.contactedAt) : "Nie kontaktiert"].filter(Boolean).map(esc).join(" \xB7 ");
+  const sub = [l.type, l.city, touchTxt, since].filter(Boolean).map(esc).join(" \xB7 ");
   const customer = l.status === "kunde" ? customerOf(l) : null;
   const tel = channelLink(l, "Telefon");
   const act = (href, label, attrs = "") => href ? `<a class="btn" href="${esc(href)}"${href.startsWith("tel:") ? "" : ' target="_blank" rel="noopener"'}${attrs}>${label}</a>` : `<a class="btn" aria-disabled="true">${label}</a>`;
@@ -716,7 +712,7 @@ export function detailView(state, today) {
   <div class="l-work">
   ${todosHtml(l, ui, today)}
   ${customer ? customerHtml(state, l, customer, today) : `<div class="sec talk"><h3>F\xFCr das Gespr\xE4ch</h3><dl class="card facts qe">${fields("talk")}</dl></div>
-  ${sequenceHtml(l, acts, today)}`}
+  ${sequenceHtml(l, acts)}`}
   </div>
   <div class="l-feed">${feedHtml(state, l, acts, today, clamp)}</div>
 </div>`;

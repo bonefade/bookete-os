@@ -7,7 +7,7 @@ import { COMMANDS } from "../src/server/commands.js";
 import { handleMcp } from "../src/server/mcp.js";
 import { ValidationError } from "../src/domain/errors.js";
 import { upgradeLead, isDue } from "../src/domain/lead.js";
-import { sequenceExhausted, nextActionHint } from "../src/domain/activity.js";
+import { sequenceExhausted, nextActionHint, planAfterActivity } from "../src/domain/activity.js";
 import { STAGES, LOST_REASONS } from "../src/domain/constants.js";
 import { chunkBackup } from "../src/domain/backup.js";
 
@@ -81,14 +81,19 @@ test("a disqualified lead has no follow-up, and setting one is refused", async (
   assert.equal((await store.get("leads", id)).followUp, null);
 });
 
-test("contactedAt: set by the first contact, never by later ones, and Neu means never contacted", async () => {
+test("contactedAt: set the first time we speak with them, never by an attempt or later contacts, and Neu means never spoken with", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Krone" });
   assert.equal((await store.get("leads", id)).contactedAt, null);
+  // Calls with no outcome and a mail are attempts: still Neu.
   await uc.logActivity(id, { direction: "out", channel: "Telefon", text: "Angerufen", date: "2026-10-10" });
+  await uc.logActivity(id, { direction: "out", channel: "E-Mail", text: "Hallo", date: "2026-10-11" });
+  assert.deepEqual([(await store.get("leads", id)).status, (await store.get("leads", id)).contactedAt], ["neu", null]);
+  // A visit is speaking with them.
+  await uc.logActivity(id, { direction: "out", channel: "Vor Ort", text: "Besucht", date: "2026-10-12" });
   await uc.logActivity(id, { direction: "out", channel: "Telefon", text: "Nochmal", date: "2026-10-14" });
   const l = await store.get("leads", id);
-  assert.deepEqual([l.status, l.contactedAt], ["kontaktiert", "2026-10-10"]);
+  assert.deepEqual([l.status, l.contactedAt], ["kontaktiert", "2026-10-12"]);
   await rejects(uc.changeStatus(id, "neu"), "contactedAt");
   await rejects(uc.updateLead(id, { contactedAt: null }), "contactedAt");
   // A contact logged later but dated earlier moves the first contact back.
@@ -112,7 +117,53 @@ test("contactedAt: set by the first contact, never by later ones, and Neu means 
   await uc.updateLead(outside, { contactedAt: "2026-09-20" });
   const o = await store.get("leads", outside);
   assert.deepEqual([o.status, o.contactedAt], ["kontaktiert", "2026-09-20"]);
+  // A conversation recorded by hand counts: back to Neu is refused, also when the write clears the day with it.
   await rejects(uc.updateLead(outside, { status: "neu" }), "contactedAt");
+  const viaAgent = await mcp({ store, clock, uc }, "update_lead", { id: outside, fields: { status: "neu", contactedAt: null } });
+  assert.equal(viaAgent.isError, true);
+  await uc.logCall(id, { outcome: "rueckruf", date: "2026-10-20" });
+  await rejects(uc.updateLead(id, { status: "neu", contactedAt: null }), "contactedAt");
+  assert.deepEqual([(await store.get("leads", outside)).status, (await store.get("leads", outside)).contactedAt], ["kontaktiert", "2026-09-20"]);
+  // Dated by a mail of the campaign, before 1.24.0, and never spoken with: back to Neu clears the day and the plan.
+  const mailed = await uc.addLead({ name: "Kampagne" });
+  await uc.logActivity(mailed, { direction: "out", channel: "E-Mail", text: "Hallo", date: "2026-10-01" });
+  await uc.updateLead(mailed, { contactedAt: "2026-10-01" });
+  await uc.setFollowUp(mailed, "2026-10-20");
+  await uc.setNextStep(mailed, "Nachfassen");
+  const neu = await mcp({ store, clock, uc }, "change_status", { id: mailed, status: "neu" });
+  assert.ok(!neu.isError, JSON.stringify(neu));
+  const m = await store.get("leads", mailed);
+  assert.deepEqual([m.status, m.contactedAt, m.followUp, m.nextStep], ["neu", null, null, ""]);
+  // An appointment entered with "Termin eintragen", or a win, logs no conversation, yet they spoke: no way back.
+  // Closed after it, or by hand with a reason other than Nicht erreicht, it stays closed too.
+  for (const [name, after] of [["Termin", null], ["Gewonnen", { result: "kunde" }], ["Kein Abschluss", { result: "kein-abschluss", reason: "Kein Bedarf" }], ["Zu", "Geschlossen / existiert nicht"]]) {
+    const lead = await uc.addLead({ name });
+    await uc.logActivity(lead, { direction: "out", channel: "E-Mail", text: "Hallo", date: "2026-10-01" });
+    await uc.updateLead(lead, { contactedAt: "2026-10-01" });
+    if (typeof after === "string") await uc.changeStatus(lead, "disqualifiziert", after);
+    else await uc.scheduleMeeting(lead, { date: "2026-10-20", time: "10:00" });
+    if (after?.result) await uc.meetingOutcome(lead, after);
+    const before = await store.get("leads", lead);
+    await rejects(uc.changeStatus(lead, "neu"), "contactedAt");
+    assert.deepEqual(await store.get("leads", lead), before);
+  }
+  // Closed as Nicht erreicht after the mails, nobody spoke with them: back to Neu.
+  const unanswered = await uc.addLead({ name: "Keine Antwort" });
+  await uc.logActivity(unanswered, { direction: "out", channel: "E-Mail", text: "Hallo", date: "2026-10-01" });
+  await uc.updateLead(unanswered, { contactedAt: "2026-10-01" });
+  await uc.changeStatus(unanswered, "disqualifiziert", "Nicht erreicht");
+  await uc.changeStatus(unanswered, "neu");
+  const u = await store.get("leads", unanswered);
+  assert.deepEqual([u.status, u.lostReason, u.contactedAt], ["neu", null, null]);
+  // Since 1.24.0 an attempt dates nothing: a first contact on the day of a later mail was set for a conversation.
+  let n = 0;
+  const after = createUseCases({ store, clock: { today: () => "2026-10-25", now: () => "2026-10-25T10:00:00.000Z" }, ids: { newId: () => `after${++n}` }, actor: "jo@bookete.com (test)" });
+  const talked = await after.addLead({ name: "Rief zurück" });
+  await after.logActivity(talked, { direction: "out", channel: "E-Mail", text: "Hallo", date: "2026-10-25" });
+  await after.updateLead(talked, { contactedAt: "2026-10-25" });
+  await rejects(after.changeStatus(talked, "neu"), "contactedAt");
+  // A Neu lead's date stored before 1.24.0 is not due.
+  assert.equal(isDue({ status: "neu", followUp: "2026-10-01" }, "2026-10-15"), false);
 
   // An appointment on the first call, without a logged activity, still counts as contact.
   const direct = await uc.addLead({ name: "Termin gleich" });
@@ -231,17 +282,23 @@ test("the opt-out message is a contact: it dates the first contact, which liftin
   assert.deepEqual([l.status, l.contactedAt], ["kontaktiert", "2026-10-15"]);
 });
 
-test("the fifth unanswered contact, not the fourth, offers to close as Nicht erreicht", async () => {
+test("the fifth unanswered contact, not the fourth, offers to close as Nicht erreicht; on a Neu lead the fifth day called", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Still" });
-  const offered = async () => {
+  await uc.changeStatus(id, "kontaktiert");
+  const neu = await uc.addLead({ name: "Neu" });
+  const offered = async (id) => {
     const [l, acts] = [await store.get("leads", id), await store.activitiesOf(id)];
     return [sequenceExhausted(l, acts), nextActionHint(l, acts)];
   };
-  for (const date of ["2026-10-01", "2026-10-04", "2026-10-08", "2026-10-11"]) await uc.logActivity(id, { direction: "out", channel: "Telefon", text: "Nicht erreicht", date });
-  assert.deepEqual(await offered(), [false, "Nachfassen (Kontakt 5 von 5)"]);
-  await uc.logActivity(id, { direction: "out", channel: "Telefon", text: "Nicht erreicht", date: "2026-10-15" });
-  assert.deepEqual(await offered(), [true, "Keine Antwort nach 5 Kontakten \u2013 abschlie\xDFen?"]);
+  for (const date of ["2026-10-01", "2026-10-04", "2026-10-08", "2026-10-11"]) for (const lead of [id, neu]) await uc.logActivity(lead, { direction: "out", channel: "Telefon", text: "Nicht erreicht", date });
+  // A mail on a Neu lead is no call.
+  await uc.logActivity(neu, { direction: "out", channel: "E-Mail", text: "Hallo", date: "2026-10-13" });
+  assert.deepEqual(await offered(id), [false, "Nachfassen (Kontakt 5 von 5)"]);
+  assert.deepEqual(await offered(neu), [false, "Erstkontakt"]);
+  for (const lead of [id, neu]) await uc.logActivity(lead, { direction: "out", channel: "Telefon", text: "Nicht erreicht", date: "2026-10-15" });
+  assert.deepEqual(await offered(id), [true, "Keine Antwort nach 5 Kontakten \u2013 abschlie\xDFen?"]);
+  assert.deepEqual(await offered(neu), [true, "Nicht erreicht nach 5 Anrufen \u2013 abschlie\xDFen?"]);
 });
 
 test("closing a lead nobody answers gives Nicht erreicht", async () => {
@@ -346,4 +403,22 @@ test("a backup taken before 0003 had run is upgraded again on import, with its a
   for (const chunk of chunkBackup(backup, "2026-10-15")) await uc.importBackup(chunk);
   const l = await store.get("leads", "L1");
   assert.deepEqual([l.status, l.contactedAt, l.schemaVersion], ["kontaktiert", "2026-09-27", 3]);
+});
+
+test("a Neu lead has no date, on every write path; a closed lead written to plans nothing", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Krone", followUp: "2026-10-20", nextStep: "Anrufen" });
+  assert.deepEqual([(await store.get("leads", id)).followUp, (await store.get("leads", id)).nextStep], [null, "Anrufen"]);
+  await rejects(uc.setFollowUp(id, "2026-10-20"), "followUp");
+  const viaMcp = await mcp({ store, clock, uc }, "set_follow_up", { id, date: "2026-10-20" });
+  assert.equal(viaMcp.isError, true);
+  await uc.updateLead(id, { followUp: "2026-10-20" });
+  assert.equal((await store.get("leads", id)).followUp, null);
+  // Spoken with, it takes one.
+  await uc.changeStatus(id, "kontaktiert");
+  await uc.setFollowUp(id, "2026-10-20");
+  assert.equal((await store.get("leads", id)).followUp, "2026-10-20");
+  // A disqualified lead written to: no date, no next step changed, the status stays.
+  const closed = { ...(await store.get("leads", id)), status: "disqualifiziert", lostReason: "Kein Bedarf", followUp: null, nextStep: "Antworten" };
+  assert.deepEqual(planAfterActivity(closed, [], { direction: "out", channel: "E-Mail", date: "2026-10-15", createdAt: "2026-10-15T10:00:00.000Z" }, "2026-10-15"), {});
 });

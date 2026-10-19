@@ -1,4 +1,4 @@
-import { byTimeline, isReply } from './activity.js';
+import { byTimeline, spokeWith } from './activity.js';
 import { weekStart } from './dates.js';
 
 export function groupByLead(activities) {
@@ -39,7 +39,7 @@ export function weekNumbers(leads, activities, today) {
   return {
     from,
     calls: calls.length,
-    reached: calls.filter(isReply).length,
+    reached: calls.filter(spokeWith).length,
     meetings: calls.filter((a) => a.outcome === "termin").length,
     customers: leads.filter((l) => thisWeek(l.wonAt)).length,
     reasons: Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 3),

@@ -2,7 +2,7 @@ import { STAGE_LABEL, OPT_OUT_REASON } from '../domain/constants.js';
 import { ValidationError } from '../domain/errors.js';
 import { actsOf, currentLead, icpOf, isReady, roundList } from './selectors.js';
 import { todosOf } from '../domain/todos.js';
-import { isDue, takesFollowUp } from '../domain/lead.js';
+import { isDue, takesDate } from '../domain/lead.js';
 import { addDays } from '../domain/dates.js';
 import { copyText, channelLink, mailSubject, saveFile } from './platform.js';
 import { createBackup } from '../domain/backup.js';
@@ -10,7 +10,7 @@ import { fillTemplate, defaultTemplate, DEFAULT_SCRIPT } from '../domain/templat
 import { lastChannel } from '../domain/activity.js';
 import { relDate, actorName } from './format.js';
 import { PHASE_LABEL, customerOf } from '../domain/customer.js';
-import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, contactText } from './views.js';
+import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, VISIT_NOTE } from './views.js';
 
 export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
@@ -430,7 +430,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     const lead = currentLead(S());
     const today = clock.today();
     const todos = S().ui.round?.list === "queue" ? todosOf(lead).filter((t) => !t.done && t.due && t.due <= today) : [];
-    const followUp = takesFollowUp(lead) && (!todos.length || isDue(lead, today));
+    const followUp = takesDate(lead) && (!todos.length || isDue(lead, today));
     const later = async () => {
       for (const t of todos) await uc.changeTodo(lead, { todo: t.id, due: date });
       if (followUp) await uc.setFollowUp(lead, date);
@@ -655,7 +655,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const lead = currentLead(st);
       const { channel, text } = st.ui.contactPick;
       const r = await run(
-        () => uc.logActivity(lead, actsOf(st, lead.id), { direction: "out", channel, date: clock.today(), text: text.trim() || contactText(channel) }),
+        () => uc.logActivity(lead, actsOf(st, lead.id), { direction: "out", channel, date: clock.today(), text: text.trim() || VISIT_NOTE }),
         (res) => res.plan.followUp ? "Kontaktiert \xB7 nachfassen " + relDate(res.plan.followUp, clock.today()) : "Kontaktiert"
       );
       if (r) {
@@ -880,11 +880,13 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
         return render();
       }
       if (lead.status === d.status) return;
-      // A new lead becomes Kontaktiert by its first contact: the question how logs it and plans the follow-up.
+      // A new lead becomes Kontaktiert once someone speaks with them: the question where logs it and plans the follow-up.
       if (d.status === "kontaktiert" && lead.status === "neu") {
         ui({ contactPick: S().ui.contactPick || { channel: "", text: "" }, statusMenu: false, lostPick: false });
         return render();
       }
+      // Back to Neu clears what speaking with them gave; the server refuses it once anyone did.
+      if (d.status === "neu" && lead.contactedAt && !confirm(`\u201E${lead.name}\u201C zur\xFCck auf Neu?\n\nDer Erstkontakt, das Nachfass-Datum und der n\xE4chste Schritt werden gel\xF6scht. Das geht nur, wenn noch niemand mit ihnen gesprochen hat.`)) return;
       ui({ statusMenu: false, lostPick: false, contactPick: null });
       return run(() => uc.changeStatus(lead, d.status), "Status: " + STAGE_LABEL[d.status]);
     }

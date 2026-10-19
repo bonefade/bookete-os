@@ -6,7 +6,7 @@ import { createUseCases } from "../src/application/use-cases.js";
 import { COMMANDS } from "../src/server/commands.js";
 import { handleMcp } from "../src/server/mcp.js";
 import { ValidationError } from "../src/domain/errors.js";
-import { countTouches, hasReply, meetingDue } from "../src/domain/activity.js";
+import { countTouches, hasSpoken, meetingDue } from "../src/domain/activity.js";
 import { BACKUP_FORMAT } from "../src/domain/backup.js";
 
 const clock = { today: () => "2026-10-15", now: () => "2026-10-15T10:00:00.000Z" };
@@ -21,21 +21,38 @@ const rejects = (promise, field) => assert.rejects(promise, (e) => e instanceof 
 const mcp = async (context, name, args) => (await (await handleMcp(new Request("https://crm/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) }), context)).json()).result;
 const shape = (l) => [l.status, l.followUp, l.nextStep, l.lostReason];
 
-test("Nicht erreicht: Kontaktiert, call again in two days; the fifth unanswered attempt closes the lead", async () => {
+test("Nicht erreicht: a Neu lead stays Neu with no date, and the fifth day called without getting through closes it; a Kontaktiert one is called again in two days", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Krone", phone: "+43 1" });
   const { activity } = await uc.logCall(id, { outcome: "nicht-erreicht", note: "Mailbox" });
   assert.deepEqual([activity.channel, activity.direction, activity.outcome, activity.text], ["Telefon", "out", "nicht-erreicht", "Nicht erreicht\nMailbox"]);
-  assert.deepEqual(shape(await store.get("leads", id)), ["kontaktiert", "2026-10-17", "", null]);
-  // Earlier attempts on other days, e.g. emails: the fifth contact without an answer is the last.
+  assert.deepEqual([...shape(await store.get("leads", id)), (await store.get("leads", id)).contactedAt], ["neu", null, "", null, null]);
+  // Mails are no try to reach them by phone: three of them and a second call leave it open.
   for (const date of ["2026-10-01", "2026-10-05", "2026-10-09"]) await uc.logActivity(id, { direction: "out", channel: "E-Mail", text: "Hallo", date });
   await uc.logCall(id, { outcome: "nicht-erreicht" });
-  assert.deepEqual(shape(await store.get("leads", id)), ["kontaktiert", "2026-10-17", "", null]);
+  assert.deepEqual(shape(await store.get("leads", id)), ["neu", null, "", null]);
+  // Calls on four other days, one logged by hand without an outcome: the fifth day closes it.
   const later = setup();
   const l = await later.uc.addLead({ name: "Post", phone: "+43 2" });
-  for (const date of ["2026-10-01", "2026-10-05", "2026-10-09", "2026-10-12"]) await later.uc.logActivity(l, { direction: "out", channel: "Telefon", text: "Angerufen", date });
+  for (const date of ["2026-10-01", "2026-10-05", "2026-10-09"]) await later.uc.logActivity(l, { direction: "out", channel: "Telefon", text: "Angerufen", date });
+  await later.uc.logCall(l, { outcome: "nicht-erreicht" });
+  assert.equal((await later.store.get("leads", l)).status, "neu");
+  await later.uc.logActivity(l, { direction: "out", channel: "Telefon", text: "Angerufen", date: "2026-10-12" });
   await later.uc.logCall(l, { outcome: "nicht-erreicht" });
   assert.deepEqual(shape(await later.store.get("leads", l)), ["disqualifiziert", null, "", "Nicht erreicht"]);
+  // A missed call keeps the next step typed on a Neu lead, and a closed lead as it was.
+  const typed = await uc.addLead({ name: "Stern", phone: "+43 4", nextStep: "Mittags probieren" });
+  await uc.logCall(typed, { outcome: "nicht-erreicht" });
+  assert.deepEqual(shape(await store.get("leads", typed)), ["neu", null, "Mittags probieren", null]);
+  const closed = await uc.addLead({ name: "Zu", phone: "+43 5", nextStep: "Im Fr\xFChjahr wieder" });
+  await uc.changeStatus(closed, "disqualifiziert", "Zu klein");
+  await uc.logCall(closed, { outcome: "nicht-erreicht" });
+  assert.deepEqual(shape(await store.get("leads", closed)), ["disqualifiziert", null, "Im Fr\xFChjahr wieder", "Zu klein"]);
+  // A lead set Kontaktiert by hand is in the sequence: not reached, it is called again in two days.
+  const set = await uc.addLead({ name: "Linde", phone: "+43 3" });
+  await uc.changeStatus(set, "kontaktiert");
+  await uc.logCall(set, { outcome: "nicht-erreicht" });
+  assert.deepEqual(shape(await store.get("leads", set)), ["kontaktiert", "2026-10-17", "", null]);
 });
 
 test("Rückruf and Termin need a date from today on; Termin qualifies the lead", async () => {
@@ -95,8 +112,8 @@ test("Kein Interesse needs a reason and disqualifies with it; the opt-out reason
 
 test("a call we got through counts as an answer: the sequence stops counting", () => {
   const out = (date, outcome = null) => ({ direction: "out", channel: "Telefon", date, outcome, createdAt: date });
-  assert.equal(hasReply([out("2026-10-01", "nicht-erreicht")]), false);
-  assert.equal(hasReply([out("2026-10-01", "rueckruf")]), true);
+  assert.equal(hasSpoken([out("2026-10-01", "nicht-erreicht")]), false);
+  assert.equal(hasSpoken([out("2026-10-01", "rueckruf")]), true);
   assert.equal(countTouches([out("2026-10-01"), out("2026-10-02", "nicht-erreicht"), out("2026-10-03", "termin"), out("2026-10-04")]), 2);
 });
 
@@ -131,7 +148,7 @@ test("a missed call keeps a date agreed with them; a Termin with a customer leav
   assert.deepEqual(shape(await store.get("leads", before)), ["qualifiziert", "2026-10-22", "Termin um 10:00", null]);
   // A next step set by hand on a lead still in the sequence keeps its date too.
   const planned = await uc.addLead({ name: "Linde", phone: "+43 3" });
-  await uc.logActivity(planned, { direction: "out", channel: "E-Mail", text: "Hallo", date: "2026-10-14" });
+  await uc.changeStatus(planned, "kontaktiert");
   await uc.setFollowUp(planned, "2026-10-21");
   await uc.setNextStep(planned, "Vor 15 Uhr anrufen");
   await uc.logCall(planned, { outcome: "nicht-erreicht" });
@@ -235,7 +252,8 @@ test("only the newest call is taken back, only while the lead is unchanged since
   const second = (await uc.logCall(id, { outcome: "rueckruf", date: "2026-10-20" })).activity;
   await rejects(uc.undoCall(first.id), "activityId");
   await uc.undoCall(second.id);
-  assert.deepEqual(shape(await store.get("leads", id)), ["kontaktiert", "2026-10-17", "", null]);
+  // Back to the lead as the first call left it: tried, never spoken with, so Neu.
+  assert.deepEqual([...shape(await store.get("leads", id)), (await store.get("leads", id)).contactedAt], ["neu", null, "", null, null]);
   // The undo wrote the lead: the call before it stays.
   await rejects(uc.undoCall(first.id), "activityId");
   const changed = (await uc.logCall(id, { outcome: "nicht-erreicht" })).activity;

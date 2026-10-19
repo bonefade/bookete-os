@@ -1,6 +1,7 @@
 import { REGIONS, OTHER_REGION, regionOf } from '../domain/region.js';
-import { RESERVATION_TOOLS } from '../domain/constants.js';
-import { meetingDue } from '../domain/activity.js';
+import { RESERVATION_TOOLS, SEQUENCE_POLICY } from '../domain/constants.js';
+import { meetingDue, lastCallOn } from '../domain/activity.js';
+import { addDays } from '../domain/dates.js';
 import { isPipeline, isDue, takesFollowUp, lacksNextStep, addressKey, addressOpen } from '../domain/lead.js';
 import { timelinesByLead } from '../domain/stats.js';
 import { customerOf, attentionOf } from '../domain/customer.js';
@@ -58,16 +59,24 @@ export function contactCounts(state) {
 }
 /**
  * Who to call, in order: open businesses with a phone number that are due (by date, then fit), then new ones not
- * yet planned (by fit). An appointment that has come is no call, and an opted-out business is never on it.
+ * yet planned (by fit); a new one called and not reached comes back callRetryDays later, as a Neu lead has no date.
+ * An appointment that has come is no call, and an opted-out business is never on it.
  */
 export function callList(state, today) {
   const callable = scoped(state).filter((l) => isPipeline(l) && l.phone && !meetingDue(l, today));
   const due = callable.filter((l) => isDue(l, today)).sort((a, b) => a.followUp < b.followUp ? -1 : a.followUp > b.followUp ? 1 : b.fit - a.fit);
-  const fresh = callable.filter((l) => l.status === "neu" && !l.followUp).sort((a, b) => b.fit - a.fit || a.name.localeCompare(b.name, "de"));
+  const rested = (l) => {
+    const last = lastCallOn(actsOf(state, l.id));
+    return !last || addDays(last, SEQUENCE_POLICY.callRetryDays) <= today;
+  };
+  const fresh = callable.filter((l) => l.status === "neu" && !l.followUp && rested(l)).sort((a, b) => b.fit - a.fit || a.name.localeCompare(b.name, "de"));
   return [...due, ...fresh];
 }
-/** New businesses not yet planned, the best first; those with an address before those without. */
-export const freshLeads = (state) => scoped(state).filter((l) => l.status === "neu" && !l.followUp).sort((a, b) => b.fit - a.fit || mailOpen(state, b) - mailOpen(state, a));
+/**
+ * New businesses never tried, the best first; those with an address before those without. One already written to or
+ * called stays Neu until someone speaks with them, but is no first contact any more: the call list has it.
+ */
+export const freshLeads = (state) => scoped(state).filter((l) => l.status === "neu" && !l.followUp && !actsOf(state, l.id).length).sort((a, b) => b.fit - a.fit || mailOpen(state, b) - mailOpen(state, a));
 /** Their message is the newest on the lead: a reply to answer. Not on an opted-out lead, which is not answered from here. */
 export const awaitsAnswer = (state, l) => takesFollowUp(l) && !l.optOutAt && actsOf(state, l.id).at(-1)?.direction === "in";
 /**

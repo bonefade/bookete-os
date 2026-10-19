@@ -1,6 +1,6 @@
 import { TEMPLATE_PURPOSES, PLACEHOLDERS } from './constants.js';
 import { ValidationError } from './errors.js';
-import { countTouches, hasReply } from './activity.js';
+import { countTouches, hasSpoken } from './activity.js';
 
 export const PURPOSES = new Set(TEMPLATE_PURPOSES.map(([k]) => k));
 export const RE = new RegExp(`\\{(${PLACEHOLDERS.join("|")})\\}`, "g");
@@ -18,7 +18,7 @@ export function fillTemplate(body, lead) {
   return { text, missing: [...missing] };
 }
 export function purposeFor(lead, acts) {
-  if (hasReply(acts)) return "antwort";
+  if (hasSpoken(acts)) return "antwort";
   const n = countTouches(acts);
   return n === 0 ? "erstkontakt" : n === 1 ? "followup1" : "followup2";
 }

@@ -35,6 +35,9 @@ or overwriting data by mistake, not about outside access.
 - CRM: a customer's page opened by a link or a reload belongs to Betriebe, not Kunden; the tab is chosen before the data says it is a customer.
 - CRM: agents read todos in `get_lead` (`lead.todos`) but cannot add or tick them; an MCP tool through `changeTodo` (owner asked for todos on 2026-10-19).
 - CRM: a pipeline board, one column per status, with counts.
+- CRM: an old backup (before 1.4.0) still dates a lead's first contact from any activity (`upgradeLead`, `firstContactUntil`), the meaning before 1.24.0; since then it is the day we first spoke with them (found in the 1.24.0 review).
+- CRM: "Betrieb" stays where it means any business, customers included (search, Mehr, the forms, the placeholder {Betrieb}); 1.24.0 renamed the tab and Heute's new leads to "Leads". Owner to say whether those go too.
+- Rule gap: only `normalizeLead` decides a lead's invariants; a use case may tighten one but never loosen it. 1.24.0 first let a patch clearing `contactedAt` skip the back-to-Neu check (unenforced; found in the 1.24.0 review).
 - CRM: "Termine" in Diese Woche counts only appointments agreed on a call (`weekNumbers`, `crm/src/domain/stats.js`). One entered with "Termin eintragen" (1.18.2) logs no activity, so it is not counted; before 1.18.2 it was counted, but as a call.
 - CRM: MCP has no tool to record an appointment agreed by mail, so an agent asked to will use `log_call` with `termin` and log a call that did not happen. A `schedule_meeting` tool through `scheduleMeeting` (found in the 1.18.2 review).
 - Rule gap: a new write command that replaces an older path keeps, or knowingly drops, each guard the old path had; 1.18.2's `scheduleMeeting` first skipped the opt-out check `logCall` had (unenforced; found in the 1.18.2 review).

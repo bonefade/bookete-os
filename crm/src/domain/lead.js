@@ -26,7 +26,7 @@ export const LEAD_FIELDS = {
   optOutAt: null,
   // date the business asked not to be contacted again (revocation of contact)
   contactedAt: null,
-  // date of the first contact either way; null exactly while the lead is neu (a disqualified lead may have either)
+  // date we first spoke with them (spokeWith); null exactly while the lead is neu (a disqualified lead may have either)
   wonAt: null
   // date the lead became kunde; null on any other status, and on a customer from before 1.8.0
 };
@@ -62,14 +62,17 @@ export function normalizeLead(input, base = LEAD_FIELDS, today) {
     if (PIPELINE_STATUSES.has(out.status)) throw new ValidationError("status", OPT_OUT_ACTIVE);
     if (out.status === "disqualifiziert" && out.lostReason !== OPT_OUT_REASON) throw new ValidationError("lostReason", OPT_OUT_ACTIVE);
   }
-  if (base.contactedAt && !out.contactedAt) throw new ValidationError("contactedAt", "Der Erstkontakt l\xE4sst sich nicht l\xF6schen");
+  // Only going back to Neu clears it, which the use case allows only while nobody has spoken with them.
+  if (base.contactedAt && !out.contactedAt && out.status !== "neu") throw new ValidationError("contactedAt", "Der Erstkontakt l\xE4sst sich nicht l\xF6schen");
   if (out.contactedAt > today) throw new ValidationError("contactedAt", "Der Erstkontakt liegt in der Zukunft");
   if (out.status === "neu" && out.contactedAt) {
-    // A first contact recorded on a Neu lead moves it on; asking for Neu on a contacted lead is refused.
-    if ("status" in input) throw new ValidationError("contactedAt", "Schon kontaktiert \u2013 zur\xFCck auf \u201ENeu\u201C geht nicht");
+    // A first contact recorded on a Neu lead moves it on; asking for Neu on a lead spoken with is refused.
+    if ("status" in input) throw new ValidationError("contactedAt", "Schon mit ihnen gesprochen \u2013 zur\xFCck auf \u201ENeu\u201C geht nicht");
     out.status = "kontaktiert";
   }
   if (out.status !== "neu" && out.status !== "disqualifiziert" && !out.contactedAt) out.contactedAt = today;
+  // A Neu lead has no date: nobody has spoken with them, so nothing is agreed, and Heute stays clear of them.
+  if (out.status === "neu") out.followUp = null;
   // Dated by the change to Kunde, so a status tapped by mistake and set back is not counted as won.
   out.wonAt = out.status !== "kunde" ? null : base.status === "kunde" ? (isDate(out.wonAt) ? out.wonAt : null) : today;
   if (out.instagram && !out.instagram.startsWith("@")) out.instagram = "@" + out.instagram;
@@ -81,6 +84,8 @@ export function normalizeLead(input, base = LEAD_FIELDS, today) {
 export const isPipeline = (lead) => PIPELINE_STATUSES.has(lead.status);
 /** Everything but a disqualified lead can have a follow-up and a next step; a Kunde has onboarding to-dos. */
 export const takesFollowUp = (lead) => lead.status !== "disqualifiziert";
+/** A follow-up date, beside the next step: not on a disqualified lead, nor on a Neu one (normalizeLead). */
+export const takesDate = (lead) => takesFollowUp(lead) && lead.status !== "neu";
 /** Mail to a Kunde is service mail and carries no unsubscribe link: one click would otherwise block every mail and call to a customer. */
 export const getsUnsubscribeLink = (lead) => lead.status !== "kunde";
 /**
@@ -102,7 +107,8 @@ export const mailClosedBy = (leads, lead) => closedBy(lead, (key) => optOutByAdd
 export const addressOpen = (lead, closed) => !!lead.email && !closedBy(lead, (key) => closed.has(key));
 /** Why no mail may go to this address: `holder` has an opt-out and the same address; `trashed`, it is in the Papierkorb. */
 export const addressOptOutText = (holder, trashed = false) => `Keine E-Mail an diese Adresse: \u201E${holder.name}\u201C${trashed ? " (im Papierkorb)" : ""} hat dieselbe Adresse und ein Opt-out seit ${dayLabel(holder.optOutAt)}`;
-export const isDue = (lead, today) => takesFollowUp(lead) && !!lead.followUp && lead.followUp <= today;
+/** Due: a lead that takes a date, with one today or before; a Neu lead's date stored before 1.24.0 is none. */
+export const isDue = (lead, today) => takesDate(lead) && !!lead.followUp && lead.followUp <= today;
 /** A lead in work with no date for what comes next: Kontaktiert or Qualifiziert without a follow-up. Neu, Kunde and Disqualifiziert are never short of one. */
 export const lacksNextStep = (lead) => (lead.status === "kontaktiert" || lead.status === "qualifiziert") && !lead.followUp;
 /** Status and reason as one change; normalizeLead checks the pair. */
@@ -117,6 +123,7 @@ export function lostReasonPatch(lead, reason) {
 export function followUpPatch(lead, date) {
   if (date && !isDate(date)) throw new ValidationError("followUp", "Datum ung\xFCltig");
   if (date && !takesFollowUp(lead)) throw new ValidationError("followUp", "Disqualifiziert \u2013 kein Nachfassen. Erst den Status \xE4ndern.");
+  if (date && !takesDate(lead)) throw new ValidationError("followUp", "Ein neuer Lead hat kein Datum. F\xFCr etwas mit Datum ein Todo anlegen.");
   return { followUp: date || null };
 }
 /**

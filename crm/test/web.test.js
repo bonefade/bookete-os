@@ -5,7 +5,7 @@ import { TABS, tabBar, todayView, leadsView, kundenView, searchView, templatesVi
 import { LEAD_FIELDS } from "../src/domain/lead.js";
 import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, draftsOf, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
 import { describeChange, fmtDate } from "../src/web/format.js";
-import { scoped, activitiesByLead, freshLeads } from "../src/web/selectors.js";
+import { scoped, activitiesByLead, freshLeads, callList } from "../src/web/selectors.js";
 import { createApi, coalesced } from "../src/web/api.js";
 import { COLLECTIONS, FIELD_LABEL, TRASH_SHOWN } from "../src/domain/constants.js";
 import worker from "../src/server/index.js";
@@ -437,8 +437,8 @@ test("Heute offers the new leads to write to first, the best first", async () =>
     { ...LEAD_FIELDS, id: "L2", name: "Dran", status: "kontaktiert", contactedAt: "2026-10-01", followUp: "2026-10-20" },
     { ...LEAD_FIELDS, id: "L3", name: "Besser", status: "neu", fit: 3 },
   ];
-  assert.match(todayView(stateWith(leads), TODAY), /Bereit zum Anschreiben <small>2<\/small><\/h3><p class="note"[^>]*>2 neue Betriebe ohne Kontakt, die besten zuerst\.<\/p><button class="full" data-act="freshStart">/);
-  assert.match(todayView(stateWith(leads.slice(0, 2)), TODAY), />1 neuer Betrieb ohne Kontakt/);
+  assert.match(todayView(stateWith(leads), TODAY), /Bereit zum Anschreiben <small>2<\/small><\/h3><p class="note"[^>]*>2 neue Leads ohne Kontakt, die besten zuerst\.<\/p><button class="full" data-act="freshStart">/);
+  assert.match(todayView(stateWith(leads.slice(0, 2)), TODAY), />1 neuer Lead ohne Kontakt/);
   const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
   try {
     const store = createStore(initialState());
@@ -1560,7 +1560,7 @@ test("a note being typed survives a redraw, leaving the page and a reload; signi
   }
 });
 
-test("Kontaktiert on a new lead asks how the contact was: a visit is logged with a note, a call and a mail go their own way", async () => {
+test("Kontaktiert on a new lead asks where they spoke: a visit is logged with a note, a call and their answer go their own way", async () => {
   const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
   const ready = (status) => {
     const store = createStore(initialState());
@@ -1574,32 +1574,70 @@ test("Kontaktiert on a new lead asks how the contact was: a visit is logged with
     const page = fakeBrowser("#/betrieb/L1", ready("neu"), uc);
     await page.click({ status: "kontaktiert" });
     assert.deepEqual(calls, []);
-    assert.match(page.root.innerHTML, /Wie war der Kontakt\?<\/p><div class="chips"><button class="chip" data-cp="Vor Ort" aria-pressed="false">Vor Ort<\/button>/);
-    // A call opens the call sheet, which logs it with its outcome; no e-mail address, no mail.
-    assert.match(page.root.innerHTML, /<button class="chip" data-compose="E-Mail" disabled>E-Mail<\/button>[^]*<button class="chip" data-act="callOpen">Telefon<\/button>/);
+    // Only speaking with them makes a lead Kontaktiert: a visit, a call that got through, or their answer.
+    assert.match(page.root.innerHTML, /Wo haben Sie mit ihnen gesprochen\?<\/p><div class="chips"><button class="chip" data-cp="Vor Ort" aria-pressed="false">Vor Ort<\/button><button class="chip" data-act="callOpen">Am Telefon<\/button><button class="chip" data-compose="in">Sie haben geantwortet<\/button><\/div>/);
     assert.equal(page.field.disabled, true);
     await page.click({ cp: "Vor Ort" });
-    assert.match(page.root.innerHTML, /<textarea id="cpText" rows="2" placeholder="Vor Ort besucht"><\/textarea><p class="note after">Danach: Nachfassen [^<]*\(\+\d+ Tage, Kontakt 1 von \d\)<\/p>/);
+    assert.match(page.root.innerHTML, /<textarea id="cpText" rows="2" placeholder="Vor Ort besucht"><\/textarea><p class="note after">Danach: Nachfassen [^<]*\(\+4 Tage\)<\/p>/);
     await page.click({ act: "contactSave" });
     assert.deepEqual(calls, [["logActivity", "L1", { direction: "out", channel: "Vor Ort", date: "2026-10-15", text: "Vor Ort besucht" }]]);
-    assert.doesNotMatch(page.root.innerHTML, /Wie war der Kontakt/);
+    assert.doesNotMatch(page.root.innerHTML, /Wo haben Sie/);
     // With a note, the note is logged.
     await page.click({ status: "kontaktiert" });
-    await page.click({ cp: "WhatsApp" });
+    await page.click({ cp: "Vor Ort" });
     page.input("cpText", "  Chef war da, Karte dagelassen ");
     await page.click({ act: "contactSave" });
-    assert.deepEqual(calls[1][2], { direction: "out", channel: "WhatsApp", date: "2026-10-15", text: "Chef war da, Karte dagelassen" });
-    // Telefon opens the call sheet in its place.
+    assert.deepEqual(calls[1][2], { direction: "out", channel: "Vor Ort", date: "2026-10-15", text: "Chef war da, Karte dagelassen" });
+    // Am Telefon opens the call sheet in its place; their answer, the composer's "Antwort eintragen".
     await page.click({ status: "kontaktiert" });
     await page.click({ act: "callOpen" });
-    assert.doesNotMatch(page.root.innerHTML, /Wie war der Kontakt/);
+    assert.doesNotMatch(page.root.innerHTML, /Wo haben Sie/);
+    await page.click({ status: "kontaktiert" });
+    await page.click({ compose: "in" });
+    assert.match(page.root.innerHTML, /data-mode="in" aria-pressed="true"/);
+    assert.doesNotMatch(page.root.innerHTML, /Wo haben Sie/);
     // Any other move stays one tap.
     const later = fakeBrowser("#/betrieb/L1", ready("qualifiziert"), uc);
     await later.click({ status: "kontaktiert" });
     assert.deepEqual(calls.at(-1), ["changeStatus", "L1", "kontaktiert"]);
+    // Back to Neu asks first, as it clears the first contact and the plan.
+    const asked = [];
+    globalThis.confirm = (text) => (asked.push(text), false);
+    await later.click({ status: "neu" });
+    assert.deepEqual(calls.at(-1), ["changeStatus", "L1", "kontaktiert"]);
+    assert.match(asked[0], /zur\xFCck auf Neu\?[^]*Erstkontakt, das Nachfass-Datum und der n\xE4chste Schritt werden gel\xF6scht/);
+    globalThis.confirm = () => true;
+    await later.click({ status: "neu" });
+    assert.deepEqual(calls.at(-1), ["changeStatus", "L1", "neu"]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }
+});
+
+test("a new lead tried but never spoken with: no first contact any more, called again two days after a missed call, and says when it was tried", () => {
+  const leads = [
+    { id: "L1", name: "Frisch", status: "neu", phone: "+43 1", fit: 2 },
+    { id: "L2", name: "Angeschrieben", status: "neu", phone: "+43 2", email: "a@a.at", fit: 3 },
+    { id: "L3", name: "Gestern angerufen", status: "neu", phone: "+43 3", fit: 3 },
+    { id: "L4", name: "Vorgestern angerufen", status: "neu", phone: "+43 4", fit: 1 },
+  ];
+  const act = (leadId, date, channel, extra = {}) => ({ id: leadId + date, leadId, date, channel, direction: "out", text: "x", createdAt: date + "T09:00:00.000Z", ...extra });
+  const state = stateWith(leads);
+  state.data.activities = [act("L2", "2026-10-01", "E-Mail"), act("L3", "2026-10-14", "Telefon", { outcome: "nicht-erreicht" }), act("L4", "2026-10-13", "Telefon", { outcome: "nicht-erreicht" })];
+  assert.deepEqual(freshLeads(state).map((l) => l.id), ["L1"]);
+  assert.deepEqual(callList(state, TODAY).map((l) => l.id), ["L2", "L1", "L4"]);
+  const sub = (id) => detailView({ ...state, ui: { ...state.ui, view: "detail", leadId: id } }, TODAY).match(/<p class="note" style="margin:8px 0 0">([^<]*)<\/p>/)[1];
+  assert.equal(sub("L1"), "Restaurant · Nie kontaktiert");
+  assert.equal(sub("L2"), "Restaurant · Nie gesprochen, angeschrieben am Do., 1. Okt.");
+  assert.equal(sub("L3"), "Restaurant · Nie gesprochen, angerufen am Mi., 14. Okt.");
+  assert.match(tabBar(state, TODAY, false), />Leads</);
+  // Five days called without getting through: closing is offered, as the hint says; a Neu lead has no date to set.
+  state.data.activities = [...state.data.activities, ...["2026-10-01", "2026-10-03", "2026-10-06", "2026-10-08"].map((d) => act("L3", d, "Telefon", { outcome: "nicht-erreicht" }))];
+  const page = (id, ui = {}) => detailView({ ...state, ui: { ...state.ui, view: "detail", leadId: id, ...ui } }, TODAY);
+  assert.match(page("L3", { statusMenu: true }), /data-act="closeWithoutReply"><span><b>Ohne Antwort abschlie\xDFen<\/b><small>5 Tage angerufen, nie erreicht/);
+  assert.doesNotMatch(page("L4", { statusMenu: true }), /closeWithoutReply/);
+  assert.match(page("L1", { nextEdit: true }), /id="nextStep"/);
+  assert.doesNotMatch(page("L1", { nextEdit: true }), /id="fu"/);
 });
 
 test("a sheet the lead page can no longer draw closes, so no hidden input keeps the tabs shut", () => {
@@ -1608,6 +1646,9 @@ test("a sheet the lead page can no longer draw closes, so no hidden input keeps 
   assert.deepEqual(unshownSheets(stateWith([live], open), TODAY), { call: null, termin: null, contactPick: null });
   const neu = { id: "L1", name: "Krone", status: "neu", todos: [{ id: "t1", text: "Anrufen", due: "", done: TODAY }] };
   assert.deepEqual(unshownSheets(stateWith([neu], open), TODAY), { checkIn: null, todoEdit: null });
+  // A question kept from 1.23.0 with a message picked: only a visit is logged from it now.
+  assert.deepEqual(unshownSheets(stateWith([neu], { ...open, checkIn: null, todoEdit: null, contactPick: { channel: "WhatsApp", text: "" } }), TODAY), { contactPick: null });
+  assert.deepEqual(unshownSheets(stateWith([neu], { ...open, checkIn: null, todoEdit: null, contactPick: { channel: "Vor Ort", text: "" } }), TODAY), {});
 });
 
 // Mail in a lead's feed, as the Gmail sync logs it: a sent mail in both mailboxes, then an answer only in Anna's.
@@ -1651,30 +1692,25 @@ test("the feed groups mail by its thread and names a colleague's mailbox; the ch
   assert.doesNotMatch(only("msg"), /card thread|Anruf ·/);
 });
 
-test("the sequence on a wide screen is a checklist: each day's contacts, the answer that stopped it, the contacts still to come", () => {
+test("the sequence on a wide screen is a checklist of each day's contacts and those still to come, while nobody has spoken with them", () => {
   const lead = { id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-10", email: "k@krone.at", phone: "+43 1", followUp: "2026-10-20" };
   const items = (html) => [...html.split('class="card checks">')[1].split("</ol>")[0].matchAll(/<li class="(\w+)"><b>([^<]*)<\/b>((?:<small>[^<]*<\/small>)*)/g)].map(([, cls, b, small]) => [cls, b, small.replace(/<\/?small>/g, "|").replace(/\|+/g, "|").replace(/^\||\|$/g, "")]);
-  // Before the answer: the mail of the 10th, then the call and the WhatsApp message of the 11th and 12th.
-  const state = stateWith([lead], { leadId: "L1" });
-  state.data.activities = FEED;
-  const html = detailView(state, TODAY);
+  // Set Kontaktiert by hand: the mail of the 10th, the WhatsApp message of the 11th and the missed call of the 12th.
+  const open = stateWith([lead], { leadId: "L1" });
+  open.data.activities = FEED.filter((a) => a.direction === "out");
+  const html = detailView(open, TODAY);
   assert.deepEqual(items(html), [
     ["ok", "Erstkontakt · E-Mail", "Sa., 10. Okt."],
     ["ok", "Nachfassen · WhatsApp", "So., 11. Okt."],
     ["ok", "Nachfassen · Anruf · Nicht erreicht", "Mo., 12. Okt."],
-    ["now", "Antwort · E-Mail", "Mi., 14. Okt.|Ohne Antwort ginge es am Mo., 19. Okt. weiter."],
-    ["todo", "Kontakt 4", "angehalten"],
-    ["todo", "Kontakt 5", "angehalten"],
+    ["todo", "Kontakt 4", "fällig Di., 20. Okt."],
+    ["todo", "Kontakt 5", "danach: Ohne Antwort abschließen"],
   ]);
-  // The answer of the 14th stopped it; without it the fourth contact was due 7 days after the 12th.
-  const now = html.split('<li class="now">')[1].split("</li>")[0];
-  assert.match(now, /<b>Antwort · E-Mail<\/b><small>Mi\., 14\. Okt\.<\/small><small>Ohne Antwort ginge es am Mo\., 19\. Okt\. weiter\.<\/small>/);
-  assert.match(now, /data-act="reply" data-thread="T1">Antworten[^]*data-act="terminOpen">Termin eintragen/);
-  assert.match(html, /Nachfass-Folge <small>3 von 5 · angehalten<\/small>/);
-  // Without an answer the next contact is the follow-up date, and the last one closes the sequence.
-  const open = stateWith([lead], { leadId: "L1" });
-  open.data.activities = FEED.filter((a) => a.direction === "out");
-  assert.deepEqual(items(detailView(open, TODAY)).slice(3), [["todo", "Kontakt 4", "fällig Di., 20. Okt."], ["todo", "Kontakt 5", "danach: Ohne Antwort abschließen"]]);
+  assert.match(html, /Nachfass-Folge <small>3 von 5<\/small>/);
+  // Their answer of the 14th: we spoke, the sequence is over, and so is its card.
+  const answered = stateWith([lead], { leadId: "L1" });
+  answered.data.activities = FEED;
+  assert.doesNotMatch(detailView(answered, TODAY), /Nachfass-Folge/);
   // Only a lead in the sequence has one.
   assert.doesNotMatch(detailView(stateWith([{ ...lead, status: "qualifiziert" }], { leadId: "L1" }), TODAY), /class="card checks"/);
 });
@@ -1870,15 +1906,23 @@ test("Später in a Heute round moves the todo a business is due by; a business d
     await click({ later: "1" });
     await click({ later: "1" });
     assert.deepEqual(sent, [["R0", "changeTodo", { todo: "x", due: "2026-10-16" }], ["R0", "changeTodo", { todo: "y", due: "2026-10-16" }], ["R0", "setFollowUp", "2026-10-16"], ["R1", "changeTodo", { todo: "a", due: "2026-10-16" }], ["R2", "setFollowUp", "2026-10-16"]]);
-    // In a round of first contacts, Später plans the new business, whatever todo it has.
-    sent.length = 0;
     const fresh = createStore(initialState());
     fresh.data("leads", [leads[0]]);
     for (const c of ["activities", "templates", "settings"]) fresh.data(c, []);
     const round = fakeBrowser("#/heute", fresh, uc);
     await round.click({ act: "freshStart" });
-    await round.click({ later: "1" });
-    assert.deepEqual(sent, [["R1", "setFollowUp", "2026-10-16"]]);
+    // In a round of first contacts a new business has no date to put off: Weiter moves on.
+    assert.match(round.root.innerHTML, /data-act="roundNext"/);
+    assert.doesNotMatch(round.root.innerHTML, /data-act="later"/);
+    // A Neu lead with a date stored before 1.24.0 and a todo due: Später moves the todo, never the date it may not have.
+    sent.length = 0;
+    const dated = createStore(initialState());
+    dated.data("leads", [{ ...leads[0], followUp: "2026-10-01" }]);
+    for (const c of ["activities", "templates", "settings"]) dated.data(c, []);
+    const old = fakeBrowser("#/heute", dated, uc);
+    await old.click({ act: "queueStart" });
+    await old.click({ later: "1" });
+    assert.deepEqual(sent, [["R1", "changeTodo", { todo: "a", due: "2026-10-16" }]]);
     // A business closed already, in Heute for its todo, can put that todo off too.
     const closed = stateWith([{ id: "R3", name: "Zu", status: "disqualifiziert", lostReason: "Zu klein", todos: [{ id: "c", text: "Absage bestätigen", due: "2026-10-14", done: "" }] }], { leadId: "R3", round: { list: "queue", seen: [] } });
     assert.match(detailView(closed, TODAY), /data-act="later"/);
@@ -1950,15 +1994,20 @@ test("Rückgängig shows on the newest activity when it is a call, and never on 
   assert.deepEqual(page({ ...lead, status: "disqualifiziert", lostReason: "Keine Kontaktaufnahme gew\xFCnscht", optOutAt: "2026-10-14" }, [call("C1", "2026-10-14")]), []);
 });
 
-test("the composer says what comes after: the sequence's next contact, the answer asked for, or the day picked", () => {
-  const state = stateWith([{ id: "L1", name: "Krone", status: "neu", email: "k@krone.at" }], { leadId: "L1" });
+test("the composer says what comes after: the sequence's next contact, the answer asked for, or the day picked; on a new lead, that it stays Neu", () => {
+  const neu = stateWith([{ id: "L1", name: "Krone", status: "neu", email: "k@krone.at" }], { leadId: "L1" });
+  const draft = { direction: "out", channel: "E-Mail", templateId: "", date: TODAY, subject: "S", text: "Hallo", missing: [], followUp: null, fuEdit: false };
+  assert.equal(detailView({ ...neu, ui: { ...neu.ui, compose: draft } }, TODAY).match(/<p class="note after">([^<]*)/)?.[1], "Bleibt Neu: Kontaktiert ist ein Lead erst, wenn jemand mit ihnen gesprochen hat.");
+  assert.equal(detailView({ ...neu, ui: { ...neu.ui, compose: { ...draft, direction: "in" } } }, TODAY).match(/<p class="note after">([^<]*)/)?.[1], "Danach: Antworten, heute ");
+  // Set Kontaktiert by hand, never spoken with: in the sequence.
+  const state = stateWith([{ id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-14", email: "k@krone.at" }], { leadId: "L1" });
   const compose = (c) => detailView({ ...state, ui: { ...state.ui, compose: { direction: "out", channel: "E-Mail", templateId: "", date: TODAY, subject: "S", text: "Hallo", missing: [], followUp: null, fuEdit: false, ...c } } }, TODAY).match(/<p class="note after">([^<]*)/)?.[1];
   assert.equal(compose({}), "Danach: Nachfassen So., 18. Okt. (+3 Tage, Kontakt 1 von 5) ");
   assert.equal(compose({ direction: "in" }), "Danach: Antworten, heute ");
   assert.equal(compose({ followUp: "2026-10-25" }), "Danach: Nachfassen So., 25. Okt. ");
 });
 
-test("Betriebe counts, filters and ranks a lead with mail only where its address is open", () => {
+test("Leads counts, filters and ranks a lead with mail only where its address is open", () => {
   const OPT_OUT = "Keine Kontaktaufnahme gew\xFCnscht";
   const leads = [
     { id: "L1", name: "Offen", status: "neu", email: "a@a.at" },
@@ -1967,7 +2016,7 @@ test("Betriebe counts, filters and ranks a lead with mail only where its address
     { id: "L3", name: "Daneben", status: "neu", email: "B@b.at" },
     { id: "L4", name: "Kundin", status: "kunde", contactedAt: "2026-10-01", email: "b@b.at" },
   ];
-  assert.match(leadsView(stateWith(leads, { status: "alle" }), TODAY), /4 Betriebe · 2 mit E-Mail/);
+  assert.match(leadsView(stateWith(leads, { status: "alle" }), TODAY), /4 Leads · 2 mit E-Mail/);
   assert.deepEqual(optionsOf(filterBar(stateWith(leads)), "contact").at(-1), "email mit E-Mail (2)");
   assert.deepEqual(scoped(stateWith(leads, { contact: "email" })).map((l) => l.id), ["L1", "L4"]);
   // Of two new businesses alike, the one that can be mailed first.

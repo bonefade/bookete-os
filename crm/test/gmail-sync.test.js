@@ -197,8 +197,9 @@ test("in a thread the CRM sent, mail with no one else on it, an out-of-office re
 test("the first run leaves what a lead holds as it is: a mail logged without Gmail, which takes that mail, and the plan a later contact made", async () => {
   const s = await setup();
   const id = await s.uc.addLead({ name: "Krone", email: "info@krone.at" });
-  // Sent before 1.17.0, logged with no Gmail id; then planned by hand.
+  // Sent before 1.17.0, logged with no Gmail id; then, spoken with, planned by hand.
   await s.uc.logActivity(id, { direction: "out", channel: "E-Mail", date: "2026-10-05", text: "Grüß Gott" });
+  await s.uc.changeStatus(id, "kontaktiert");
   await s.uc.setFollowUp(id, "2026-10-25");
   await s.uc.setNextStep(id, "Anrufen am Dienstag");
   s.gmail.add("jo@bookete.com", { from: "jo@bookete.com", to: "info@krone.at", text: "Grüß Gott", labels: ["SENT"], at: "2026-10-05T08:00:00.000Z" });
@@ -207,7 +208,8 @@ test("the first run leaves what a lead holds as it is: a mail logged without Gma
   await s.run();
   assert.deepEqual((await s.store.activitiesOf(id)).sort((a, b) => a.date < b.date ? -1 : 1).map((a) => `${a.date} ${a.text}`), ["2026-10-03 Vorab", "2026-10-05 Grüß Gott"]);
   const l = await s.store.get("leads", id);
-  assert.deepEqual([l.followUp, l.nextStep, l.contactedAt], ["2026-10-25", "Anrufen am Dienstag", "2026-10-03"]);
+  // Mails of ours are attempts: they leave the day we first spoke with them as it is.
+  assert.deepEqual([l.status, l.followUp, l.nextStep, l.contactedAt], ["kontaktiert", "2026-10-25", "Anrufen am Dienstag", "2026-10-15"]);
   const entry = (await s.store.activitiesOf(id)).find((a) => a.text === "Grüß Gott");
   assert.equal(entry.mail.gmailId, "jo-1");
 });
@@ -288,7 +290,7 @@ test("a reply the sync finds after a person planned the lead leaves the plan; on
   const ids = [];
   for (const [name, email, setNow] of plan) {
     const id = await s.uc.addLead({ name, email });
-    await s.uc.logActivity(id, { direction: "out", channel: "Telefon", date: "2026-10-06", text: "Angerufen" });
+    await s.uc.logActivity(id, { direction: "out", channel: "Vor Ort", date: "2026-10-06", text: "Besucht" });
     await s.uc.setFollowUp(id, "2026-10-20");
     await s.uc.setNextStep(id, "Nachfragen");
     await old(id);
@@ -404,6 +406,8 @@ test("a mail is logged once, whoever logs it first; one found after a later cont
   const id = await s.uc.addLead({ name: "Krone", email: "info@krone.at", phone: "+43 1" });
   const mail = { gmailId: "g1", threadId: "t1", mailbox: "jo@bookete.com", subject: "Tische", from: "info@krone.at", to: "jo@bookete.com" };
   const found = { direction: "in", date: "2026-10-15", at: "2026-10-15T08:00:00.000Z", text: "Hallo", mail };
+  // In the sequence, so the missed call plans the next try.
+  await s.uc.changeStatus(id, "kontaktiert");
   await s.uc.logCall(id, { outcome: "nicht-erreicht" });
   assert.ok(await s.uc.recordMail(id, found));
   assert.equal(await s.uc.recordMail(id, found), null);

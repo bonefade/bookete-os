@@ -53,18 +53,22 @@ export function assertHappened(activity, today) {
   if (activity.date > today) throw new ValidationError("date", "Das Datum liegt in der Zukunft");
 }
 export const byTimeline = (a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.createdAt || "") < (b.createdAt || "") ? -1 : 1;
-/** They answered: a message from them, or a call in which we spoke to them. */
-export const isReply = (a) => a.direction === "in" || (!!a.outcome && a.outcome !== "nicht-erreicht");
+/**
+ * We spoke with them: a message from them, a visit, or a call that got through. A mail, a DM or a call not answered
+ * is an attempt: it is logged, but only speaking with them makes a lead Kontaktiert.
+ */
+export const spokeWith = (a) => a.direction === "in" || a.channel === "Vor Ort" || (!!a.outcome && a.outcome !== "nicht-erreicht");
 export function countTouches(acts) {
   const days = new Set();
   for (const a of [...acts].sort(byTimeline)) {
-    if (isReply(a)) break;
+    if (spokeWith(a)) break;
     days.add(a.date);
   }
   return days.size;
 }
-export const hasReply = (acts) => acts.some(isReply);
-/** The date of the first contact: the earliest of these activities, either way, or `since` if that is earlier. */
+/** Whether we have spoken with them at all. */
+export const hasSpoken = (acts) => acts.some(spokeWith);
+/** The date of the first contact: the earliest of these activities, or `since` if that is earlier. */
 export const firstContactOf = (acts, since = null) => acts.reduce((d, a) => (!d || a.date < d ? a.date : d), since);
 /** The first contact an old lead's activities give. One dated after today (1.3 took any date) is no contact yet. */
 export const firstContactUntil = (acts, today) => firstContactOf(acts.filter((a) => a.date <= today));
@@ -73,9 +77,11 @@ export function assertMayContact(lead, direction) {
   if (direction === "out" && lead.optOutAt) throw new ValidationError("optOutAt", "M\xF6chte nicht mehr kontaktiert werden (Opt-out seit " + lead.optOutAt + ")");
 }
 /**
- * What logging an activity changes on the lead. Any contact, either way, dates the first contact and moves
+ * What logging an activity changes on the lead. Speaking with them (spokeWith) dates the first contact and moves
  * neu to kontaktiert; it reopens a disqualified lead (they called back, or we work them again), but an opt-out
- * stays closed: their message is logged and nothing else changes. Only the newest contact plans what comes next: one
+ * stays closed: their message is logged and nothing else changes. An attempt (a mail, a DM, a call not answered)
+ * moves no status and plans nothing on a Neu or disqualified lead: a Neu lead has no date, and the call list offers
+ * it again once callRetryDays have passed (callList). Only the newest contact plans what comes next: one
  * that came before another (logged later but dated earlier, or a mail the sync finds late) leaves the plan the later
  * one made. A message from them is to be answered today; the next step "Antworten" it sets ends with the next
  * outgoing contact; on a Kunde it then goes back to what its care plans (careNextStep), and a customer
@@ -85,14 +91,14 @@ export function planAfterActivity(lead, acts, activity, today, policy = SEQUENCE
   const all = [...acts, activity];
   const patch = {};
   // A contact logged later but dated earlier moves the first contact back. An opted-out lead's contact dates it too.
-  const first = firstContactOf(all, lead.contactedAt);
+  const first = firstContactOf(all.filter(spokeWith), lead.contactedAt);
   if (first !== lead.contactedAt) patch.contactedAt = first;
   if (lead.optOutAt) return patch;
-  const status = lead.status === "neu" || lead.status === "disqualifiziert" ? "kontaktiert" : lead.status;
+  const status = spokeWith(activity) && (lead.status === "neu" || lead.status === "disqualifiziert") ? "kontaktiert" : lead.status;
   if (status !== lead.status) patch.status = status;
-  if (!acts.every((a) => byTimeline(a, activity) < 0)) return patch;
+  if (!acts.every((a) => byTimeline(a, activity) < 0) || status === "neu" || status === "disqualifiziert") return patch;
   if (activity.direction === "out") {
-    if (status === "kontaktiert" && !hasReply(all)) {
+    if (status === "kontaktiert" && !hasSpoken(all)) {
       const n = countTouches(all);
       const idx = Math.min(n - 1, policy.cadence.length - 1);
       patch.followUp = addDays(activity.date, policy.cadence[idx]);
@@ -170,6 +176,8 @@ export function planAfterCall(lead, acts, activity, { date, time }, policy = SEQ
   switch (activity.outcome) {
     case "nicht-erreicht": {
       if (sequenceExhausted({ ...lead, ...patch }, [...acts, activity], policy)) return { ...patch, status: "disqualifiziert", lostReason: "Nicht erreicht", nextStep: "" };
+      // A Neu lead has no date: the call list offers it again after callRetryDays. A closed one stays as it was.
+      if (lead.status === "neu" || lead.status === "disqualifiziert") return patch;
       // The sequence sets dates only on Kontaktiert, and with no next step.
       const bySequence = lead.status === "kontaktiert" && !lead.nextStep;
       if (lead.followUp > activity.date && !bySequence) {
@@ -190,14 +198,26 @@ export function planAfterCall(lead, acts, activity, { date, time }, policy = SEQ
     }
   }
 }
+/**
+ * No more attempts: a lead in the sequence (Kontaktiert, never spoken with) after maxTouches days of contact; a Neu
+ * lead after maxTouches days it was called and not reached, as a mail or a DM is no try to reach them by phone.
+ */
 export function sequenceExhausted(lead, acts, policy = SEQUENCE_POLICY) {
-  return lead.status === "kontaktiert" && !hasReply(acts) && countTouches(acts) >= policy.maxTouches;
+  if (lead.status === "neu") return unreachedCallDays(acts) >= policy.maxTouches;
+  return lead.status === "kontaktiert" && !hasSpoken(acts) && countTouches(acts) >= policy.maxTouches;
 }
+/** The days we called and did not get through; a call logged without an outcome is not known to have. */
+const unreachedCallDays = (acts) => new Set(acts.filter((a) => a.channel === "Telefon" && a.direction === "out" && !spokeWith(a)).map((a) => a.date)).size;
+/** The day of the last call, if any: a Neu lead called is offered again callRetryDays after it. */
+export const lastCallOn = (acts) => acts.filter((a) => a.channel === "Telefon" && a.direction === "out").reduce((d, a) => (a.date > d ? a.date : d), "") || null;
 export function nextActionHint(lead, acts, policy = SEQUENCE_POLICY) {
   if (lead.optOutAt) return "";
   if (lead.nextStep) return lead.nextStep;
-  if (lead.status === "neu") return "Erstkontakt";
-  if (lead.status === "kontaktiert" && !hasReply(acts)) {
+  if (lead.status === "neu") {
+    const n = unreachedCallDays(acts);
+    return n >= policy.maxTouches ? `Nicht erreicht nach ${n} Anrufen \u2013 abschlie\xDFen?` : "Erstkontakt";
+  }
+  if (lead.status === "kontaktiert" && !hasSpoken(acts)) {
     const n = countTouches(acts);
     return n >= policy.maxTouches ? `Keine Antwort nach ${n} Kontakten \u2013 abschlie\xDFen?` : `Nachfassen (Kontakt ${n + 1} von ${policy.maxTouches})`;
   }

@@ -122,7 +122,7 @@ test("after three lost races, each followed by a pause, the caller gets a Confli
   // The pause ends after the pending reads and writes: a retry that did not wait for it would read first.
   const recorded = async (attempt) => { await new Promise((resolve) => setImmediate(resolve)); steps.push(`pause ${attempt}`); };
   const a = createUseCases({ store: busy, clock, ids, pause: recorded, actor: "jo@bookete.com (web)" });
-  const id = await b.addLead({ name: "Gasthaus Krone" });
+  const id = await b.addLead({ name: "Gasthaus Krone", status: "kontaktiert" });
   await assert.rejects(a.setFollowUp(id, "2026-10-20"), ConflictError);
   assert.equal(races, 3);
   // A pause before each retry, none after the last attempt.

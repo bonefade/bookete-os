@@ -1,6 +1,6 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
-import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, planMeeting, mailActivityId, byTimeline, sameMail } from "../domain/activity.js";
+import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, planMeeting, mailActivityId, byTimeline, sameMail, hasSpoken } from "../domain/activity.js";
 import { normalizeLead, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
 import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isCareStep, careFromToday } from "../domain/customer.js";
 import { normalizeTemplate } from "../domain/template.js";
@@ -18,6 +18,8 @@ const normalizeIcp = (icp) => ({ fit: lines(icp.fit), noFit: lines(icp.noFit), n
 const ATTEMPTS = 3;
 const OPT_OUT_TEXT = "Opt-out: m\xF6chte keine Nachrichten mehr.";
 // What undoCall sets back: everything a call changes on a lead (planAfterCall) but an opt-out, which stays.
+/** The day 1.24.0 shipped: until then any contact, a mail included, dated a lead's first contact. */
+const ATTEMPTS_DATED_UNTIL = "2026-10-19";
 const CALL_FIELDS = ["status", "lostReason", "followUp", "nextStep", "contactedAt"];
 
 /**
@@ -85,13 +87,28 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
   const changed = (l, next) => Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
   // `l` itself is the base: its version symbol is not copied by a spread.
   const patchOp = (l, diff) => ({ type: "patch", collection: "leads", id: l.id, base: l, data: touch(diff) });
-  /** The common shape: read the lead, compute a patch from it, write it only if the lead is still as read. Says whether anything changed. */
+  /**
+   * The common shape: read the lead, compute a patch from it, write it only if the lead is still as read. Says whether
+   * anything changed. Back to Neu clears the first contact and the plan, as a Neu lead has neither, but only for a lead
+   * nobody spoke with (triedOnly); any other is refused, whatever the patch says about its first contact.
+   */
   const changeLead = (id, compute) => retrying(async () => {
     const l = await lead(id);
-    const ops = leadOps(l, compute(l));
+    let patch = compute(l);
+    // Spoken with, the first contact stays whatever the patch says, so normalizeLead refuses Neu.
+    if (patch.status === "neu" && l.status !== "neu" && l.contactedAt) patch = triedOnly(l, await store.activitiesOf(id)) ? { ...patch, contactedAt: null, followUp: null, nextStep: "" } : { ...patch, contactedAt: l.contactedAt };
+    const ops = leadOps(l, patch);
     if (ops.length) await commit(ops);
     return ops.length > 0;
   });
+  /**
+   * A lead only tried: Kontaktiert, or closed as "Nicht erreicht" after the mails, with no conversation logged, and its
+   * first contact the day of an attempt, as a mail dated it until 1.24.0 (ATTEMPTS_DATED_UNTIL); since then an attempt
+   * dates nothing. A first contact with no entry that day, or a later one, was set by hand or by an agent for a
+   * conversation held outside the CRM, which counts as speaking with them. An appointment or a win is one too, though
+   * "Termin eintragen" and the meeting's outcome log no entry.
+   */
+  const triedOnly = (l, acts) => (l.status === "kontaktiert" || l.status === "disqualifiziert" && l.lostReason === "Nicht erreicht") && l.contactedAt <= ATTEMPTS_DATED_UNTIL && !hasSpoken(acts) && acts.some((a) => a.date === l.contactedAt);
   async function lead(id) {
     const found = await store.get("leads", id);
     if (!found) throw new ValidationError("id", "Betrieb nicht gefunden");

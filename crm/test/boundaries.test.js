@@ -80,6 +80,8 @@ test("search_leads answers pages of short summaries, in the same order on every 
   assert.deepEqual(brauhaus, { id: ids["Brauhaus"], name: "Brauhaus", city: "Graz", status: "neu", fit: 2, followUp: null, due: false, next: "Erstkontakt", hasEmail: true, hasPhone: true, optOut: false });
   assert.deepEqual(dorfwirt, { id: ids["Dorfwirt"], name: "Dorfwirt", city: "Graz", status: "disqualifiziert", fit: 2, followUp: null, due: false, hasEmail: false, hasPhone: false, optOut: true });
   assert.deepEqual((await search({ query: "graz", status: "neu" })).leads.map((l) => l.name), ["Alpenblick", "Brauhaus", "Café Anna", "Zum Hirschen"]);
+  // A Neu lead has no date: one spoken with has.
+  await context.uc.changeStatus(ids["Zum Hirschen"], "kontaktiert");
   await context.uc.setFollowUp(ids["Zum Hirschen"], "2026-10-15");
   assert.deepEqual((await search({ dueOnly: true })).leads.map((l) => [l.name, l.due]), [["Zum Hirschen", true]]);
   assert.match(await search({ limit: 51 }), /limit/);
