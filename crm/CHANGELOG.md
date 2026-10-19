@@ -2,6 +2,10 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.25.1 (2026-10-19)
+
+- **Each note is a box of its own** in the timeline, so one note is told from the next at a glance; more room between the filters, the box for a new note and the notes.
+
 ## 1.25.0 (2026-10-19)
 
 - **Notes are entries:** each note is a card in the timeline, with who wrote it and when, among the calls and mails, newest first. Write one in the box on top of the timeline. "Bearbeiten" changes it, "Löschen" deletes it after asking. The "Notizen" chip shows only the notes. The notes text from before shows split: every paragraph that starts with a day ("19.10.2026: …") is a note of that day, and the others together one note "Bisherige Notizen". Nothing is cut or lost; the text itself stays as it was until you change one of its notes. Notes an agent writes are added as a new note too, never replacing the others.
