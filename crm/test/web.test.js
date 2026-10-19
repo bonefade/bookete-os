@@ -1525,17 +1525,49 @@ test("the feed groups mail by its thread and names a colleague's mailbox; the ch
   assert.deepEqual([...html.matchAll(/data-expand="a:(M\w+)"/g)].map(([, id]) => id), ["M1"]);
   assert.match(html, /data-act="reply" data-thread="T1">Antworten/);
   // Newest first: the thread by its newest message, the call, the WhatsApp message, then the move to Kontaktiert.
-  const order = ["card thread", "Anruf · Nicht erreicht", "↗ Gesendet · WhatsApp", 'class="sline">Sa., 10. Okt. · Status Neu → Kontaktiert'].map((s) => html.indexOf(s));
+  // Read in the feed: the sequence's checklist beside it names the same contacts.
+  const feed = html.slice(html.indexOf('class="l-feed"'));
+  const order = ["card thread", "Anruf · Nicht erreicht", "↗ Gesendet · WhatsApp", 'class="sline">Sa., 10. Okt. · Status Neu → Kontaktiert'].map((s) => feed.indexOf(s));
   assert.ok(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1])), String(order));
   // The call is not the newest entry, so it cannot be taken back.
   assert.doesNotMatch(html, /data-undo/);
-  assert.match(html, /data-feed="mail" aria-pressed="false">E-Mail <small>2<\/small>[^]*data-feed="call" aria-pressed="false">Anrufe <small>1<\/small>/);
-  const only = (feed) => detailView({ ...state, ui: { ...state.ui, feed } }, TODAY);
+  assert.match(html, /data-feed="mail" aria-pressed="false">E-Mail <small>2<\/small>[^]*data-feed="call" aria-pressed="false">Anrufe <small>1<\/small>[^]*data-feed="msg" aria-pressed="false">Nachrichten <small>1<\/small>/);
+  const only = (feed) => { const page = detailView({ ...state, ui: { ...state.ui, feed } }, TODAY); return page.slice(page.indexOf('class="l-feed"')); };
   assert.doesNotMatch(only("mail"), /Anruf ·|WhatsApp ·|class="sline"/);
   assert.match(only("call"), /Anruf · Nicht erreicht/);
   assert.doesNotMatch(only("call"), /card thread|class="sline"/);
   assert.match(only("note"), /<h3>Notizen<\/h3>/);
   assert.doesNotMatch(only("note"), /card thread|Anruf ·/);
+  assert.match(only("msg"), /↗ Gesendet · WhatsApp/);
+  assert.doesNotMatch(only("msg"), /card thread|Anruf ·/);
+});
+
+test("the sequence on a wide screen is a checklist: each day's contacts, the answer that stopped it, the contacts still to come", () => {
+  const lead = { id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-10", email: "k@krone.at", phone: "+43 1", followUp: "2026-10-20" };
+  const items = (html) => [...html.split('class="card checks">')[1].split("</ol>")[0].matchAll(/<li class="(\w+)"><b>([^<]*)<\/b>((?:<small>[^<]*<\/small>)*)/g)].map(([, cls, b, small]) => [cls, b, small.replace(/<\/?small>/g, "|").replace(/\|+/g, "|").replace(/^\||\|$/g, "")]);
+  // Before the answer: the mail of the 10th, then the call and the WhatsApp message of the 11th and 12th.
+  const state = stateWith([lead], { leadId: "L1" });
+  state.data.activities = FEED;
+  const html = detailView(state, TODAY);
+  assert.deepEqual(items(html), [
+    ["ok", "Erstkontakt · E-Mail", "Sa., 10. Okt."],
+    ["ok", "Nachfassen · WhatsApp", "So., 11. Okt."],
+    ["ok", "Nachfassen · Anruf · Nicht erreicht", "Mo., 12. Okt."],
+    ["now", "Antwort · E-Mail", "Mi., 14. Okt.|Ohne Antwort ginge es am Mo., 19. Okt. weiter."],
+    ["todo", "Kontakt 4", "angehalten"],
+    ["todo", "Kontakt 5", "angehalten"],
+  ]);
+  // The answer of the 14th stopped it; without it the fourth contact was due 7 days after the 12th.
+  const now = html.split('<li class="now">')[1].split("</li>")[0];
+  assert.match(now, /<b>Antwort · E-Mail<\/b><small>Mi\., 14\. Okt\.<\/small><small>Ohne Antwort ginge es am Mo\., 19\. Okt\. weiter\.<\/small>/);
+  assert.match(now, /data-act="reply" data-thread="T1">Antworten[^]*data-act="terminOpen">Termin eintragen/);
+  assert.match(html, /Nachfass-Folge <small>3 von 5 · angehalten<\/small>/);
+  // Without an answer the next contact is the follow-up date, and the last one closes the sequence.
+  const open = stateWith([lead], { leadId: "L1" });
+  open.data.activities = FEED.filter((a) => a.direction === "out");
+  assert.deepEqual(items(detailView(open, TODAY)).slice(3), [["todo", "Kontakt 4", "fällig Di., 20. Okt."], ["todo", "Kontakt 5", "danach: Ohne Antwort abschließen"]]);
+  // Only a lead in the sequence has one.
+  assert.doesNotMatch(detailView(stateWith([{ ...lead, status: "qualifiziert" }], { leadId: "L1" }), TODAY), /class="card checks"/);
 });
 
 test("Rückgängig shows on the newest activity when it is a call, and never on an opted-out lead", () => {

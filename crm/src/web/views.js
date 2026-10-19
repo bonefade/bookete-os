@@ -2,7 +2,7 @@ import { STAGES, STAGE_LABEL, LOST_REASONS, SPOKEN_REASONS, BUSINESS_TYPES, RESE
 import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, regionCounts, toolCounts, contactCounts, callList, freshLeads, awaitsAnswer, todayQueue, queueList, roundList } from './selectors.js';
 import { addDays, dayLabel, daysBetween, toDateString } from '../domain/dates.js';
 import { channelLink } from './platform.js';
-import { countTouches, hasReply, isReply, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting } from '../domain/activity.js';
+import { countTouches, hasReply, isReply, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting, byTimeline } from '../domain/activity.js';
 import { esc, fmtDate, fmtDateWithYear, relDate, options, describeChange, statusMove, actorName, fmtTime } from './format.js';
 import { fold, searchTokens, searchLeads } from '../domain/search.js';
 import { hitLabel, markRanges, markHtml, snippetHtml } from './search.js';
@@ -245,18 +245,19 @@ function changesHtml(rows) {
   const shown = rows.map((e) => [e, describeChange(e)]).filter(([, lines]) => lines.length);
   return shown.length ? shown.map(([e, lines]) => `<div class="entry"><div class="h"><span>${esc(fmtTime(e.at))} \xB7 ${esc(actorName(e.actor))}</span></div><div class="t">${lines.map(esc).join("<br>")}</div></div>`).join("") : `<p class="note">Noch keine \xC4nderungen aufgezeichnet.</p>`;
 }
+/** The lead's fields to edit in place, by the card they show in: how to reach them, what a talk needs, the rest. */
 export const QUICK_FIELDS = [
-  { key: "person" },
-  { key: "email", type: "email" },
-  { key: "phone", type: "tel" },
-  { key: "currentTool", options: () => RESERVATION_TOOLS },
-  { key: "hook" },
-  { key: "fit", options: () => [[3, "★★★ sehr gut"], [2, "★★ passt"], [1, "★ fraglich"]], show: (l) => "★".repeat(l.fit || 2) },
-  { key: "website", type: "url" },
-  { key: "instagram" },
-  { key: "city" },
-  { key: "region", options: () => [["", "automatisch"], ...REGIONS], show: (l) => regionOf(l) + (l.region ? "" : " (automatisch)") },
-  { key: "type", options: () => BUSINESS_TYPES }
+  { key: "person", group: "contact" },
+  { key: "email", type: "email", group: "contact" },
+  { key: "phone", type: "tel", group: "contact" },
+  { key: "currentTool", options: () => RESERVATION_TOOLS, group: "talk" },
+  { key: "hook", group: "talk" },
+  { key: "fit", options: () => [[3, "★★★ sehr gut"], [2, "★★ passt"], [1, "★ fraglich"]], show: (l) => "★".repeat(l.fit || 2), group: "talk" },
+  { key: "website", type: "url", group: "contact" },
+  { key: "instagram", group: "contact" },
+  { key: "city", group: "info" },
+  { key: "region", options: () => [["", "automatisch"], ...REGIONS], show: (l) => regionOf(l) + (l.region ? "" : " (automatisch)"), group: "info" },
+  { key: "type", options: () => BUSINESS_TYPES, group: "info" }
 ];
 export function quickField(l, f, editing) {
   const raw = l[f.key] ?? "";
@@ -400,13 +401,39 @@ function nextStepHtml(l, acts, ui, today) {
   return `<div class="next${lacksNextStep(l) ? " lacks" : due ? " due" : ""}"><span>${line}</span>${ui.nextEdit ? "" : `<button class="more" data-act="nextEdit">\xC4ndern</button>`}</div>
     ${l.status === "kontaktiert" && hasReply(acts) ? `<p class="note" style="margin:4px 0 0">Die Antwort hat die Nachfass-Folge angehalten.</p>` : ""}${edit}`;
 }
-/** The sequence on a wide screen: how many contacts of five, and where it stands. */
-function sequenceHtml(l, acts) {
+/**
+ * The sequence on a wide screen, as a checklist: a row per day we made contact (as countTouches counts them), the
+ * answer that stopped it, with what we would have done without it, and the contacts still to come.
+ */
+function sequenceHtml(l, acts, today) {
   if (l.status !== "kontaktiert") return "";
-  const t = countTouches(acts), max = SEQUENCE_POLICY.maxTouches;
-  const reply = acts.find(isReply);
-  const text = reply ? `Angehalten: Antwort am ${fmtDate(reply.date)}` : t >= max ? "Alle Kontakte ohne Antwort. Abschlie\xDFen?" : l.followUp ? `N\xE4chster Kontakt ${fmtDate(l.followUp)}` : "";
-  return `<div class="sec desk"><h3>Nachfass-Folge</h3><div class="card"><div class="seg" aria-hidden="true">${Array.from({ length: max }, (_, i) => `<span${i < t ? ' class="on"' : ""}></span>`).join("")}</div><p class="note">${Math.min(t, max)} von ${max} Kontakten. ${esc(text)}</p></div></div>`;
+  const max = SEQUENCE_POLICY.maxTouches, cadence = SEQUENCE_POLICY.cadence;
+  const sorted = [...acts].sort(byTimeline);
+  const replyAt = sorted.findIndex(isReply);
+  const reply = replyAt < 0 ? null : sorted[replyAt];
+  // One row per day, with every contact of that day.
+  const days = [];
+  for (const a of replyAt < 0 ? sorted : sorted.slice(0, replyAt)) {
+    const day = days.at(-1)?.date === a.date ? days.at(-1) : (days.push({ date: a.date, acts: [] }), days.at(-1));
+    day.acts.push(a);
+  }
+  const n = days.length;
+  const row = (done, title, sub, cls = "") => `<li class="${done ? "ok" : "todo"}${cls}"><b>${title}</b>${sub ? `<small>${sub}</small>` : ""}</li>`;
+  const how = (a) => a.outcome ? `Anruf \xB7 ${esc(OUTCOME_LABEL[a.outcome])}` : esc(a.channel);
+  const rows = days.map((d, i) => row(true, `${i ? "Nachfassen" : "Erstkontakt"} \xB7 ${d.acts.map(how).join(", ")}`, esc(fmtDate(d.date))));
+  if (reply) {
+    // Without the answer the sequence would have gone on by its cadence from the last contact.
+    const would = n && n < max ? `Ohne Antwort ginge es am ${esc(fmtDate(addDays(days.at(-1).date, cadence[Math.min(n - 1, cadence.length - 1)])))} weiter.` : "";
+    const answer = reply.direction === "in" && !l.optOutAt ? (reply.mail?.threadId ? `<button data-act="reply" data-thread="${esc(reply.mail.threadId)}">Antworten</button>` : `<button data-compose="${esc(reply.channel)}">Antworten</button>`) : "";
+    const termin = takesCall(l, today) ? `<button data-act="terminOpen">Termin eintragen</button>` : "";
+    rows.push(`<li class="now"><b>${reply.direction === "in" ? `Antwort \xB7 ${esc(reply.channel)}` : how(reply)}</b><small>${esc(fmtDate(reply.date))}</small>${would ? `<small>${would}</small>` : ""}${answer || termin ? `<div class="two">${answer}${termin}</div>` : ""}</li>`);
+  }
+  for (let k = n + 1; k <= max; k++) {
+    const sub = reply ? "angehalten" : k === n + 1 && l.followUp ? `f\xE4llig ${esc(fmtDate(l.followUp))}` : k === max ? "danach: Ohne Antwort abschlie\xDFen" : "";
+    rows.push(row(false, `Kontakt ${k}`, sub));
+  }
+  const state = reply ? " \xB7 angehalten" : n >= max ? " \xB7 ohne Antwort" : "";
+  return `<div class="sec desk seq"><h3>Nachfass-Folge <small>${Math.min(n, max)} von ${max}${state}</small></h3><ol class="card checks">${rows.join("")}</ol>${!reply && n >= max ? `<p class="note">Alle Kontakte ohne Antwort. Abschlie\xDFen?</p>` : ""}</div>`;
 }
 /**
  * The lead's feed, newest first: the notes pinned on top, mail grouped by its Gmail thread, single messages and
@@ -416,9 +443,9 @@ function feedHtml(state, l, acts, today, clamp) {
   const ui = state.ui;
   const mine = (a) => !a.mail?.mailbox || a.mail.mailbox === state.me?.email;
   const kind = (a) => a.outcome || a.channel === "Telefon" ? "call" : a.channel === "E-Mail" ? "mail" : "msg";
-  const count = { mail: acts.filter((a) => kind(a) === "mail").length, call: acts.filter((a) => kind(a) === "call").length, note: l.notes ? 1 : 0 };
+  const count = { mail: acts.filter((a) => kind(a) === "mail").length, call: acts.filter((a) => kind(a) === "call").length, msg: acts.filter((a) => kind(a) === "msg").length, note: l.notes ? 1 : 0 };
   const f = ui.feed;
-  const chips = `<div class="chips feedc">${[["alle", "Alle"], ["mail", "E-Mail"], ["call", "Anrufe"], ["note", "Notizen"]].map(([k, label]) => `<button class="chip" data-feed="${k}" aria-pressed="${f === k}">${label}${k === "alle" ? "" : ` <small>${count[k]}</small>`}</button>`).join("")}</div>`;
+  const chips = `<div class="chips feedc">${[["alle", "Alle"], ["mail", "E-Mail"], ["call", "Anrufe"], ["msg", "Nachrichten"], ["note", "Notizen"]].map(([k, label]) => `<button class="chip" data-feed="${k}" aria-pressed="${f === k}">${label}${k === "alle" ? "" : ` <small>${count[k]}</small>`}</button>`).join("")}</div>`;
   const notes = `<div class="sec"><h3>${FIELD_LABEL.notes}</h3>${ui.editField === "notes" ? `<div class="card"><textarea id="qe" data-field="notes" rows="10">${esc(l.notes || "")}</textarea><div class="qe-actions"><button data-act="qeCancel">Abbrechen</button><button class="primary" data-act="qeSave">Speichern</button></div></div>` : `<div class="card qe-click" data-edit="notes" role="button" tabindex="0">${l.notes ? clamp("notes", l.notes) : `<span class="qe-empty">+ Notiz hinzuf\xFCgen</span>`}</div>`}</div>`;
   if (f === "note") return chips + notes;
   const tplName = Object.fromEntries(state.data.templates.map((x) => [x.id, x.name]));
@@ -502,16 +529,21 @@ export function detailView(state, today) {
   const filled = QUICK_FIELDS.filter((f) => l[f.key] && f.key !== "fit" && f.key !== "type").map((f) => FIELD_LABEL[f.key]).slice(0, 4).join(", ");
   const infoOpen = ui.infoOpen || (ui.editField && ui.editField !== "notes");
   const sheet = calls && ui.termin ? terminHtml(l, ui.termin, today) : calls && (ui.call || ui.round?.list === "calls") ? callHtml(l, acts, ui, today, state.data.templates) : meetingDue(l, today) ? meetingHtml(ui, today) : "";
-  return `<div class="bar"><button class="link" data-act="back">‹ Zur\xFCck</button><h2>${esc(l.name)}</h2><button class="link" data-act="edit">Bearbeiten</button></div>
+  const fields = (group) => QUICK_FIELDS.filter((f) => f.group === group).map((f) => quickField(l, f, ui.editField)).join("");
+  // On a wide screen the name heads the page and the action row stands beside it; on a phone the top bar names it.
+  return `<div class="bar lbar"><button class="link" data-act="back">‹ Zur\xFCck</button><h2>${esc(l.name)}</h2><button class="link" data-act="edit">Bearbeiten</button></div>
 <div class="wrap lead">
   ${roundBar(state, l, today)}
   <div class="card hero">
+    <div class="h-top">
+    <h1 class="desk">${esc(l.name)}</h1>
     <div class="line">${l.optOutAt ? `<span class="pill lost">${chip}</span>` : `<button class="pill${lost ? " lost" : ""}" data-act="statusMenu" aria-expanded="${!!ui.statusMenu}">${chip} ▾</button>`}${l.website ? `<a class="note" href="${esc(l.website)}" target="_blank" rel="noopener">Website ↗</a>` : ""}</div>
     <p class="note" style="margin:8px 0 0">${sub}</p>
+    </div>
+    ${actions}
     ${ui.statusMenu ? statusMenuHtml(l, acts, ui, today) : ""}
     ${nextStepHtml(l, acts, ui, today)}
   </div>
-  ${actions}
   <div class="l-top">
   ${l.optOutAt ? `<div class="card sec optout"><p style="margin:0;font-weight:600">M\xF6chte keine Nachrichten mehr</p><p class="note" style="margin:2px 0 8px">Opt-out seit ${esc(fmtDate(l.optOutAt))}. Keine Mails, DMs oder Anrufe. Nur aufheben, wenn der Betrieb sich selbst wieder meldet.</p><button class="more" data-act="clearOptOut">Opt-out aufheben</button></div>` : ""}
   ${ui.lostPick ? `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Warum disqualifiziert?</p><div class="chips">${LOST_REASONS.map((r) => `<button class="chip lostc" data-lost="${esc(r)}" aria-pressed="${l.lostReason === r}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="lostCancel">Abbrechen</button></div>` : ""}
@@ -519,10 +551,13 @@ export function detailView(state, today) {
   ${ui.compose ? `<div class="sec">${composerHtml(state, l, acts, today, offersMailto)}</div>` : ""}
   </div>
   <aside class="l-side">
-  <div class="sec infos${infoOpen ? " open" : ""}"><button class="ifold" data-act="infoToggle" aria-expanded="${!!infoOpen}">Infos${filled ? " \xB7 " + esc(filled) : ""} ${infoOpen ? "▴" : "▾"}</button><h3>Infos <small>zum Bearbeiten antippen</small></h3><dl class="card facts qe">${QUICK_FIELDS.map((f) => quickField(l, f, ui.editField)).join("")}</dl></div>
-  ${sequenceHtml(l, acts)}
+  <div class="sec infos${infoOpen ? " open" : ""}"><button class="ifold" data-act="infoToggle" aria-expanded="${!!infoOpen}">Infos${filled ? " \xB7 " + esc(filled) : ""} ${infoOpen ? "▴" : "▾"}</button><h3>Kontakt <small>zum Bearbeiten antippen</small></h3><dl class="card facts qe">${fields("contact")}</dl><h3>Infos</h3><dl class="card facts qe">${fields("info")}</dl></div>
   ${showsAccount(l) ? accountHtml(l, offersMailto) : ""}
   </aside>
+  <div class="l-work">
+  <div class="sec talk"><h3>F\xFCr das Gespr\xE4ch</h3><dl class="card facts qe">${fields("talk")}</dl></div>
+  ${sequenceHtml(l, acts, today)}
+  </div>
   <div class="l-feed">${feedHtml(state, l, acts, today, clamp)}</div>
 </div>`;
 }

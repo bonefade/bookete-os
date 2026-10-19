@@ -2,6 +2,13 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.19.0 (2026-10-19)
+
+- **The lead page on a laptop, new:** the name heads the page with the buttons beside it (E-Mail first), the next step below. Then three columns: on the left "Für das Gespräch" (how they reserve now, the hook, the fit) and the Nachfass-Folge; in the middle the feed; on the right Kontakt and Infos, and the Kundenakte where there is one.
+- **The Nachfass-Folge is a checklist:** each day we made contact, with what we did; the answer that stopped it, with "Antworten", "Termin eintragen" and the day it would have gone on without the answer; then the contacts still to come.
+- **"Nachrichten" filter** in the feed, for Instagram and WhatsApp messages.
+- On a phone the page stays as it was; "Für das Gespräch" is in the Infos fold.
+
 ## 1.18.2 (2026-10-19)
 
 - **Termin eintragen** (the status menu, or a mail thread) opens its own small form now: date, time, Speichern. Before, it opened the call form and saved the appointment as a phone call, so a Termin agreed by mail counted as a call and as "erreicht" in Diese Woche. Calls logged that way before stay as they are. A Termin agreed on the phone still goes through "Anrufen". "Termine" in Diese Woche counts only Termine agreed on a call, so one entered this way is not in it.

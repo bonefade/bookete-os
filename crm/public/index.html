@@ -280,9 +280,22 @@ button.pill{min-height:36px;border:none;padding:4px 12px}
 .infos:not(.open)>dl{display:none}
 .infos.open>.ifold{margin-bottom:8px}
 .desk{display:none}
-.seg{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:6px}
-.seg span{height:6px;border-radius:3px;background:var(--line)}
-.seg .on{background:var(--pine)}
+.infos>dl+h3+dl{margin-top:10px}
+/* "Für das Gespräch" belongs to the Infos fold while it folds. */
+@media not all and (min-width:1100px) and (min-height:480px){.l-side:has(.infos:not(.open))+.l-work .talk{display:none}}
+/* the sequence as a checklist: done, the answer that stopped it, still to come */
+.checks{list-style:none;margin:0;padding:4px 14px}
+.checks li{display:grid;grid-template-columns:22px minmax(0,1fr);column-gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.checks li:first-child{border-top:none}
+.checks li::before{content:"";grid-row:1/span 4;width:20px;height:20px;border-radius:50%;border:2px solid var(--line);box-sizing:border-box;font-size:.7rem;line-height:16px;text-align:center}
+.checks li.ok::before{content:"\2713";background:var(--pine);border-color:var(--pine);color:var(--bg)}
+.checks li.now{background:var(--mark);margin:0 -14px;padding:10px 14px}
+.checks li.now::before{border-color:var(--brass)}
+.checks b,.checks small,.checks .two{grid-column:2}
+.checks small{display:block;color:var(--muted);font-size:.83rem}
+.checks li.todo b{color:var(--muted);font-weight:500}
+.checks .two{margin-top:8px}
+.checks .two button{min-height:36px;padding:6px 10px;font-size:.88rem}
 /* the feed */
 .feedc{margin-top:22px}
 .chip small{color:inherit;opacity:.7;margin-left:2px}
@@ -302,21 +315,29 @@ select.chip{width:auto;min-height:36px;padding:6px 12px}
 .optout.box p:first-child{margin:0;font-weight:600}
 .after{display:flex;flex-wrap:wrap;align-items:center;gap:0 8px}
 .sheet h3{margin-bottom:4px}
-/* Wide: Heute's side panel beside the queue; the lead's Infos beside its feed. */
+/* Wide: Heute's side panel beside the queue. The lead page: the name and the action row on top, then the work
+   (what a talk needs, the sequence) on the left, the feed in the middle, the facts on the right. */
 @media (min-width:1100px) and (min-height:480px){
   .today{display:grid;grid-template-columns:minmax(0,1fr) 340px;column-gap:28px;align-items:start}
-  /* The feed's row is 1fr, so a tall Infos column lengthens it and leaves no gap above the feed. */
-  .wrap.lead{max-width:1280px;display:grid;grid-template-columns:320px minmax(0,1fr);grid-template-rows:auto auto auto auto 1fr;
-    grid-template-areas:"round round" "hero hero" "acts acts" "side top" "side feed";column-gap:24px;align-items:start}
+  /* The feed's row is 1fr, so a tall side column lengthens it and leaves no gap above the feed. */
+  .wrap.lead{max-width:1440px;display:grid;grid-template-columns:300px minmax(0,1fr) 300px;grid-template-rows:auto auto auto 1fr;
+    grid-template-areas:"round round round" "hero hero hero" "work top side" "work feed side";column-gap:24px;align-items:start}
   .lead>.l-round{grid-area:round}
-  .lead>.hero{grid-area:hero}
-  .lead>.acts{grid-area:acts}
+  .lead>.hero{grid-area:hero;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:24px;align-items:start;margin-bottom:18px}
+  .hero>*{grid-column:1/-1}
+  .hero>.h-top{grid-column:1}
+  .hero h1{font-size:1.75rem;margin-bottom:6px}
+  .hero>.acts{grid-column:2;grid-row:1;display:flex;gap:8px;margin:0}
+  .hero>.acts>*{padding:8px 16px;font-size:.92rem}
+  .hero>.acts>[data-compose="E-Mail"]{order:-1;background:var(--pine);border-color:var(--pine);color:var(--bg);font-weight:600}
+  .lbar h2{visibility:hidden}
+  .lead>.l-work{grid-area:work}
   .lead>.l-side{grid-area:side}
   .lead>.l-top{grid-area:top}
   .lead>.l-feed{grid-area:feed}
   .infos>.ifold{display:none}
   .infos>h3{display:flex}
-  .l-side .infos .facts.qe{display:block}
+  .lead .facts.qe{display:block}
   .desk{display:block}
 }
 /* From tablet width the tabs are a rail on the left, under the top bar; the screens and the search move right of it.
