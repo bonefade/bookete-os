@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createStore, initialState } from "../src/web/store.js";
-import { TABS, tabBar, todayView, leadsView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar } from "../src/web/views.js";
+import { TABS, tabBar, todayView, leadsView, kundenView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar } from "../src/web/views.js";
 import { LEAD_FIELDS } from "../src/domain/lead.js";
 import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
 import { describeChange, fmtDate } from "../src/web/format.js";
@@ -816,8 +816,8 @@ test("the app's buttons and the browser's Back and Forward move through the addr
   }
 });
 
-test("four tabs, at the bottom on a phone and on the left from tablet width, and the one search field in the top bar", () => {
-  assert.deepEqual([...tabBar(initialState(), "2026-10-15", false).matchAll(/data-tab="(\w+)"/g)].map(([, k]) => k), ["heute", "betriebe", "vorlagen", "mehr"]);
+test("five tabs, at the bottom on a phone and on the left from tablet width, and the one search field in the top bar", () => {
+  assert.deepEqual([...tabBar(initialState(), "2026-10-15", false).matchAll(/data-tab="(\w+)"/g)].map(([, k]) => k), ["heute", "betriebe", "kunden", "vorlagen", "mehr"]);
   assert.doesNotMatch(tabBar(initialState(), "2026-10-15", false), /disabled/);
   assert.equal(tabBar(initialState(), "2026-10-15", true).match(/ disabled>/g).length, TABS.length);
   const page = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
@@ -858,27 +858,27 @@ test("the tabs show on every screen, shut while a form holds input; a lead page'
     for (const c of ["activities", "templates", "settings"]) store.data(c, []);
     const { h, click, tabsEl } = fakeBrowser("#/betriebe", store, {});
     const tabs = () => [(tabsEl.innerHTML.match(/data-tab=/g) || []).length, (tabsEl.innerHTML.match(/ disabled>/g) || []).length, tabsEl.innerHTML.match(/data-tab="(\w+)" aria-current/)?.[1]];
-    assert.deepEqual(tabs(), [4, 0, "betriebe"]);
+    assert.deepEqual(tabs(), [5, 0, "betriebe"]);
     await click({ open: "L1" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1", 4, 0, "betriebe"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1", 5, 0, "betriebe"]);
     // A message being written holds input as a form does.
     await click({ compose: "E-Mail" });
-    assert.deepEqual(tabs(), [4, 4, "betriebe"]);
+    assert.deepEqual(tabs(), [5, 5, "betriebe"]);
     await click({ act: "composeCancel" });
-    assert.deepEqual(tabs(), [4, 0, "betriebe"]);
+    assert.deepEqual(tabs(), [5, 0, "betriebe"]);
     await click({ act: "edit" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1/bearbeiten", 4, 4, "betriebe"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1/bearbeiten", 5, 5, "betriebe"]);
     h.history.go(-1);
     h.land();
     // The tab the lead page was opened from opens its screen, not the top of the lead page.
     await click({ tab: "betriebe" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/betriebe", 4, 0, "betriebe"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betriebe", 5, 0, "betriebe"]);
     await click({ act: "quick" });
-    assert.deepEqual(tabs(), [4, 4, "betriebe"]);
+    assert.deepEqual(tabs(), [5, 5, "betriebe"]);
     await click({ act: "quickCancel" });
     await click({ tab: "vorlagen" });
     await click({ act: "tplNew" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/vorlage/neu", 4, 4, "vorlagen"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/vorlage/neu", 5, 5, "vorlagen"]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }
@@ -1568,6 +1568,74 @@ test("the sequence on a wide screen is a checklist: each day's contacts, the ans
   assert.deepEqual(items(detailView(open, TODAY)).slice(3), [["todo", "Kontakt 4", "fällig Di., 20. Okt."], ["todo", "Kontakt 5", "danach: Ohne Antwort abschließen"]]);
   // Only a lead in the sequence has one.
   assert.doesNotMatch(detailView(stateWith([{ ...lead, status: "qualifiziert" }], { leadId: "L1" }), TODAY), /class="card checks"/);
+});
+
+// Three customers and a lead: one in onboarding (Jo's), one live (Anna's), one cancelled.
+const KUNDEN = [
+  { id: "K1", name: "Linde", city: "Graz", status: "kunde", followUp: "2026-10-16", nextStep: "Abo abgeschlossen", customer: { phase: "onboarding", since: "2026-10-15", owner: "jo@bookete.com", steps: [{ id: "vertrag", at: "2026-10-15", by: "jo@bookete.com (web)" }] } },
+  { id: "K2", name: "Seeblick", status: "kunde", followUp: "2026-10-12", nextStep: "Angebot Website", customer: { phase: "live", since: "2026-06-01", owner: "anna@bookete.com", liveAt: "2026-06-20" } },
+  { id: "K3", name: "Post", status: "kunde", customer: { phase: "gekuendigt", since: "2026-05-01", cancelReason: "Preis" } },
+  { id: "L1", name: "Krone", status: "qualifiziert" },
+];
+const ME = { email: "jo@bookete.com", team: ["jo@bookete.com", "anna@bookete.com"] };
+
+test("the Kunden tab lists the customers by phase and owner, the next step due first", () => {
+  const view = (ui) => {
+    const state = stateWith(KUNDEN, ui);
+    state.me = ME;
+    return kundenView(state, TODAY);
+  };
+  const rows = (html) => [...html.matchAll(/data-open="(\w+)"><span class="q-name">[^]*?<span class="q-ch">([^<]*)<\/span><span class="q-why[^"]*">([^<]*)<\/span><span class="q-go">([^<]*) ›/g)].map(([, id, ph, why, who]) => [id, ph, why, who]);
+  // Active: not the cancelled one; the overdue step first.
+  assert.deepEqual(rows(view({})), [["K2", "Live", "Angebot Website · seit 3 Tagen", "anna"], ["K1", "Onboarding 1/7", "Abo abgeschlossen · morgen", "jo"]]);
+  assert.match(view({}), /<p>2 aktiv · 1 im Onboarding<\/p>/);
+  assert.deepEqual(rows(view({ kPhase: "gekuendigt" })), [["K3", "Gekündigt", "Preis", "–"]]);
+  assert.deepEqual(rows(view({ kOwner: "ich" })).map(([id]) => id), ["K1"]);
+  assert.deepEqual(rows(view({ kPhase: "alle" })).length, 0);
+  // Each select counts what the other leaves.
+  assert.deepEqual(optionsOf(view({ kOwner: "ich" }), "kPhase"), ["*aktiv Aktiv (1)", "onboarding Onboarding (1)", "live Live (0)", "gekuendigt Gekündigt (0)"]);
+  assert.deepEqual(optionsOf(view({}), "kOwner"), ["*alle Betreut: Alle (2)", "ich Betreut: Ich (1)", "niemand Betreut: Niemand (0)"]);
+});
+
+test("a Kunde's page shows its care in place of the sales work: owner, phase and the onboarding with the first open step to tick", () => {
+  const state = stateWith(KUNDEN, { leadId: "K1" });
+  state.me = ME;
+  const page = detailView(state, TODAY);
+  assert.match(page, /data-act="statusMenu" aria-expanded="false">Kunde · Onboarding 1\/7 ▾/);
+  assert.doesNotMatch(page, /Für das Gespräch|class="sec desk seq"/);
+  assert.match(page, /<select id="kOwnerOf"><option value="">–<\/option><option value="jo@bookete.com" selected>jo \(ich\)<\/option><option value="anna@bookete.com">anna<\/option><\/select>/);
+  assert.match(page, /data-phase="onboarding" aria-pressed="true"/);
+  const steps = [...page.split('class="card checks">')[1].split("</ol>")[0].matchAll(/<li class="(\w+)"><b>([^<]*)<\/b>/g)].map(([, cls, b]) => cls + " " + b);
+  assert.deepEqual(steps, ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo bookete-Konto angelegt", "todo Widget auf der Website", "todo Google-Profil verknüpft", "todo Team eingeschult", "todo Live"]);
+  assert.match(page, /data-step="abo">Erledigt<\/button><button data-skip="abo">/);
+  assert.match(page, /data-step-undo="vertrag"/);
+  // A customer live already, from before, ticks its list once: its first open step has the buttons too.
+  state.ui.leadId = "K2";
+  assert.match(detailView(state, TODAY), /<li class="now"><b>Vertrag unterschrieben<\/b>(<small[^>]*>[^<]*<\/small>)?<div class="two"><button class="primary" data-step="vertrag">Erledigt/);
+  // Cancelled: the reason in view, no step to tick or open again.
+  state.ui.leadId = "K3";
+  const gone = detailView(state, TODAY);
+  assert.match(gone, /<h3>Kunde <small>Gekündigt · Preis<\/small>/);
+  assert.doesNotMatch(gone, /data-step=|data-step-undo=/);
+});
+
+test("on a Kunde's page a tick, the owner and a cancellation with its reason go to the server as one change each", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const sent = [];
+    const store = createStore(initialState());
+    store.data("leads", KUNDEN.map((l) => ({ ...LEAD_FIELDS, ...l })));
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    store.set((s) => ({ ...s, me: ME }));
+    const { root, click, change } = fakeBrowser("#/betrieb/K1", store, { changeCustomer: async (l, c) => (sent.push([l.id, c]), true) });
+    await click({ step: root.innerHTML.match(/data-step="(\w+)">Erledigt/)[1] });
+    await change({ id: "kOwnerOf", value: "anna@bookete.com" });
+    await click({ phase: "gekuendigt" });
+    await click({ cancel: root.innerHTML.match(/data-cancel="([^"]+)"/)[1] });
+    assert.deepEqual(sent, [["K1", { step: "abo" }], ["K1", { owner: "anna@bookete.com" }], ["K1", { phase: "gekuendigt", reason: "Preis" }]]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
 });
 
 test("Rückgängig shows on the newest activity when it is a call, and never on an opted-out lead", () => {

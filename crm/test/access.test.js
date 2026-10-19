@@ -13,7 +13,7 @@ import { systemClock } from "../src/adapters/system.js";
 
 // The authorization walk: every command and API route, called without a valid session, is refused
 // before its input is read. The exact list makes each new command a conscious addition to this walk.
-const RPC = ["addLead", "updateLead", "updateField", "deleteLead", "restoreLead", "purgeLead", "changeStatus", "setLostReason", "closeWithoutReply", "setFollowUp", "setNextStep", "logActivity", "logCall", "meetingOutcome", "optOut", "clearOptOut", "saveTemplate", "deleteTemplate", "saveIcp", "saveAccount", "sendEmail", "importBackup", "undoCall", "addNote", "signature", "scheduleMeeting"];
+const RPC = ["addLead", "updateLead", "updateField", "deleteLead", "restoreLead", "purgeLead", "changeStatus", "setLostReason", "closeWithoutReply", "setFollowUp", "setNextStep", "logActivity", "logCall", "meetingOutcome", "optOut", "clearOptOut", "saveTemplate", "deleteTemplate", "saveIcp", "saveAccount", "sendEmail", "importBackup", "undoCall", "addNote", "signature", "scheduleMeeting", "changeCustomer"];
 
 const kv = () => {
   const m = new Map();
@@ -102,7 +102,7 @@ test("a write that keeps losing races answers 409 with a message, not 500", asyn
   assert.match((await res.json()).error, /gerade von jemand anderem/);
 });
 
-test("a signed-in user can see which version is deployed", async () => {
+test("a signed-in user can see which version is deployed, and who is on the team to look after a customer", async () => {
   const e = await env();
   await e.DB.batch([
     e.DB.prepare("INSERT INTO users (email, name, updated_at) VALUES ('jo@bookete.com', 'Jo', 'now')"),
@@ -111,6 +111,25 @@ test("a signed-in user can see which version is deployed", async () => {
   const me = await (await fetchAs(e, "__Host-crm-session=jo-tok", "GET", "/api/me")).json();
   assert.equal(me.version, JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
   assert.deepEqual([me.gmail, me.caps], [false, { gmailRead: false }]);
+  // The allowlist, as the Worker read it once (env's ALLOWED_EMAILS).
+  assert.deepEqual(me.team, ["jo@bookete.com"]);
+});
+
+test("through the Worker, a customer won is owned by the signed-in user, and only someone of the team can look after one", async () => {
+  const e = await env();
+  await e.DB.batch([
+    e.DB.prepare("INSERT INTO users (email, name, updated_at) VALUES ('jo@bookete.com', 'Jo', 'now')"),
+    e.DB.prepare("INSERT INTO sessions VALUES (?, 'jo@bookete.com', ?)").bind(await sha256("jo-tok"), Date.now() + 1e6),
+  ]);
+  const rpc = async (name, body) => fetchAs(e, "__Host-crm-session=jo-tok", "POST", `/api/rpc/${name}`, JSON.stringify(body));
+  const { result: id } = await (await rpc("addLead", { input: { name: "Linde", status: "qualifiziert" } })).json();
+  assert.equal((await rpc("changeStatus", { id, status: "kunde" })).status, 200);
+  const owner = async () => JSON.parse((await e.DB.prepare("SELECT data FROM docs WHERE id = ?").bind(id).first()).data).customer.owner;
+  assert.equal(await owner(), "jo@bookete.com");
+  assert.equal((await rpc("changeCustomer", { id, owner: "" })).status, 200);
+  assert.equal((await rpc("changeCustomer", { id, owner: "anna@bookete.com" })).status, 400);
+  assert.equal((await rpc("changeCustomer", { id, owner: "jo@bookete.com" })).status, 200);
+  assert.equal(await owner(), "jo@bookete.com");
 });
 
 const config = { PUBLIC_URL: "https://crm.bookete.com", CONSENT_SECRET: "c".repeat(32) };

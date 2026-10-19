@@ -20,7 +20,8 @@ working them as leads. Two parts, each with its own `package.json`:
 ## CRM architecture
 
 - `crm/src/domain/`: pure business rules (lead fields, statuses, follow-up
-  cadence, opt-out). Shared by server and browser.
+  cadence, opt-out, a customer's care and onboarding). Shared by server and
+  browser.
 - `crm/src/application/use-cases.js`: the only write path. The web app,
   MCP and backup import all call it, so every rule holds whoever writes.
   Import adds only records the CRM never held, through the same normalization.

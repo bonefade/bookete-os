@@ -3,6 +3,7 @@ import { LEAD_FIELDS } from "../domain/lead.js";
 import { IMPORT_CHUNK } from "../domain/backup.js";
 import { STAGES, LOST_REASONS, SPOKEN_REASONS, CALL_OUTCOMES } from "../domain/constants.js";
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
+import { ONBOARDING, PHASES, CANCEL_REASONS } from "../domain/customer.js";
 
 const id = z.string().min(1).max(100);
 const text = z.string().max(20000);
@@ -31,6 +32,12 @@ const time = z.string().regex(/^\d{2}:\d{2}$/);
 const SpokenReason = z.enum(SPOKEN_REASONS);
 export const CallInput = z.object({ outcome: z.enum(CALL_OUTCOMES.map(([k]) => k)), date: date.optional(), time: time.optional(), reason: SpokenReason.optional(), note: z.string().max(2000).optional() }).strict();
 export const MeetingInput = z.object({ id, result: z.enum(["kunde", "kein-abschluss", "neuer-termin"]), reason: SpokenReason.optional(), date: date.optional(), time: time.optional() }).strict();
+// One change to a customer's care: a step done, open again or skipped; the owner ("" for none); or the phase.
+const CustomerChange = z.union([
+  z.object({ id, step: z.enum(ONBOARDING.map(([k]) => k)), done: z.boolean().optional(), skip: z.string().max(200).optional() }).strict(),
+  z.object({ id, owner: z.union([z.email().max(200), z.literal("")]) }).strict(),
+  z.object({ id, phase: z.enum(PHASES.map(([k]) => k)), reason: z.enum(CANCEL_REASONS).optional() }).strict(),
+]);
 const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish(), replyTo: id.nullish(), signed: z.boolean().optional() });
 
 /** Web-app commands: name → input schema and the use case it runs. */
@@ -47,6 +54,7 @@ export const COMMANDS = {
   logCall: [CallInput.extend({ id }), (uc, { id: leadId, ...call }) => uc.logCall(leadId, call)],
   undoCall: [z.object({ activityId: id }), (uc, a) => uc.undoCall(a.activityId)],
   meetingOutcome: [MeetingInput, (uc, { id: leadId, ...meeting }) => uc.meetingOutcome(leadId, meeting)],
+  changeCustomer: [CustomerChange, (uc, { id: leadId, ...change }) => uc.changeCustomer(leadId, change)],
   scheduleMeeting: [z.object({ id, date, time: time.optional() }).strict(), (uc, { id: leadId, ...meeting }) => uc.scheduleMeeting(leadId, meeting)],
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],
   setFollowUp: [z.object({ id, date: z.union([date, z.literal("")]).nullable() }), (uc, a) => uc.setFollowUp(a.id, a.date)],

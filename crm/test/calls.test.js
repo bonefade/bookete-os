@@ -154,7 +154,8 @@ test("a call never moves a customer out of Kunde", async () => {
   };
   assert.deepEqual(shape(await after({ outcome: "termin", date: "2026-10-20" })), ["kunde", "2026-10-20", "Termin", null]);
   assert.deepEqual(shape(await after({ outcome: "rueckruf", date: "2026-10-20" })), ["kunde", "2026-10-20", "R\xFCckruf", null]);
-  // The fifth attempt without getting through closes only a lead in the sequence.
+  // The fifth attempt without getting through closes only a lead in the sequence. The next step typed for the
+  // customer is no onboarding step, so the onboarding leaves it.
   assert.deepEqual(shape(await after({ outcome: "nicht-erreicht" })), ["kunde", "2026-10-17", "Onboarding", null]);
   assert.deepEqual(shape(await after({ outcome: "kein-interesse", reason: "Zu klein" })), ["kunde", "2026-10-19", "Onboarding", null]);
   // A customer who asks not to be called again is opted out, and stays Kunde with its next step.
@@ -190,7 +191,8 @@ test("on the appointment's day: Kunde, no deal with a reason, or a new appointme
   await uc.meetingOutcome(id, { result: "neuer-termin", date: "2026-10-29", time: "09:30" });
   assert.deepEqual(shape(await store.get("leads", id)), ["qualifiziert", "2026-10-29", "Termin um 09:30", null]);
   await uc.meetingOutcome(id, { result: "kunde" });
-  assert.deepEqual(shape(await store.get("leads", id)), ["kunde", null, "", null]);
+  // A new customer's next step is the first of its onboarding, due the day it was won.
+  assert.deepEqual(shape(await store.get("leads", id)), ["kunde", "2026-10-15", "Vertrag unterschrieben", null]);
   await rejects(uc.meetingOutcome(id, { result: "kunde" }), "status");
   const no = await uc.addLead({ name: "Post", status: "qualifiziert" });
   await uc.meetingOutcome(no, { result: "kein-abschluss", reason: "Kein Bedarf" });

@@ -11,14 +11,16 @@ import { lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
+import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, customerOf, onboardingOf } from '../domain/customer.js';
 
 export const ICONS = {
   heute: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
   betriebe: '<svg viewBox="0 0 24 24"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/></svg>',
+  kunden: '<svg viewBox="0 0 24 24"><path d="M12 3 4.5 6.5v5.5c0 4.2 3.2 7.4 7.5 8.5 4.3-1.1 7.5-4.3 7.5-8.5V6.5z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg>',
   vorlagen: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>',
   mehr: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>'
 };
-export const TABS = [["heute", "Heute"], ["betriebe", "Betriebe"], ["vorlagen", "Vorlagen"], ["mehr", "Mehr"]];
+export const TABS = [["heute", "Heute"], ["betriebe", "Betriebe"], ["kunden", "Kunden"], ["vorlagen", "Vorlagen"], ["mehr", "Mehr"]];
 /** The tabs, shut while `locked`: a form holds input a tab would drop. Heute counts what its queue holds. */
 export function tabBar(state, today, locked) {
   const open = isReady(state) ? queueList(state, today).length : 0;
@@ -105,6 +107,33 @@ export function todayView(state, today) {
 </div>`;
 }
 /** The Betriebe status filter: [value, label, test]. Offen is the pipeline. */
+/** How far a customer's onboarding is: "Onboarding 3/7", or its phase. */
+const phaseText = (c) => c.phase === "onboarding" ? `${PHASE_LABEL.onboarding} ${c.steps.length}/${ONBOARDING.length}` : PHASE_LABEL[c.phase];
+/**
+ * The Kunden tab: every customer, by phase and by who looks after them; the next step due first, as Heute has it.
+ * A row opens the customer's page.
+ */
+export function kundenView(state, today) {
+  const { kPhase, kOwner } = state.ui;
+  const me = state.me?.email;
+  const all = state.data.leads.filter((l) => l.status === "kunde").map((l) => ({ l, c: customerOf(l) }));
+  const inPhase = (x, p = kPhase) => p === "aktiv" ? x.c.phase !== "gekuendigt" : x.c.phase === p;
+  const ownedBy = (x, o = kOwner) => o === "alle" || (o === "ich" ? x.c.owner === me : !x.c.owner);
+  const list = all.filter((x) => inPhase(x) && ownedBy(x)).sort((a, b) => (a.l.followUp || "9") < (b.l.followUp || "9") ? -1 : (a.l.followUp || "9") > (b.l.followUp || "9") ? 1 : a.l.name.localeCompare(b.l.name, "de"));
+  const phases = [["aktiv", "Aktiv"], ...PHASES].map(([k, label]) => [k, label, all.filter((x) => ownedBy(x) && inPhase(x, k)).length]);
+  const owners = [["alle", "Alle"], ["ich", "Ich"], ["niemand", "Niemand"]].map(([k, label]) => [k, `Betreut: ${label}`, all.filter((x) => inPhase(x) && ownedBy(x, k)).length]);
+  const row = ({ l, c }) => {
+    const due = l.followUp && l.followUp <= today;
+    const why = [l.nextStep, l.followUp && relDate(l.followUp, today)].filter(Boolean).join(" \xB7 ") || (c.phase === "gekuendigt" ? c.cancelReason : "nichts geplant");
+    return `<li><button class="qrow" data-open="${esc(l.id)}"><span class="q-name">${esc(l.name)}${l.city ? ` <small>${esc(l.city)}</small>` : ""}</span><span class="q-ch">${esc(phaseText(c))}</span><span class="q-why${due ? " due" : ""}">${esc(why)}</span><span class="q-go">${esc(c.owner ? actorName(c.owner) : "\u2013")} ›</span></button></li>`;
+  };
+  const active = all.filter((x) => x.c.phase !== "gekuendigt");
+  return `<div class="wrap wide">
+  <div class="head"><div><h1>Kunden</h1><p>${active.length} aktiv \xB7 ${active.filter((x) => x.c.phase === "onboarding").length} im Onboarding</p></div></div>
+  <div class="toolbar">${filterSelect("kPhase", "Phase", phases, kPhase)}${filterSelect("kOwner", "Betreut von", owners, kOwner)}</div>
+  ${loadingOr(state, list.length ? `<ul class="ltable">${list.map(row).join("")}</ul>` : `<div class="empty">${all.length ? "Niemand in dieser Ansicht." : "Noch keine Kunden. Wer Kunde wird, steht hier."}</div>`)}
+</div>`;
+}
 export const STATUS_FILTERS = [["offen", "Offen", isPipeline], ...STAGES.map(([k, label]) => [k, label, (l) => l.status === k]), ["alle", "Alle", () => true]];
 const CONTACTED = [["alle", "Kontaktiert: alle"], ["ja", "Kontaktiert: ja"], ["nein", "Kontaktiert: nein"]];
 export const SORTS = {
@@ -402,6 +431,32 @@ function nextStepHtml(l, acts, ui, today) {
     ${l.status === "kontaktiert" && hasReply(acts) ? `<p class="note" style="margin:4px 0 0">Die Antwort hat die Nachfass-Folge angehalten.</p>` : ""}${edit}`;
 }
 /**
+ * A Kunde's care on its page: who looks after it, its phase, and the onboarding as a checklist. The first open step
+ * has its buttons; a done one can be opened again. Gekündigt shows the steps as they stood. A step without a day
+ * belongs to a customer from before whose care is not stored yet.
+ */
+function customerHtml(state, l, c, today) {
+  const me = state.me?.email;
+  const team = [...new Set([...(state.me?.team || []), c.owner].filter(Boolean))];
+  const owner = `<label class="owner">Betreut von<select id="kOwnerOf">${options([["", "\u2013"], ...team.map((e) => [e, actorName(e) + (e === me ? " (ich)" : "")])], c.owner)}</select></label>`;
+  const phases = `<div class="chips">${PHASES.map(([k, label]) => `<button class="chip${k === "gekuendigt" ? " lostc" : ""}" data-phase="${k}" aria-pressed="${c.phase === k}">${label}</button>`).join("")}</div>`;
+  const cancel = state.ui.cancelPick ? `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Warum gek\xFCndigt?</p><div class="chips">${CANCEL_REASONS.map((r) => `<button class="chip lostc" data-cancel="${esc(r)}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="cancelPickClose">Abbrechen</button></div>` : "";
+  const steps = onboardingOf(c);
+  // The first open step can be ticked in every phase but Gekündigt: a customer from before, live already, ticks its list once.
+  const open = c.phase !== "gekuendigt" ? steps.find((s) => !s.at) : null;
+  const rows = steps.map((s) => {
+    if (s.at) return `<li class="ok"><b>${esc(s.title)}${s.skipped ? " \xB7 entf\xE4llt" : ""}</b><small>${esc(fmtDate(s.at))} \xB7 ${esc(actorName(s.by))}${s.skipped && s.skipped !== "entf\xE4llt" ? " \xB7 " + esc(s.skipped) : ""}</small>${c.phase === "gekuendigt" ? "" : `<button class="more" data-step-undo="${s.id}">Wieder offen</button>`}</li>`;
+    const late = s.due && s.due < today;
+    const when = s.due ? `<small${late ? ' class="late"' : ""}>${late ? "f\xE4llig war " : ""}${esc(fmtDate(s.due))}</small>` : "";
+    if (s === open) return `<li class="now"><b>${esc(s.title)}</b>${when}<div class="two"><button class="primary" data-step="${s.id}">Erledigt</button>${s.id === "live" ? "" : `<button data-skip="${s.id}">Entf\xE4llt \u2026</button>`}</div></li>`;
+    return `<li class="todo"><b>${esc(s.title)}</b>${when}</li>`;
+  }).join("");
+  const where = c.phase === "gekuendigt" ? ` \xB7 ${esc(c.cancelReason)}` : c.phase === "live" && c.liveAt ? ` seit ${esc(fmtDate(c.liveAt))}` : ` \xB7 Tag ${c.since ? Math.max(0, daysBetween(c.since, today)) : 0} von ${ONBOARDING.at(-1)[2]}`;
+  return `<div class="sec cust"><h3>Kunde <small>${esc(PHASE_LABEL[c.phase])}${where}</small></h3>
+    <div class="card">${owner}${phases}</div>${cancel}
+    <h3 style="margin-top:14px">Onboarding <small>${c.steps.length} von ${ONBOARDING.length}</small></h3><ol class="card checks">${rows}</ol></div>`;
+}
+/**
  * The sequence on a wide screen, as a checklist: a row per day we made contact (as countTouches counts them), the
  * answer that stopped it, with what we would have done without it, and the contacts still to come.
  */
@@ -520,13 +575,14 @@ export function detailView(state, today) {
   // closed when a business with an opt-out holds it, except on a Kunde.
   const offersMailto = (email) => !(addressKey(email) === addressKey(l.email) ? closedTo || onlyByGmail : getsUnsubscribeLink(l) && optOutByAddress(state.data.leads, { email }));
   const sub = [l.type, l.city, touchTxt, l.contactedAt ? "seit " + fmtDate(l.contactedAt) : "Nie kontaktiert"].filter(Boolean).map(esc).join(" \xB7 ");
-  const chip = `${esc(STAGE_LABEL[l.status])}${lost ? " \xB7 " + esc(l.lostReason) : ""}`;
+  const customer = l.status === "kunde" ? customerOf(l) : null;
+  const chip = `${esc(STAGE_LABEL[l.status])}${lost ? " \xB7 " + esc(l.lostReason) : ""}${customer ? " \xB7 " + esc(phaseText(customer)) : ""}`;
   const tel = channelLink(l, "Telefon");
   const act = (href, label, attrs = "") => href ? `<a class="btn" href="${esc(href)}"${href.startsWith("tel:") ? "" : ' target="_blank" rel="noopener"'}${attrs}>${label}</a>` : `<a class="btn" aria-disabled="true">${label}</a>`;
   const write = (channel, label, can) => `<button data-compose="${esc(channel)}"${can ? "" : " disabled"}>${label}</button>`;
   // On a phone the row sticks above the tabs; while the composer is open it has its own buttons.
   const actions = ui.compose ? "" : `<div class="acts">${act(l.optOutAt ? "" : tel, "Anrufen", calls ? ' data-act="callOpen"' : "")}${write("E-Mail", "E-Mail", !!l.email)}${write("WhatsApp", "WhatsApp", !l.optOutAt && !!channelLink(l, "WhatsApp"))}${write("Instagram", "Instagram", !l.optOutAt && !!l.instagram)}<button data-compose="in">Eintragen</button></div>`;
-  const filled = QUICK_FIELDS.filter((f) => l[f.key] && f.key !== "fit" && f.key !== "type").map((f) => FIELD_LABEL[f.key]).slice(0, 4).join(", ");
+  const filled = QUICK_FIELDS.filter((f) => l[f.key] && f.key !== "fit" && f.key !== "type" && !(l.status === "kunde" && f.group === "talk")).map((f) => FIELD_LABEL[f.key]).slice(0, 4).join(", ");
   const infoOpen = ui.infoOpen || (ui.editField && ui.editField !== "notes");
   const sheet = calls && ui.termin ? terminHtml(l, ui.termin, today) : calls && (ui.call || ui.round?.list === "calls") ? callHtml(l, acts, ui, today, state.data.templates) : meetingDue(l, today) ? meetingHtml(ui, today) : "";
   const fields = (group) => QUICK_FIELDS.filter((f) => f.group === group).map((f) => quickField(l, f, ui.editField)).join("");
@@ -555,8 +611,8 @@ export function detailView(state, today) {
   ${showsAccount(l) ? accountHtml(l, offersMailto) : ""}
   </aside>
   <div class="l-work">
-  <div class="sec talk"><h3>F\xFCr das Gespr\xE4ch</h3><dl class="card facts qe">${fields("talk")}</dl></div>
-  ${sequenceHtml(l, acts, today)}
+  ${customer ? customerHtml(state, l, customer, today) : `<div class="sec talk"><h3>F\xFCr das Gespr\xE4ch</h3><dl class="card facts qe">${fields("talk")}</dl></div>
+  ${sequenceHtml(l, acts, today)}`}
   </div>
   <div class="l-feed">${feedHtml(state, l, acts, today, clamp)}</div>
 </div>`;

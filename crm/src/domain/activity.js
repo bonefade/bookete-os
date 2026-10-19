@@ -1,5 +1,6 @@
 import { CHANNELS, DIRECTIONS, SEQUENCE_POLICY, OUTCOME_LABEL, SPOKEN_REASONS, OPT_OUT_REASON } from './constants.js';
 import { optOutPatch } from './lead.js';
+import { onboardingNextStep, hasCancelled } from './customer.js';
 import { ValidationError } from './errors.js';
 import { addDays, isDate, dayLabel } from './dates.js';
 
@@ -77,7 +78,8 @@ export function assertMayContact(lead, direction) {
  * stays closed: their message is logged and nothing else changes. Only the newest contact plans what comes next: one
  * that came before another (logged later but dated earlier, or a mail the sync finds late) leaves the plan the later
  * one made. A message from them is to be answered today; the next step "Antworten" it sets ends with the next
- * outgoing contact.
+ * outgoing contact; on a Kunde in onboarding it then goes back to the open step (onboardingNextStep), and a customer
+ * who cancelled gets no follow-up from our contact.
  */
 export function planAfterActivity(lead, acts, activity, today, policy = SEQUENCE_POLICY) {
   const all = [...acts, activity];
@@ -95,6 +97,12 @@ export function planAfterActivity(lead, acts, activity, today, policy = SEQUENCE
       const idx = Math.min(n - 1, policy.cadence.length - 1);
       patch.followUp = addDays(activity.date, policy.cadence[idx]);
       patch.nextStep = "";
+    } else if (onboardingNextStep(lead)) {
+      // A Kunde in onboarding: its open step is its next step again, on its day, also once "Antworten" is answered.
+      Object.assign(patch, onboardingNextStep(lead));
+    } else if (hasCancelled(lead)) {
+      // A customer who cancelled stays out of Heute: our contact plans no follow-up.
+      if (lead.nextStep === "Antworten") patch.nextStep = "";
     } else {
       if (!lead.followUp || lead.followUp <= activity.date) patch.followUp = addDays(activity.date, policy.defaultFollowUpDays);
       // The answer the reply rule asked for went out.

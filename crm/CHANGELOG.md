@@ -2,6 +2,16 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.20.0 (2026-10-19)
+
+- **Kunden, a tab of their own:** every customer with its phase (Onboarding with how far it is, Live, Gekündigt), its next step and who looks after it. Filter by phase and by "Betreut von"; the next step due comes first.
+- **A customer's page shows its care** where a lead's shows the sales work: who looks after it ("Betreut von"), the phase, and the onboarding as a checklist of seven steps, from "Vertrag unterschrieben" to "Live", each due a set number of days after the deal. Tick a step with "Erledigt", or "Entfällt" with a word why; a step ticked by mistake opens again. "Live" ends the onboarding. "Gekündigt" asks for a reason. On a phone the onboarding comes first.
+- **The next step follows the onboarding:** a lead that becomes Kunde gets "Vertrag unterschrieben" for that day as its next step, owned by whoever won it, and each step done moves it to the next one on its day, so a step due shows in Heute. A next step typed with the change to Kunde stays. While in onboarding, a mail from them still asks for "Antworten" today; once you have answered, the open step is the next step again, on its day, so an overdue step stays overdue. A Termin, a Rückruf or a next step you typed stays through any contact. Once Live, ticking a step leaves the next step as you planned it. "Live" itself cannot be left out.
+- **Kunde by mistake:** set back before any step is ticked, the care goes, with the step it planned, so the business shows "Kein nächster Schritt" until you plan one; a real win later starts the onboarding that day.
+- **Gekündigt** customers stay out of Heute: a mail or message to them plans no follow-up.
+- **Customers from before** are Live where the Kundenakte has a service live, else in Onboarding with no step ticked, for you to tick once. Their steps get their days from the day you first change something on them, so nobody is months overdue at once. Nobody looks after them until you pick someone, and only someone of the team can be picked.
+- **Änderungen** shows "Betreuung geändert" for a change to the owner, phase or steps.
+
 ## 1.19.0 (2026-10-19)
 
 - **The lead page on a laptop, new:** the name heads the page with the buttons beside it (E-Mail first), the next step below. Then three columns: on the left "Für das Gespräch" (how they reserve now, the hook, the fit) and the Nachfass-Folge; in the middle the feed; on the right Kontakt and Infos, and the Kundenakte where there is one.

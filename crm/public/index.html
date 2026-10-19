@@ -59,7 +59,7 @@ label>input,label>select,label>textarea{margin-top:4px}
 
 /* tabs: at the bottom on a phone, a rail on the left from tablet width (at the end) */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
-.tabs .in{display:grid;grid-template-columns:repeat(4,1fr);width:100%;max-width:680px}
+.tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:680px}
 .tab{border:none;border-radius:0;background:none;color:var(--muted);flex-direction:column;gap:0;padding:8px 4px 6px;min-height:var(--tabbar);font-size:.8rem;position:relative}
 .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tab[aria-current="page"]{color:var(--pine);font-weight:600}
@@ -282,7 +282,13 @@ button.pill{min-height:36px;border:none;padding:4px 12px}
 .desk{display:none}
 .infos>dl+h3+dl{margin-top:10px}
 /* "Für das Gespräch" belongs to the Infos fold while it folds. */
-@media not all and (min-width:1100px) and (min-height:480px){.l-side:has(.infos:not(.open))+.l-work .talk{display:none}}
+@media not all and (min-width:1100px) and (min-height:480px){
+  .l-side:has(.infos:not(.open))+.l-work .talk{display:none}
+  /* A customer's onboarding comes before its Infos and Kundenakte. */
+  .wrap.lead:has(.cust){display:flex;flex-direction:column}
+  .wrap.lead:has(.cust)>.l-side{order:1}
+  .wrap.lead:has(.cust)>.l-feed{order:2}
+}
 /* the sequence as a checklist: done, the answer that stopped it, still to come */
 .checks{list-style:none;margin:0;padding:4px 14px}
 .checks li{display:grid;grid-template-columns:22px minmax(0,1fr);column-gap:10px;padding:9px 0;border-top:1px solid var(--line)}
@@ -296,6 +302,13 @@ button.pill{min-height:36px;border:none;padding:4px 12px}
 .checks li.todo b{color:var(--muted);font-weight:500}
 .checks .two{margin-top:8px}
 .checks .two button{min-height:36px;padding:6px 10px;font-size:.88rem}
+.checks small.late{color:var(--due);font-weight:600}
+.checks .more{grid-column:2;justify-self:start;padding:0;min-height:0;margin-top:2px}
+/* a customer's care: who looks after it and its phase, above the onboarding */
+.cust .owner{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+.cust .owner select{flex:1;width:auto}
+.q-why.due{color:var(--due);font-weight:600}
+.q-name small{color:var(--muted);font-weight:400}
 /* the feed */
 .feedc{margin-top:22px}
 .chip small{color:inherit;opacity:.7;margin-left:2px}

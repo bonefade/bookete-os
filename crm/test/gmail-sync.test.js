@@ -322,7 +322,7 @@ test("an answer written in Gmail ends \"Antworten\" though a person moved the le
   await s.uc.changeStatus(only, "qualifiziert");
   await s.run();
   const leads = await Promise.all([id, kunde, only].map((x) => s.store.get("leads", x)));
-  assert.deepEqual(leads.map((l) => [l.status, l.followUp, l.nextStep]), [["qualifiziert", "2026-10-25", ""], ["kunde", null, ""], ["qualifiziert", "2026-10-19", ""]]);
+  assert.deepEqual(leads.map((l) => [l.status, l.followUp, l.nextStep]), [["qualifiziert", "2026-10-25", ""], ["kunde", "2026-10-15", "Vertrag unterschrieben"], ["qualifiziert", "2026-10-19", ""]]);
 });
 
 test("a mail sent from the CRM and found again stays on its own entry, not on one entered by hand that day", async () => {

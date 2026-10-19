@@ -2,6 +2,7 @@ import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, planMeeting, mailActivityId, byTimeline, sameMail } from "../domain/activity.js";
 import { normalizeLead, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
+import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isStepTitle } from "../domain/customer.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
@@ -21,8 +22,10 @@ const CALL_FIELDS = ["status", "lostReason", "followUp", "nextStep", "contactedA
 /**
  * `pause(attempt)` waits before the retry after that attempt (retryPause in adapters/system.js, which the Worker passes).
  * Without one, the retry runs at once: still correct, only the writers that collided do not spread out.
+ * `email` is the signed-in user's, who owns a customer they win ("" for a writer who is no user, the unsubscribe link);
+ * `team` the users who may look after a customer (ALLOWED_EMAILS).
  */
-export function createUseCases({ store, clock, ids, actor, mailer = null, pause = async () => {} }) {
+export function createUseCases({ store, clock, ids, actor, email = "", team = [], mailer = null, pause = async () => {} }) {
   /**
    * Read, decide, commit. A write that names its read as `base` fails with ConflictError if someone wrote the
    * record in between; then the whole step runs again on fresh state, after a pause, so writers that collided
@@ -39,6 +42,8 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
     }
   }
   const touch = (patch) => ({ ...patch, updatedAt: clock.now() });
+  // Only someone of the team looks after a customer; an owner from elsewhere (an old backup) is nobody.
+  const teamOwned = (c) => team.includes(c.owner) ? c : { ...c, owner: "" };
   const commit = (ops, unchanged) => store.commit(ops, actor, unchanged);
   /**
    * Every change to a lead's fields goes through here, and every lead addLead creates; only importBackup writes a
@@ -62,9 +67,18 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
       activity ||= newActivityRecord({ leadId: l.id, direction: "in", channel: "Sonstiges", date: today, text: optOutText }, { id: ids.newId(), now: clock.now(), today });
       next = normalizeLead({ ...patch, ...optOutPatch(next.optOutAt, next), contactedAt: firstContactOf([activity], next.contactedAt) }, l, today);
     }
+    // The day a lead first becomes Kunde its care starts, owned by whoever won it; the first onboarding step is
+    // its next step, unless the change gives one (a date or a text). Not after an opt-out, which leaves a Kunde
+    // no follow-up.
+    const customer = next.status === "kunde" && l.status !== "kunde" && !l.customer ? startCustomer(today, email) : null;
+    if (customer && !next.optOutAt && !patch.followUp && !patch.nextStep) next = normalizeLead({ ...next, ...customerPlan(customer) }, l, today);
+    // Kunde set back before any step was done was set by mistake: the care goes, so a real win later starts it anew,
+    // and the step it planned goes too, so the lead shows it has no next step until a person plans one.
+    const dropped = l.status === "kunde" && next.status !== "kunde" && !!l.customer && !normalizeCustomer(l.customer).steps.length;
+    if (dropped && isStepTitle(next.nextStep) && !("nextStep" in patch)) next = normalizeLead({ ...next, followUp: null, nextStep: "" }, l, today);
     const activityOps = activity ? [{ type: "put", collection: "activities", id: activity.id, data: activity, trashed }] : [];
-    if (isNew) return [...activityOps, { type: "put", collection: "leads", id: l.id, data: { ...l, ...next } }];
-    const diff = changed(l, next);
+    if (isNew) return [...activityOps, { type: "put", collection: "leads", id: l.id, data: { ...l, ...next, ...(customer && { customer }) } }];
+    const diff = { ...changed(l, next), ...(customer && { customer }), ...(dropped && { customer: null }) };
     return activity || Object.keys(diff).length ? [...activityOps, patchOp(l, diff)] : [];
   }
   const changed = (l, next) => Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
@@ -211,6 +225,26 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
       return true;
     }),
     logActivity,
+    /**
+     * One change to a Kunde's care (customerAfter): a step, the owner (one of the team) or the phase. Where the change
+     * plans the next step (carePlansNextStep), it is the open step; after an opt-out only its text, as a Kunde then has
+     * no follow-up. A Kunde won before customers were stored gets its care stored with the first change, its steps
+     * counted from that day.
+     */
+    changeCustomer: (id, change) => retrying(async () => {
+      if (change.owner && !team.includes(change.owner)) throw new ValidationError("owner", "Nur jemand aus dem Team kann einen Kunden betreuen");
+      const l = await lead(id);
+      const stored = customerOf(l);
+      if (l.status !== "kunde" || !stored) throw new ValidationError("status", "Nur bei \u201EKunde\u201C");
+      const before = { ...stored, since: stored.since || clock.today() };
+      const customer = customerAfter(before, change, { by: actor, today: clock.today() });
+      const plan = carePlansNextStep(before, customer, change) ? customerPlan(customer) : {};
+      if (l.optOutAt) delete plan.followUp;
+      const diff = { ...changed(l, normalizeLead(plan, l, clock.today())), ...(JSON.stringify(customer) !== JSON.stringify(l.customer && normalizeCustomer(l.customer)) && { customer }) };
+      if (!Object.keys(diff).length) return false;
+      await commit([patchOp(l, diff)]);
+      return true;
+    }),
     /** How an appointment went, on a Qualifiziert lead. */
     meetingOutcome: (id, meeting) => changeLead(id, (l) => meetingPatch(l, meeting, clock.today())),
     /**
@@ -328,7 +362,7 @@ export function createUseCases({ store, clock, ids, actor, mailer = null, pause 
           // The browser upgrades an old backup whole, with its activities (chunkBackup); one chunk alone could not.
           if (!(r.schemaVersion >= SCHEMA_VERSION)) throw new ValidationError("backup", "Format vor 1.4.0 \u2013 bitte die App neu laden und erneut importieren");
           // Normalized against its own status: a record brought back is no status change, so it keeps its wonAt.
-          return { ...normalizeLead(r, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
+          return { ...normalizeLead(r, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
         },
         activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),

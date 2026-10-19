@@ -6,10 +6,11 @@ import { copyText, channelLink, mailSubject, saveFile } from './platform.js';
 import { createBackup } from '../domain/backup.js';
 import { fillTemplate, defaultTemplate, DEFAULT_SCRIPT } from '../domain/template.js';
 import { lastChannel } from '../domain/activity.js';
-import { relDate } from './format.js';
-import { TABS, tabBar, todayView, leadsView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput } from './views.js';
+import { relDate, actorName } from './format.js';
+import { PHASE_LABEL, customerOf } from '../domain/customer.js';
+import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostPick", "lostCancel", "statusMenu", "statusDirect", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostPick", "lostCancel", "cancelPickClose", "statusMenu", "statusDirect", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -57,7 +58,7 @@ const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField 
  */
 export function enterRoute(ui, route) {
   const sameLead = LEAD_VIEWS.has(route.view) && LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
-  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, call: null, termin: null, meeting: null, editField: null, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false }) };
+  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, cancelPick: false, call: null, termin: null, meeting: null, editField: null, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false }) };
   if (route.view) return next;
   return { ...next, round: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
 }
@@ -186,7 +187,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
     searchEl.disabled = holdsInput(st.ui);
     drawSearch(st);
-    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, betriebe: leadsView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
+    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, betriebe: leadsView, kunden: kundenView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     // The tabs show on every screen; while a form holds input they are shut, as the search field is, so nothing typed is lost.
     tabsEl.innerHTML = tabBar(st, today, holdsInput(st.ui));
     if (view === "detail") loadHistory(st);
@@ -622,6 +623,10 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ lostPick: true, statusMenu: false });
       render();
     },
+    cancelPickClose: () => {
+      ui({ cancelPick: false });
+      render();
+    },
     lostCancel: () => {
       ui({ lostPick: false });
       render();
@@ -748,7 +753,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const a = st.data.activities.find((x) => x.id === d.copy);
       return toast(a && copyText(a.text) ? "Kopiert" : "Kopieren nicht m\xF6glich");
     }
-    const writes = d.status || d.lost || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.act && !UI_ONLY_ACTIONS.has(d.act);
+    const writes = d.status || d.lost || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.step || d.stepUndo || d.skip || d.cancel || d.phase && d.phase !== "gekuendigt" || d.act && !UI_ONLY_ACTIONS.has(d.act);
     if (writes && !uc) return toast("Keine Verbindung zur Datenbank");
     if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash(st.ui.trashBefore);
     if (d.purge) {
@@ -773,6 +778,26 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       if (d.lost === OPT_OUT_REASON && !lead.optOutAt && !confirmOptOut(lead)) return;
       ui({ lostPick: false });
       return run(() => pickLostReason(uc, lead, d.lost), lead.status === "disqualifiziert" ? "Grund gespeichert" : "Status: " + STAGE_LABEL.disqualifiziert);
+    }
+    // A Kunde's care: a step done, open again or skipped; the phase, Gekündigt with its reason.
+    if (d.step) return run(() => uc.changeCustomer(lead, { step: d.step }), "Erledigt");
+    if (d.stepUndo) return run(() => uc.changeCustomer(lead, { step: d.stepUndo, done: false }), "Wieder offen");
+    if (d.skip) {
+      const why = prompt("Warum entf\xE4llt der Schritt? (optional)");
+      return why === null ? undefined : run(() => uc.changeCustomer(lead, { step: d.skip, skip: why }), "Entf\xE4llt");
+    }
+    if (d.phase) {
+      // The phase it has already changes nothing, as the status chip does.
+      if (d.phase === customerOf(lead)?.phase) return;
+      if (d.phase === "gekuendigt") {
+        ui({ cancelPick: true });
+        return render();
+      }
+      return run(() => uc.changeCustomer(lead, { phase: d.phase }), "Phase: " + PHASE_LABEL[d.phase]);
+    }
+    if (d.cancel) {
+      ui({ cancelPick: false });
+      return run(() => uc.changeCustomer(lead, { phase: "gekuendigt", reason: d.cancel }), "Gek\xFCndigt");
     }
     // Every outcome is picked first, Nicht erreicht too, so the sheet shows what saving does before it is saved.
     if (d.call) return sheet("call", { outcome: d.call });
@@ -841,6 +866,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (AGREED_FIELDS[t.id] && st.ui[outcomeKey] && t.id !== "agNote") return sheet(outcomeKey, { [AGREED_FIELDS[t.id]]: t.value.trim() });
     if (t.id === "laterDate" && t.value) return postpone(t.value);
     if (t.id === "qe" && t.tagName === "SELECT") return saveQuickEdit();
+    if (t.id === "kOwnerOf") return run(() => uc.changeCustomer(lead, { owner: t.value }), t.value ? "Betreut von " + actorName(t.value) : "Niemand betreut");
     if (t.dataset.filter) {
       ui({ [t.dataset.filter]: t.value });
       return render();

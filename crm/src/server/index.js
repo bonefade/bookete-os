@@ -32,7 +32,7 @@ const html = (body, headers = new Headers(), status = 200) => {
 async function context(env, config, user, via) {
   const store = createStore(env.DB);
   const mailer = await createMailer(config, user);
-  return { store, clock: systemClock, uc: createUseCases({ store, clock: systemClock, ids: uuidIds, pause: retryPause, actor: `${user.email} (${via})`, mailer }) };
+  return { store, clock: systemClock, uc: createUseCases({ store, clock: systemClock, ids: uuidIds, pause: retryPause, actor: `${user.email} (${via})`, email: user.email, team: config.ALLOWED_EMAILS, mailer }) };
 }
 
 async function rpc(request, env, config, user, name) {
@@ -155,7 +155,7 @@ async function app(request, env, config) {
   if (url.pathname === "/authorize") return user ? authorize(request, env, config, user) : Response.redirect(`${config.PUBLIC_URL}/auth/login?next=${encodeURIComponent(url.pathname + url.search)}`, 302);
   if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
   if (!user) return Response.json({ error: "Nicht angemeldet" }, { status: 401 });
-  if (route === "GET /api/me") return Response.json({ email: user.email, name: user.name, gmail: !!user.refreshToken, caps: { gmailRead: canReadGmail(user) }, version: pkg.version });
+  if (route === "GET /api/me") return Response.json({ email: user.email, name: user.name, gmail: !!user.refreshToken, caps: { gmailRead: canReadGmail(user) }, team: config.ALLOWED_EMAILS, version: pkg.version });
   if (route === "GET /api/sync") return Response.json(await createStore(env.DB).changes(Math.max(0, parseInt(url.searchParams.get("since"), 10) || 0)));
   if (route === "GET /api/history") {
     const query = LeadQuery.safeParse(Object.fromEntries(url.searchParams));
