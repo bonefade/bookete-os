@@ -4,6 +4,7 @@ import { IMPORT_CHUNK } from "../domain/backup.js";
 import { STAGES, LOST_REASONS, SPOKEN_REASONS, CALL_OUTCOMES } from "../domain/constants.js";
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
 import { ONBOARDING, PHASES, CANCEL_REASONS, CHECK_IN_RESULTS } from "../domain/customer.js";
+import { NOTE_MAX } from "../domain/notes.js";
 
 const id = z.string().min(1).max(100);
 const text = z.string().max(20000);
@@ -30,7 +31,7 @@ const ActivityInput = z.object({ direction: z.enum(["out", "in"]), channel: z.st
 // One call, or one appointment, and how it ended; callActivity and meetingPatch refuse a field the outcome does not take.
 const time = z.string().regex(/^\d{2}:\d{2}$/);
 const SpokenReason = z.enum(SPOKEN_REASONS);
-export const CallInput = z.object({ outcome: z.enum(CALL_OUTCOMES.map(([k]) => k)), date: date.optional(), time: time.optional(), reason: SpokenReason.optional(), note: z.string().max(2000).optional() }).strict();
+export const CallInput = z.object({ outcome: z.enum(CALL_OUTCOMES.map(([k]) => k)), day: date.optional(), date: date.optional(), time: time.optional(), reason: SpokenReason.optional(), note: z.string().max(2000).optional() }).strict();
 export const MeetingInput = z.object({ id, result: z.enum(["kunde", "kein-abschluss", "neuer-termin"]), reason: SpokenReason.optional(), date: date.optional(), time: time.optional() }).strict();
 // One change to a customer's care: a step done, open again or skipped; the owner ("" for none); the phase; or a check-in.
 const CustomerChange = z.union([
@@ -46,6 +47,12 @@ const TodoChange = z.union([
   z.object({ id, todo: id, done: z.boolean() }).strict(),
   z.object({ id, todo: id, text: z.string().min(1).max(300).optional(), due: dueDay.optional() }).strict().refine((c) => "text" in c || "due" in c, "Text oder Datum"),
   z.object({ id, todo: id, remove: z.literal(true) }).strict(),
+]);
+// One change to a business's notes: a new one, its text, or gone.
+const NoteChange = z.union([
+  z.object({ id, add: z.string().min(1).max(NOTE_MAX) }).strict(),
+  z.object({ id, note: id, text: z.string().min(1).max(NOTE_MAX) }).strict(),
+  z.object({ id, note: id, remove: z.literal(true) }).strict(),
 ]);
 const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish(), replyTo: id.nullish(), signed: z.boolean().optional() });
 
@@ -69,7 +76,9 @@ export const COMMANDS = {
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],
   setFollowUp: [z.object({ id, date: z.union([date, z.literal("")]).nullable() }), (uc, a) => uc.setFollowUp(a.id, a.date)],
   setNextStep: [z.object({ id, text: z.string().max(500) }), (uc, a) => uc.setNextStep(a.id, a.text)],
-  addNote: [z.object({ id, text: text.min(1) }), (uc, a) => uc.addNote(a.id, a.text)],
+  changeNote: [NoteChange, (uc, { id: leadId, ...change }) => uc.changeNote(leadId, change)],
+  // A page of 1.24.0 still open adds a note so; one more note, as changeNote's add.
+  addNote: [z.object({ id, text: z.string().min(1).max(NOTE_MAX) }).strict(), (uc, a) => uc.changeNote(a.id, { add: a.text })],
   logActivity: [z.object({ id, input: ActivityInput }), (uc, a) => uc.logActivity(a.id, a.input)],
   optOut: [z.object({ id, note: z.string().max(1000).optional() }), (uc, a) => uc.optOut(a.id, a.note)],
   clearOptOut: [z.object({ id }), (uc, a) => uc.clearOptOut(a.id)],

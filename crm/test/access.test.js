@@ -13,7 +13,7 @@ import { systemClock } from "../src/adapters/system.js";
 
 // The authorization walk: every command and API route, called without a valid session, is refused
 // before its input is read. The exact list makes each new command a conscious addition to this walk.
-const RPC = ["addLead", "updateLead", "updateField", "deleteLead", "restoreLead", "purgeLead", "changeStatus", "setLostReason", "closeWithoutReply", "setFollowUp", "setNextStep", "logActivity", "logCall", "meetingOutcome", "optOut", "clearOptOut", "saveTemplate", "deleteTemplate", "saveIcp", "saveAccount", "sendEmail", "importBackup", "undoCall", "addNote", "signature", "scheduleMeeting", "changeCustomer", "changeTodo"];
+const RPC = ["addLead", "updateLead", "updateField", "deleteLead", "restoreLead", "purgeLead", "changeStatus", "setLostReason", "closeWithoutReply", "setFollowUp", "setNextStep", "logActivity", "logCall", "meetingOutcome", "optOut", "clearOptOut", "saveTemplate", "deleteTemplate", "saveIcp", "saveAccount", "sendEmail", "importBackup", "undoCall", "changeNote", "addNote", "signature", "scheduleMeeting", "changeCustomer", "changeTodo"];
 
 const kv = () => {
   const m = new Map();

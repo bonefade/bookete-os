@@ -121,6 +121,12 @@ export function createStore(db) {
         AND lower(trim(json_extract(data, '$.email'))) = lower(trim(?)) ORDER BY deleted, seq DESC LIMIT 1`, email);
       return row ? { lead: toRecord("leads", row), trashed: !!row.deleted } : null;
     },
+    /** The reservation systems the leads have, live or in the trash, each once, the most used first. */
+    async toolNames() {
+      // The spelling most leads have comes first, then by name, so a name in two spellings is always matched to the same one.
+      const rows = await many("SELECT json_extract(data, '$.currentTool') AS tool FROM docs WHERE collection = 'leads' GROUP BY tool ORDER BY count(*) DESC, tool");
+      return rows.map((row) => row.tool).filter((tool) => typeof tool === "string" && tool);
+    },
     /** The addresses every lead with an opt-out holds, live or in the trash, compared as optOutByAddress compares them. */
     async closedAddresses() {
       const rows = await many("SELECT lower(trim(json_extract(data, '$.email'))) AS email FROM docs WHERE collection = 'leads' AND json_extract(data, '$.optOutAt') IS NOT NULL");

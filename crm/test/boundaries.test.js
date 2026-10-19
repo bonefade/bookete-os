@@ -86,7 +86,7 @@ test("search_leads answers pages of short summaries, in the same order on every 
   assert.deepEqual((await search({ dueOnly: true })).leads.map((l) => [l.name, l.due]), [["Zum Hirschen", true]]);
   assert.match(await search({ limit: 51 }), /limit/);
   const full = await call(context, "tools/call", { name: "get_lead", arguments: { id: ids["Brauhaus"] } });
-  assert.equal(JSON.parse(full.result.content[0].text).lead.notes, "x".repeat(2000));
+  assert.deepEqual(JSON.parse(full.result.content[0].text).lead.notes.map((n) => n.text), ["x".repeat(2000)]);
 });
 
 test("search_leads pages two businesses of the same name by id, whatever order the store reads them in", async () => {

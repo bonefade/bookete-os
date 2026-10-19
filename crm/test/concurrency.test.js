@@ -73,7 +73,7 @@ test("a form save racing another user's edit runs again on fresh data and keeps 
   await a.updateLead(id, { notes: "Will eine Demo" });
   const lead = await store.get("leads", id);
   assert.equal(lead.phone, "0664 2");
-  assert.equal(lead.notes, "Will eine Demo");
+  assert.deepEqual(lead.noteEntries.map((n) => n.text), ["Will eine Demo"]);
 });
 
 test("a Kundenakte save racing another write runs again on fresh data: other fields are kept, a changed Kundenakte refuses it", async () => {
@@ -82,7 +82,7 @@ test("a Kundenakte save racing another write runs again on fresh data: other fie
   between(() => b.updateField(id, "notes", "Will eine Website"));
   assert.equal(await a.saveAccount(id, { systems: { domain: { what: "krone.at" } } }, {}), true);
   const lead = await store.get("leads", id);
-  assert.deepEqual([lead.notes, lead.account.systems.domain.what], ["Will eine Website", "krone.at"]);
+  assert.deepEqual([lead.noteEntries.map((n) => n.text), lead.account.systems.domain.what], [["Will eine Website"], "krone.at"]);
   between(() => b.saveAccount(id, { contacts: [{ name: "Anna" }] }, lead.account));
   await assert.rejects(a.saveAccount(id, { contacts: [{ name: "Max" }] }, lead.account), (e) => e instanceof ValidationError && e.field === "account");
   assert.deepEqual((await store.get("leads", id)).account.contacts.map((c) => c.name), ["Anna"]);
@@ -247,4 +247,12 @@ test("the store refuses a change to an existing record that does not name the re
     await assert.rejects(store.commit([{ type, collection: "leads", id, data: { notes: "x" } }], "test"), /base/);
   }
   assert.equal((await store.get("leads", id)).notes, "");
+});
+
+test("two notes written at the same time are both kept: the second write runs again on the notes the first left", async () => {
+  const { store, a, b, between } = twoUsers();
+  const id = await b.addLead({ name: "Gasthaus Krone" });
+  between(() => b.changeNote(id, { add: "Von Michael" }));
+  assert.equal(await a.changeNote(id, { add: "Von Jo" }), true);
+  assert.deepEqual((await store.get("leads", id)).noteEntries.map((n) => n.text).sort(), ["Von Jo", "Von Michael"]);
 });

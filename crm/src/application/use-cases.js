@@ -1,13 +1,13 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, planMeeting, mailActivityId, byTimeline, sameMail, hasSpoken } from "../domain/activity.js";
-import { normalizeLead, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
+import { normalizeLead, toolName, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
 import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isCareStep, careFromToday } from "../domain/customer.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
 import { normalizeTodos, todosOf, todosAfter } from "../domain/todos.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
-import { dayLabel } from "../domain/dates.js";
+import { notesAfter, normalizeEntries } from "../domain/notes.js";
 
 /**
  * The only write path. The web app (RPC) and agents (MCP) both call these,
@@ -65,6 +65,14 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
    */
   function leadOps(l, patch, { activity = null, optOutText = OPT_OUT_TEXT, trashed = false, isNew = false } = {}) {
     const today = clock.today();
+    // Notes given as text (an agent's update_lead or create_lead, the new-lead form) are one more note by whoever
+    // writes, never a rewrite of the notes there are; none given (null, empty) changes none.
+    let noteEntries = null;
+    if ("notes" in patch) {
+      const { notes: text, ...rest } = patch;
+      patch = rest;
+      if (typeof text === "string" && text.trim()) ({ noteEntries } = notesAfter(l, { add: text }, noteContext()));
+    }
     let next = normalizeLead(patch, l, today);
     if (next.optOutAt && !l.optOutAt) {
       activity ||= newActivityRecord({ leadId: l.id, direction: "in", channel: "Sonstiges", date: today, text: optOutText }, { id: ids.newId(), now: clock.now(), today });
@@ -80,10 +88,13 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
     const dropped = l.status === "kunde" && next.status !== "kunde" && !!l.customer && !normalizeCustomer(l.customer).steps.length;
     if (dropped && isCareStep(next.nextStep) && !("nextStep" in patch)) next = normalizeLead({ ...next, followUp: null, nextStep: "" }, l, today);
     const activityOps = activity ? [{ type: "put", collection: "activities", id: activity.id, data: activity, trashed }] : [];
-    if (isNew) return [...activityOps, { type: "put", collection: "leads", id: l.id, data: { ...l, ...next, ...(customer && { customer }) } }];
-    const diff = { ...changed(l, next), ...(customer && { customer }), ...(dropped && { customer: null }) };
+    if (isNew) return [...activityOps, { type: "put", collection: "leads", id: l.id, data: { ...l, ...next, ...(customer && { customer }), ...(noteEntries && { noteEntries }) } }];
+    const diff = { ...changed(l, next), ...(customer && { customer }), ...(dropped && { customer: null }), ...(noteEntries && { noteEntries }) };
     return activity || Object.keys(diff).length ? [...activityOps, patchOp(l, diff)] : [];
   }
+  /** A reservation system typed as one a lead has already, whatever the case, is written as that one is spelled. */
+  const knownTool = async (patch) => typeof patch.currentTool === "string" ? { ...patch, currentTool: toolName(patch.currentTool, await store.toolNames()) } : patch;
+  const noteContext = () => ({ today: clock.today(), now: clock.now(), by: email, newId: ids.newId });
   const changed = (l, next) => Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
   // `l` itself is the base: its version symbol is not copied by a spread.
   const patchOp = (l, diff) => ({ type: "patch", collection: "leads", id: l.id, base: l, data: touch(diff) });
@@ -94,7 +105,7 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
    */
   const changeLead = (id, compute) => retrying(async () => {
     const l = await lead(id);
-    let patch = compute(l);
+    let patch = await knownTool(compute(l));
     // Spoken with, the first contact stays whatever the patch says, so normalizeLead refuses Neu.
     if (patch.status === "neu" && l.status !== "neu" && l.contactedAt) patch = triedOnly(l, await store.activitiesOf(id)) ? { ...patch, contactedAt: null, followUp: null, nextStep: "" } : { ...patch, contactedAt: l.contactedAt };
     const ops = leadOps(l, patch);
@@ -184,7 +195,7 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
     async addLead(input) {
       const now = clock.now();
       const empty = { id: ids.newId(), schemaVersion: SCHEMA_VERSION, ...LEAD_FIELDS, createdAt: now, updatedAt: now };
-      await commit(leadOps(empty, input, { isNew: true }));
+      await commit(leadOps(empty, await knownTool(input), { isNew: true }));
       return empty.id;
     },
     /** Inline quick edit of a single field; same validation as the full form. */
@@ -220,12 +231,17 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
     closeWithoutReply: (id) => changeLead(id, () => transition("disqualifiziert", "Nicht erreicht")),
     setFollowUp: (id, date) => changeLead(id, (l) => followUpPatch(l, date)),
     setNextStep: (id, text) => changeLead(id, () => ({ nextStep: String(text || "").trim() })),
-    /** A note, no contact: dated, below what Notizen holds now, so a note written meanwhile stays. */
-    addNote: async (id, text) => {
-      const note = String(text).trim();
-      if (!note) throw new ValidationError("text", "Die Notiz ist leer");
-      return changeLead(id, (l) => ({ notes: [l.notes, `${dayLabel(clock.today())}: ${note}`].filter(Boolean).join("\n\n") }));
-    },
+    /**
+     * One change to a lead's notes (notesAfter): a new one, by whoever writes, today; its text; or gone. From the notes
+     * as they are now, so a note written meanwhile stays. Says whether anything changed.
+     */
+    changeNote: (id, change) => retrying(async () => {
+      const l = await lead(id);
+      const patch = notesAfter(l, change, noteContext());
+      if (!patch) return false;
+      await commit([patchOp(l, patch)]);
+      return true;
+    }),
     /**
      * Changes the given parts of a lead's Kundenakte. `before` is the Kundenakte as a form or an agent read it ({} for
      * none): if it changed since, nothing is saved, so a writer can never undo someone else's entry. Both sides are
@@ -386,12 +402,13 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
     async importBackup(backup) {
       if (backup?.format !== BACKUP_FORMAT) throw new ValidationError("backup", "Keine bookete-CRM-Sicherung");
       const now = clock.now();
+      const tools = await store.toolNames();
       const normalize = {
         leads: (r) => {
           // The browser upgrades an old backup whole, with its activities (chunkBackup); one chunk alone could not.
           if (!(r.schemaVersion >= SCHEMA_VERSION)) throw new ValidationError("backup", "Format vor 1.4.0 \u2013 bitte die App neu laden und erneut importieren");
           // Normalized against its own status: a record brought back is no status change, so it keeps its wonAt.
-          return { ...normalizeLead(r, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
+          return { ...normalizeLead({ ...r, currentTool: toolName(r.currentTool, tools) }, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), ...(r.noteEntries && { noteEntries: normalizeEntries(r.noteEntries) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
         },
         activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),

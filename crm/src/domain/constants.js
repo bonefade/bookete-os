@@ -8,7 +8,7 @@ export const STAGES = [
 ];
 export const STAGE_LABEL = Object.fromEntries(STAGES);
 /** How the app names a lead's fields: in forms, on the lead page, in list headers and filters, search and the Änderungen list. */
-export const FIELD_LABEL = { name: "Name", city: "Ort", type: "Art", region: "Region", status: "Status", fit: "ICP-Fit", instagram: "Instagram", phone: "Telefon", email: "E-Mail", website: "Website", person: "Ansprechperson", currentTool: "Reserviert aktuell \xFCber", hook: "Aufh\xE4nger", notes: "Notizen", nextStep: "N\xE4chster Schritt", followUp: "Nachfassen am", lostReason: "Grund", optOutAt: "Opt-out seit", contactedAt: "Erstkontakt", account: "Kundenakte", customer: "Betreuung", todos: "Todos" };
+export const FIELD_LABEL = { name: "Name", city: "Ort", type: "Art", region: "Region", status: "Status", fit: "ICP-Fit", instagram: "Instagram", phone: "Telefon", email: "E-Mail", website: "Website", person: "Ansprechperson", currentTool: "Reserviert aktuell \xFCber", hook: "Aufh\xE4nger", notes: "Notizen", nextStep: "N\xE4chster Schritt", followUp: "Nachfassen am", lostReason: "Grund", optOutAt: "Opt-out seit", contactedAt: "Erstkontakt", account: "Kundenakte", customer: "Betreuung", todos: "Todos", noteEntries: "Notizen" };
 export const STATUSES = new Set(STAGES.map(([k]) => k));
 /** Still being worked towards a deal. */
 export const PIPELINE_STATUSES = new Set(["neu", "kontaktiert", "qualifiziert"]);
@@ -18,6 +18,7 @@ export const LOST_REASONS = ["Zufrieden mit aktueller L\xF6sung", "Kein Bedarf",
 // After a conversation with them, "Nicht erreicht" is no reason.
 export const SPOKEN_REASONS = LOST_REASONS.filter((r) => r !== "Nicht erreicht");
 export const BUSINESS_TYPES = ["Gasthaus", "Restaurant", "Caf\xE9", "Bar", "Heuriger / Buschenschank", "Hotel-Restaurant", "Sonstiges"];
+/** The reservation systems offered first; any other name may be typed (toolName). */
 export const RESERVATION_TOOLS = ["unbekannt", "nur Telefon", "Telefon + E-Mail", "Quandoo", "OpenTable", "TheFork", "resmio", "Teburio", "Molzait", "aleno", "Zenchef", "DISH", "anderes Tool", "keine Reservierungen"];
 export const CHANNELS = ["Instagram", "E-Mail", "WhatsApp", "Telefon", "Vor Ort", "LinkedIn"];
 export const DIRECTIONS = new Set(["out", "in"]);

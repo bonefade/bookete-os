@@ -2,6 +2,14 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.25.0 (2026-10-19)
+
+- **Notes are entries:** each note is a card in the timeline, with who wrote it and when, among the calls and mails, newest first. Write one in the box on top of the timeline. "Bearbeiten" changes it, "Löschen" deletes it after asking. The "Notizen" chip shows only the notes. The notes text from before shows split: every paragraph that starts with a day ("19.10.2026: …") is a note of that day, and the others together one note "Bisherige Notizen". Nothing is cut or lost; the text itself stays as it was until you change one of its notes. Notes an agent writes are added as a new note too, never replacing the others.
+- **"Eintragen" is a menu** that says what each entry records: "Antwort von ihnen" (by mail, phone or message), "Besuch vor Ort", "Anruf" (today or an earlier day) and "Termin" (agreed by mail, phone or in person). Each opens its own form. On a phone the menu opens right above the buttons, and the form comes into view with its title; on a laptop the page stays where it is. The composer no longer has the mode chips: it either writes to them or enters their answer, and says which.
+- **A call on an earlier day:** the call sheet has a day, today unless you pick one. Agents can give it too. A missed call or a no entered for a day before a later contact leaves that contact's plan as it is; a Rückruf or Termin agreed in it is planned all the same.
+- **A visit** shows in the timeline as "Besuch vor Ort", not as "Gesendet".
+- **Any reservation system:** type it under "Reservierungssystem", with suggestions. The usual ones come first, then every system a lead already has. A new one, such as Respilot, is saved as typed and from then on is suggested and shows in the System filter. A name already known is saved as it is spelled there, whatever the case, also when an agent writes it. Agents can name any system too; before, a name not on the list became "unbekannt".
+
 ## 1.24.0 (2026-10-19)
 
 - **Kontaktiert means you spoke with them:** a visit, a call that got through, or an answer from them. A mail, a DM or a call nobody picked up is an attempt: it shows in the feed, but the lead stays Neu and gets no date, so it doesn't fill Heute. The lead page says when it was last tried ("Nie gesprochen, angeschrieben am …"). The composer says so too before you send to a new lead.

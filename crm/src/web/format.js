@@ -34,8 +34,9 @@ export function describeChange(entry) {
   if (!entry.before) return ["Angelegt"];
   if (entry.deleted && !entry.wasDeleted) return ["In den Papierkorb gelegt"];
   if (!entry.deleted && entry.wasDeleted) return ["Wiederhergestellt"];
-  return Object.keys(FIELD_LABEL).filter((k) => JSON.stringify(entry.before[k] ?? null) !== JSON.stringify(entry.after[k] ?? null))
-    .map((k) => k === "account" ? "Kundenakte ge\xE4ndert" : k === "customer" ? "Betreuung ge\xE4ndert" : k === "todos" ? "Todos ge\xE4ndert" : `${FIELD_LABEL[k]}: ${shown(k, entry.before[k])} \u2192 ${shown(k, entry.after[k])}`);
+  // The notes text and the notes list, changed together when a note of the text is changed, read as one line.
+  return [...new Set(Object.keys(FIELD_LABEL).filter((k) => JSON.stringify(entry.before[k] ?? null) !== JSON.stringify(entry.after[k] ?? null))
+    .map((k) => k === "account" ? "Kundenakte ge\xE4ndert" : k === "customer" ? "Betreuung ge\xE4ndert" : k === "todos" ? "Todos ge\xE4ndert" : k === "notes" || k === "noteEntries" ? "Notizen ge\xE4ndert" : `${FIELD_LABEL[k]}: ${shown(k, entry.before[k])} \u2192 ${shown(k, entry.after[k])}`))];
 }
 /** The status move of a history entry, for the lead's feed: "Status Neu → Kontaktiert", "Angelegt", or "" for none. */
 export function statusMove(entry) {

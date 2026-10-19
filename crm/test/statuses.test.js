@@ -6,10 +6,11 @@ import { createUseCases } from "../src/application/use-cases.js";
 import { COMMANDS } from "../src/server/commands.js";
 import { handleMcp } from "../src/server/mcp.js";
 import { ValidationError } from "../src/domain/errors.js";
-import { upgradeLead, isDue } from "../src/domain/lead.js";
+import { upgradeLead, isDue, toolName } from "../src/domain/lead.js";
 import { sequenceExhausted, nextActionHint, planAfterActivity } from "../src/domain/activity.js";
-import { STAGES, LOST_REASONS } from "../src/domain/constants.js";
-import { chunkBackup } from "../src/domain/backup.js";
+import { STAGES, LOST_REASONS, SCHEMA_VERSION } from "../src/domain/constants.js";
+import { chunkBackup, BACKUP_FORMAT } from "../src/domain/backup.js";
+import { LEAD_FIELDS } from "../src/domain/lead.js";
 
 const clock = { today: () => "2026-10-15", now: () => "2026-10-15T10:00:00.000Z" };
 function setup() {
@@ -421,4 +422,33 @@ test("a Neu lead has no date, on every write path; a closed lead written to plan
   // A disqualified lead written to: no date, no next step changed, the status stays.
   const closed = { ...(await store.get("leads", id)), status: "disqualifiziert", lostReason: "Kein Bedarf", followUp: null, nextStep: "Antworten" };
   assert.deepEqual(planAfterActivity(closed, [], { direction: "out", channel: "E-Mail", date: "2026-10-15", createdAt: "2026-10-15T10:00:00.000Z" }, "2026-10-15"), {});
+});
+
+test("a reservation system is one of the usual, spelled as there, or any other name typed; none is unbekannt", async () => {
+  assert.deepEqual(["quandoo", "  Respilot ", "", null, "anderes tool"].map((t) => toolName(t)), ["Quandoo", "Respilot", "unbekannt", "unbekannt", "anderes Tool"]);
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Wok Sushi Star" });
+  const viaMcp = await mcp({ store, clock, uc }, "update_lead", { id, fields: { currentTool: "Respilot" } });
+  assert.ok(!viaMcp.isError, JSON.stringify(viaMcp));
+  assert.equal((await store.get("leads", id)).currentTool, "Respilot");
+  // A system another lead has already, typed in another case, on every write path: as that one is spelled.
+  const other = await uc.addLead({ name: "Sushi", currentTool: "RESPILOT" });
+  assert.equal((await store.get("leads", other)).currentTool, "Respilot");
+  await mcp({ store, clock, uc }, "update_lead", { id: other, fields: { currentTool: "respilot " } });
+  assert.equal((await store.get("leads", other)).currentTool, "Respilot");
+  await uc.updateField(other, "currentTool", "Tablein");
+  assert.equal((await store.get("leads", other)).currentTool, "Tablein");
+  await uc.updateLead(id, { currentTool: "tablein" });
+  assert.equal((await store.get("leads", id)).currentTool, "Tablein");
+  // A backup's lead is matched too.
+  await uc.importBackup({ format: BACKUP_FORMAT, data: { leads: [{ ...LEAD_FIELDS, schemaVersion: SCHEMA_VERSION, id: "B1", name: "Alt", currentTool: "TABLEIN" }] } });
+  assert.equal((await store.get("leads", "B1")).currentTool, "Tablein");
+  // Two spellings stored already (from before): the one most leads have wins, always the same.
+  for (const name of ["Eins", "Zwei"]) {
+    const l = await store.get("leads", await uc.addLead({ name }));
+    await store.commit([{ type: "patch", collection: "leads", id: l.id, base: l, data: { currentTool: "Zenbook" } }], "test");
+  }
+  const three = await store.get("leads", await uc.addLead({ name: "Drei" }));
+  await store.commit([{ type: "patch", collection: "leads", id: three.id, base: three, data: { currentTool: "zenbook" } }], "test");
+  assert.equal((await store.get("leads", await uc.addLead({ name: "Vier", currentTool: "ZENBOOK" }))).currentTool, "Zenbook");
 });

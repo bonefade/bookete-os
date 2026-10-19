@@ -1,5 +1,5 @@
-import { STAGES, STAGE_LABEL, OPT_OUT_REASON, LOST_REASONS, SPOKEN_REASONS, BUSINESS_TYPES, RESERVATION_TOOLS, CHANNELS, TEMPLATE_PURPOSES, PURPOSE_LABEL, SEQUENCE_POLICY, CALL_OUTCOMES, OUTCOME_LABEL, TRASH_SHOWN, FIELD_LABEL } from '../domain/constants.js';
-import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, dueByTodo, regionCounts, toolCounts, contactCounts, callList, freshLeads, awaitsAnswer, todayQueue, queueList, roundList } from './selectors.js';
+import { STAGES, STAGE_LABEL, OPT_OUT_REASON, LOST_REASONS, SPOKEN_REASONS, BUSINESS_TYPES, CHANNELS, TEMPLATE_PURPOSES, PURPOSE_LABEL, SEQUENCE_POLICY, CALL_OUTCOMES, OUTCOME_LABEL, TRASH_SHOWN, FIELD_LABEL } from '../domain/constants.js';
+import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, knownTools, dueByTodo, regionCounts, toolCounts, contactCounts, callList, freshLeads, awaitsAnswer, todayQueue, queueList, roundList } from './selectors.js';
 import { addDays, dayLabel, daysBetween, toDateString } from '../domain/dates.js';
 import { channelLink } from './platform.js';
 import { countTouches, hasSpoken, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting, byTimeline } from '../domain/activity.js';
@@ -12,6 +12,7 @@ import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
 import { todosOf } from '../domain/todos.js';
+import { notesOf } from '../domain/notes.js';
 import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, onboardingOf, attentionOf } from '../domain/customer.js';
 
 export const ICONS = {
@@ -295,7 +296,7 @@ export const QUICK_FIELDS = [
   { key: "person", group: "contact" },
   { key: "email", type: "email", group: "contact" },
   { key: "phone", type: "tel", group: "contact" },
-  { key: "currentTool", options: () => RESERVATION_TOOLS, group: "talk" },
+  { key: "currentTool", list: "tools", group: "talk" },
   { key: "hook", group: "talk" },
   { key: "fit", options: () => [[3, "★★★ sehr gut"], [2, "★★ passt"], [1, "★ fraglich"]], show: (l) => "★".repeat(l.fit || 2), group: "talk" },
   { key: "website", type: "url", group: "contact" },
@@ -308,12 +309,14 @@ export function quickField(l, f, editing, draft = null) {
   const raw = l[f.key] ?? "";
   if (editing === f.key) {
     const value = draft ? draft.value : raw;
-    const input = f.options ? `<select id="qe" data-field="${f.key}">${options(f.options(), value)}</select>` : `<input id="qe" data-field="${f.key}" type="${f.type || "text"}" value="${esc(value)}" autocomplete="off">`;
+    const input = f.options ? `<select id="qe" data-field="${f.key}">${options(f.options(), value)}</select>` : `<input id="qe" data-field="${f.key}" type="${f.type || "text"}" value="${esc(value)}" autocomplete="off"${f.list ? ` list="${f.list}"` : ""}>`;
     return `<div class="fact editing"><dt>${FIELD_LABEL[f.key]}</dt><dd>${input}${changedMeanwhile(l, f.key, draft)}<div class="qe-actions"><button data-act="qeCancel">Abbrechen</button><button class="primary" data-act="qeSave">Speichern</button></div></dd></div>`;
   }
   const shown = f.show ? f.show(l) : raw;
   return `<div class="fact qe-click" data-edit="${f.key}" role="button" tabindex="0"><dt>${FIELD_LABEL[f.key]}</dt><dd>${shown ? esc(shown) : `<span class="qe-empty">+ hinzuf\xFCgen</span>`}</dd></div>`;
 }
+/** The systems a typed one is suggested from (knownTools), for the inputs that name `list="tools"`. */
+const toolList = (state) => `<datalist id="tools">${knownTools(state).map((t) => `<option value="${esc(t)}">`).join("")}</datalist>`;
 /** A quick edit's typed value is over what the field held then: if someone changed the field since, saving replaces that. */
 const changedMeanwhile = (l, key, draft) => draft && String(l[key] ?? "") !== draft.from ? `<p class="hint">Inzwischen ge\xE4ndert. Speichern ersetzt den neuen Stand.</p>` : "";
 /** A lead the page offers a call for, with the call sheet: one in the pipeline, open to contact, not at its appointment. */
@@ -332,15 +335,21 @@ export function unshownSheets(state, today) {
     ...(!calls && (u.call || u.termin) && { call: null, termin: null }),
     ...(u.meeting && !meetingDue(l, today) && { meeting: null }),
     ...(u.checkIn && !(l.status === "kunde" && customerOf(l)?.phase === "live") && { checkIn: null }),
-    // A question kept from 1.23.0 with a message picked: only a visit is logged here now.
-    ...(u.contactPick && (l.status !== "neu" || u.contactPick.channel && u.contactPick.channel !== "Vor Ort") && { contactPick: null }),
+    // The question where they spoke is for a Neu lead; a visit is for any lead open to contact. One kept from 1.23.0
+    // with a message picked: only a visit is logged here now.
+    ...(u.contactPick && (l.optOutAt || (u.contactPick.channel ? u.contactPick.channel !== "Vor Ort" : l.status !== "neu")) && { contactPick: null }),
     ...(u.todoEdit && !todosOf(l).some((t) => t.id === u.todoEdit.id && !t.done) && { todoEdit: null }),
+    // A note being changed that someone removed meanwhile: what was typed becomes a new note to save, not lost.
+    ...(u.noteEdit && !notesOf(l).some((n) => n.id === u.noteEdit.id) && { noteEdit: null, noteDraft: u.noteDraft || u.noteEdit.text }),
+    // Drafts kept by 1.24.0, when a note was the composer's "Notiz" or a quick edit of the notes text: a new note to save.
+    ...(u.compose?.direction === "note" && { compose: null, noteDraft: u.noteDraft || u.compose.text || null }),
+    ...(u.editField === "notes" && { editField: null, editDraft: null, noteDraft: u.noteDraft || u.editDraft?.value || null }),
   };
 }
 /** The call as the server takes it: a day and a time only with Rückruf and Termin, a reason only with Kein Interesse. */
-export function callInput({ outcome, date, time, reason, note }) {
+export function callInput({ outcome, date, time, reason, note, day }) {
   const dated = outcome === "rueckruf" || outcome === "termin";
-  return { outcome, date: dated && date || undefined, time: dated && time || undefined, reason: outcome === "kein-interesse" && reason || undefined, note: note || undefined };
+  return { outcome, day: day || undefined, date: dated && date || undefined, time: dated && time || undefined, reason: outcome === "kein-interesse" && reason || undefined, note: note || undefined };
 }
 /** What a lead patch leaves as the next step: [followUp, nextStep], from the patch where it sets them. */
 const nextAfter = (l, patch) => ["followUp" in patch ? patch.followUp : l.followUp, "nextStep" in patch ? patch.nextStep : l.nextStep];
@@ -349,7 +358,8 @@ function callPreview(l, acts, call, today) {
   if (!call.outcome) return "";
   return planPreview(l, () => {
     const input = callInput(call);
-    return planAfterCall(l, acts, callActivity(input, today), input);
+    // Made now: later than anything logged today, as the server stamps it.
+    return planAfterCall(l, acts, { ...callActivity(input, today), createdAt: new Date().toISOString() }, input);
   });
 }
 /** What saving a lead patch that `plan` gives will do, or why it would be refused. */
@@ -378,7 +388,9 @@ function contactPickHtml(l, acts, p, calls, today) {
   const activity = { direction: "out", channel: p.channel, date: today, createdAt: new Date().toISOString() };
   const after = p.channel ? afterLine(l, acts, activity, planAfterActivity(l, acts, activity, today), today) : "";
   const form = p.channel ? `<textarea id="cpText" rows="2" placeholder="${VISIT_NOTE}">${esc(p.text)}</textarea>${after ? `<p class="note after">${esc(after)}</p>` : ""}` : "";
-  return `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Wo haben Sie mit ihnen gesprochen?</p><div class="chips">${chips}</div>${form}
+  // From "Eintragen", on a lead past Neu, it is the visit alone.
+  const title = l.status === "neu" ? `Wo haben Sie mit ihnen gesprochen?</p><div class="chips">${chips}</div>` : "Besuch vor Ort</p>";
+  return `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">${title}${form}
     <div class="two" style="margin-top:8px"><button data-act="contactCancel">Abbrechen</button>${p.channel ? `<button class="primary" data-act="contactSave">Eintragen</button>` : ""}</div></div>`;
 }
 /**
@@ -396,20 +408,15 @@ function afterLine(l, acts, activity, patch, today, chosen = null) {
 }
 /** The call that may be taken back: the newest activity, when it is a call, and not on an opted-out lead. The server checks the rest. */
 const undoable = (l, acts) => !l.optOutAt && acts.at(-1)?.outcome ? acts.at(-1) : null;
-const MODE_LABEL = [["out", "Ich schreibe"], ["in", "Antwort eintragen"], ["note", "Notiz"]];
 const CHANNEL_TABS = ["E-Mail", "Instagram", "WhatsApp"];
-/** The one composer: write (sent by Gmail, or copied into the app), log what came in, or a note for the team. */
+/** The one composer: write (sent by Gmail, or copied into the app), or enter what came in. */
 function composerHtml(state, l, acts, today, offersMailto) {
   const c = state.ui.compose;
   const closedBy = mailClosedBy(state.data.leads, l);
   const mail = c.channel === "E-Mail";
-  const head = `<div class="c-head"><button class="link" data-act="composeCancel">${l.optOutAt ? "Schlie\xDFen" : "Abbrechen"}</button><b>An ${esc(l.name)}</b></div>
-    <div class="chips modes">${MODE_LABEL.map(([k, label]) => `<button class="chip" data-mode="${k}" aria-pressed="${c.direction === k}"${k === "out" && l.optOutAt ? " disabled" : ""}>${label}</button>`).join("")}${takesCall(l, today) ? `<button class="chip" data-act="callOpen">Anruf</button>` : ""}</div>`;
+  // Its title says what it does: write to them, or enter what came from them.
+  const head = `<div class="c-head"><button class="link" data-act="composeCancel">${l.optOutAt ? "Schlie\xDFen" : "Abbrechen"}</button><b>${c.direction === "in" ? `Antwort von ${esc(l.name)} eintragen` : `Nachricht an ${esc(l.name)}`}</b></div>`;
   const closedBox = l.optOutAt ? `<div class="optout box"><p>Keine Kontaktaufnahme gew\xFCnscht</p><p class="note">Seit ${esc(dayLabel(l.optOutAt))}. Nachrichten und Anrufe sind gesperrt, auch f\xFCr diese Adresse bei anderen Betrieben. Eine Antwort, die trotzdem kommt, l\xE4sst sich eintragen, aber nicht von hier beantworten.</p></div>` : "";
-  if (c.direction === "note") {
-    return `<div class="card compose">${head}${closedBox}<textarea id="cText" placeholder="Notiz f\xFCr Sie beide, geht nicht an den Betrieb …">${esc(c.text)}</textarea>
-    <button class="primary full" style="margin-top:8px" data-act="saveNote">Notiz speichern</button></div>`;
-  }
   const others = CHANNELS.filter((ch) => !CHANNEL_TABS.includes(ch));
   const tabs = `<div class="chips chans">${CHANNEL_TABS.map((ch) => `<button class="chip" data-ch="${esc(ch)}" aria-pressed="${c.channel === ch}">${esc(ch)}</button>`).join("")}<select id="cCh" class="chip" aria-label="Anderer Kanal"><option value="">Andere ▾</option>${options(others, c.channel)}</select></div>`;
   // Written now: the reply rule plans an answer only for the newest entry.
@@ -458,6 +465,20 @@ function signatureHtml(sig, on) {
   const preview = sig.failed ? `<p class="note">Vorschau nicht geladen; die Signatur wird beim Senden angeh\xE4ngt.</p>`
     : sig.text ? `<p class="hint sig">${esc(sig.text)}</p>` : `<p class="note">Signatur ohne Text (ein Bild, etwa ein Logo).</p>`;
   return `<label class="check"><input type="checkbox" id="cSig"${on ? " checked" : ""}> Mit Signatur</label>${on ? preview : ""}`;
+}
+/**
+ * "Eintragen": what happened and is not yet in the CRM, each item saying what it records and opening its own form:
+ * their answer (the composer's "in"), a visit, a call (today or an earlier day) or an appointment agreed. A note is
+ * written on top of the timeline.
+ */
+function logMenuHtml(l, calls) {
+  const item = (attrs, title, sub, disabled = false) => `<button class="mitem" ${attrs}${disabled ? " disabled" : ""}><span><b>${title}</b><small>${sub}</small></span><span aria-hidden="true">›</span></button>`;
+  return `<div class="card menu logmenu" role="menu">
+    ${item('data-compose="in"', "Antwort von ihnen", "kam per E-Mail, Telefon oder Nachricht")}
+    ${item('data-act="visitOpen"', "Besuch vor Ort", "wir waren dort und haben gesprochen", !!l.optOutAt)}
+    ${calls ? item('data-act="callOpen"', "Anruf", "heute oder an einem fr\xFCheren Tag") : ""}
+    ${calls ? item('data-act="terminOpen"', "Termin", "per E-Mail, Telefon oder vor Ort vereinbart") : ""}
+  </div>`;
 }
 /** "Weitere": the moves beside the status chips: an appointment agreed, closing without an answer, the opt-out. */
 function statusMenuHtml(l, acts, today) {
@@ -587,23 +608,33 @@ function sequenceHtml(l, acts) {
   return `<div class="sec desk seq"><h3>Nachfass-Folge <small>${Math.min(n, max)} von ${max}${n >= max ? " \xB7 ohne Antwort" : ""}</small></h3><ol class="card checks">${rows.join("")}</ol>${n >= max ? `<p class="note">Alle Kontakte ohne Antwort. Abschlie\xDFen?</p>` : ""}</div>`;
 }
 /**
- * The lead's feed, newest first: the notes pinned on top, mail grouped by its Gmail thread, single messages and
+ * The lead's feed, newest first: the box for a new note on top, the notes, mail grouped by its Gmail thread, single messages and
  * calls, and the status moves from the history as grey lines. The chips filter it by kind.
  */
 function feedHtml(state, l, acts, today, clamp) {
   const ui = state.ui;
+  const notes = notesOf(l);
   const mine = (a) => !a.mail?.mailbox || a.mail.mailbox === state.me?.email;
   const kind = (a) => a.outcome || a.channel === "Telefon" ? "call" : a.channel === "E-Mail" ? "mail" : "msg";
-  const count = { mail: acts.filter((a) => kind(a) === "mail").length, call: acts.filter((a) => kind(a) === "call").length, msg: acts.filter((a) => kind(a) === "msg").length, note: l.notes ? 1 : 0 };
+  const count = { mail: acts.filter((a) => kind(a) === "mail").length, call: acts.filter((a) => kind(a) === "call").length, msg: acts.filter((a) => kind(a) === "msg").length, note: notes.length };
   const f = ui.feed;
-  const chips = `<div class="chips feedc">${[["alle", "Alle"], ["mail", "E-Mail"], ["call", "Anrufe"], ["msg", "Nachrichten"], ["note", "Notizen"]].map(([k, label]) => `<button class="chip" data-feed="${k}" aria-pressed="${f === k}">${label}${k === "alle" ? "" : ` <small>${count[k]}</small>`}</button>`).join("")}</div>`;
-  const notes = `<div class="sec"><h3>${FIELD_LABEL.notes}</h3>${ui.editField === "notes" ? `<div class="card"><textarea id="qe" data-field="notes" rows="10">${esc(ui.editDraft ? ui.editDraft.value : l.notes || "")}</textarea>${changedMeanwhile(l, "notes", ui.editDraft)}<div class="qe-actions"><button data-act="qeCancel">Abbrechen</button><button class="primary" data-act="qeSave">Speichern</button></div></div>` : `<div class="card qe-click" data-edit="notes" role="button" tabindex="0">${l.notes ? clamp("notes", l.notes) : `<span class="qe-empty">+ Notiz hinzuf\xFCgen</span>`}</div>`}</div>`;
-  if (f === "note") return chips + notes;
+  const chips = `<div class="chips feedc">${[["alle", "Alle"], ["mail", "E-Mail"], ["call", "Anrufe"], ["msg", "Nachrichten"], ["note", FIELD_LABEL.notes]].map(([k, label]) => `<button class="chip" data-feed="${k}" aria-pressed="${f === k}">${label}${k === "alle" ? "" : ` <small>${count[k]}</small>`}</button>`).join("")}</div>`;
+  // A note to add, on top: written here, it is one more card below.
+  const draft = ui.noteDraft || "";
+  const add = `<div class="nadd"><textarea id="ntText" rows="2" placeholder="Notiz hinzuf\xFCgen \u2026" aria-label="Neue Notiz">${esc(draft)}</textarea><button class="primary" data-act="noteAdd"${draft.trim() ? "" : " disabled"}>Speichern</button></div>`;
+  const noteCard = (n) => {
+    const head = `Notiz${n.by ? " \xB7 " + esc(actorName(n.by)) : ""} \xB7 ${n.date ? esc(fmtDate(n.date)) : "Bisherige Notizen"}`;
+    if (ui.noteEdit?.id === n.id) return `<div class="entry note"><div class="h"><span>${head}</span></div><textarea id="neText" rows="4" aria-label="Notiz">${esc(ui.noteEdit.text)}</textarea><div class="qe-actions"><button data-act="noteEditCancel">Abbrechen</button><button class="primary" data-act="noteSave">Speichern</button></div></div>`;
+    return `<div class="entry note"><div class="h"><span>${head}</span><span class="h-acts"><button data-note-edit="${esc(n.id)}">Bearbeiten</button><button data-note-remove="${esc(n.id)}" aria-label="Notiz l\xF6schen">L\xF6schen</button></span></div>${clamp("n:" + n.id, n.text)}</div>`;
+  };
+  // Undated notes, from before notes were kept one by one, come last.
+  const noteItems = notes.map((n) => [n.date || "0000-00-00", n.createdAt || "", noteCard(n)]);
+  if (f === "note") return `${chips}${add}<div class="sec">${noteItems.length ? noteItems.map((x) => x[2]).join("") : `<p class="note">Noch keine Notizen.</p>`}</div>`;
   const tplName = Object.fromEntries(state.data.templates.map((x) => [x.id, x.name]));
   const box = (a) => mine(a) ? "" : ` \xB7 Postfach von ${esc(actorName(a.mail.mailbox))}`;
   const newest = acts.at(-1);
   const undo = undoable(l, acts);
-  const head = (a) => kind(a) === "call" ? `Anruf${a.outcome ? " \xB7 " + esc(OUTCOME_LABEL[a.outcome]) : ""}` : `${a.direction === "out" ? "↗ Gesendet" : "↙ Empfangen"} \xB7 ${esc(a.mail?.from && a.direction === "in" ? a.mail.from : a.channel)}`;
+  const head = (a) => kind(a) === "call" ? `Anruf${a.outcome ? " \xB7 " + esc(OUTCOME_LABEL[a.outcome]) : ""}` : a.channel === "Vor Ort" && a.direction === "out" ? "Besuch vor Ort" : `${a.direction === "out" ? "↗ Gesendet" : "↙ Empfangen"} \xB7 ${esc(a.mail?.from && a.direction === "in" ? a.mail.from : a.channel)}`;
   const entry = (a) => `<div class="entry ${a.direction}${kind(a) === "call" ? " call" : ""}"><div class="h"><span>${head(a)} \xB7 ${fmtDate(a.date)}${a.templateId && tplName[a.templateId] ? " \xB7 " + esc(tplName[a.templateId]) : ""}${box(a)}</span><span class="h-acts">${undo === a ? `<button data-undo="${esc(a.id)}">R\xFCckg\xE4ngig</button>` : ""}<button data-copy="${esc(a.id)}">Kopieren</button></span></div>${clamp("a:" + a.id, a.text)}</div>`;
   const shown = acts.filter((a) => f === "alle" || kind(a) === f);
   const threads = new Map();
@@ -624,6 +655,7 @@ function feedHtml(state, l, acts, today, clamp) {
   const items = [];
   for (const msgs of threads.values()) items.push([msgs.at(-1).date, msgs.at(-1).createdAt || "", thread(msgs)]);
   for (const a of shown) if (!a.mail?.threadId) items.push([a.date, a.createdAt || "", entry(a)]);
+  if (f === "alle") items.push(...noteItems);
   const history = ui.changes?.leadId === l.id ? ui.changes.rows : null;
   if (history && f === "alle") for (const e of history) {
     const move = statusMove(e);
@@ -632,7 +664,7 @@ function feedHtml(state, l, acts, today, clamp) {
   items.sort((a, b) => a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : a[1] < b[1] ? 1 : -1);
   const fields = history ? history.filter((e) => describeChange(e).length).length : 0;
   const changes = history && f === "alle" ? `<button class="more" data-act="changesToggle">\xC4nderungen an Feldern ${ui.changesOpen ? "ausblenden" : `zeigen (${fields})`}</button>${ui.changesOpen ? changesHtml(history) : ""}` : "";
-  return `${chips}${f === "alle" ? notes : ""}<div class="sec">${items.length ? items.map((x) => x[2]).join("") : `<p class="note">Noch keine Eintr\xE4ge.</p>`}${changes}</div>`;
+  return `${chips}${f === "alle" ? add : ""}<div class="sec">${items.length ? items.map((x) => x[2]).join("") : `<p class="note">Noch keine Eintr\xE4ge.</p>`}${changes}</div>`;
 }
 /** The bar of a round through a list (Heute, the call list, the new businesses): where in it, later, next. */
 function roundBar(state, l, today) {
@@ -678,9 +710,9 @@ export function detailView(state, today) {
   const act = (href, label, attrs = "") => href ? `<a class="btn" href="${esc(href)}"${href.startsWith("tel:") ? "" : ' target="_blank" rel="noopener"'}${attrs}>${label}</a>` : `<a class="btn" aria-disabled="true">${label}</a>`;
   const write = (channel, label, can) => `<button data-compose="${esc(channel)}"${can ? "" : " disabled"}>${label}</button>`;
   // On a phone the row sticks above the tabs; while the composer is open it has its own buttons.
-  const actions = ui.compose ? "" : `<div class="acts">${act(l.optOutAt ? "" : tel, "Anrufen", calls ? ' data-act="callOpen"' : "")}${write("E-Mail", "E-Mail", !!l.email)}${write("WhatsApp", "WhatsApp", !l.optOutAt && !!channelLink(l, "WhatsApp"))}${write("Instagram", "Instagram", !l.optOutAt && !!l.instagram)}<button data-compose="in">Eintragen</button></div>`;
+  const actions = ui.compose ? "" : `<div class="acts">${act(l.optOutAt ? "" : tel, "Anrufen", calls ? ' data-act="callOpen"' : "")}${write("E-Mail", "E-Mail", !!l.email)}${write("WhatsApp", "WhatsApp", !l.optOutAt && !!channelLink(l, "WhatsApp"))}${write("Instagram", "Instagram", !l.optOutAt && !!l.instagram)}<button data-act="logMenu" aria-expanded="${!!ui.logMenu}">Eintragen ▾</button>${ui.logMenu ? logMenuHtml(l, calls) : ""}</div>`;
   const filled = QUICK_FIELDS.filter((f) => l[f.key] && f.key !== "fit" && f.key !== "type" && !(l.status === "kunde" && f.group === "talk")).map((f) => FIELD_LABEL[f.key]).slice(0, 4).join(", ");
-  const infoOpen = ui.infoOpen || (ui.editField && ui.editField !== "notes");
+  const infoOpen = ui.infoOpen || !!ui.editField;
   const sheet = calls && ui.termin ? terminHtml(l, ui.termin, today) : calls && (ui.call || ui.round?.list === "calls") ? callHtml(l, acts, ui, today, state.data.templates) : meetingDue(l, today) ? meetingHtml(ui, today) : "";
   const fields = (group) => QUICK_FIELDS.filter((f) => f.group === group).map((f) => quickField(l, f, ui.editField, ui.editDraft)).join("");
   // On a wide screen the name heads the page and the action row stands beside it; on a phone the top bar names it.
@@ -711,7 +743,7 @@ export function detailView(state, today) {
   </aside>
   <div class="l-work">
   ${todosHtml(l, ui, today)}
-  ${customer ? customerHtml(state, l, customer, today) : `<div class="sec talk"><h3>F\xFCr das Gespr\xE4ch</h3><dl class="card facts qe">${fields("talk")}</dl></div>
+  ${customer ? customerHtml(state, l, customer, today) : `<div class="sec talk"><h3>F\xFCr das Gespr\xE4ch</h3><dl class="card facts qe">${fields("talk")}</dl>${toolList(state)}</div>
   ${sequenceHtml(l, acts)}`}
   </div>
   <div class="l-feed">${feedHtml(state, l, acts, today, clamp)}</div>
@@ -732,6 +764,7 @@ function callHtml(l, acts, ui, today, templates) {
     <button class="link" data-act="scriptToggle" aria-expanded="${ui.script}">Gespr\xE4chsleitfaden ${ui.script ? "▴" : "▾"}</button>
     ${ui.script ? `<div class="t" style="white-space:pre-wrap;margin:6px 0 4px">${esc(script.text)}</div>${script.template ? "" : `<button class="link" data-act="scriptTemplate">Als Vorlage anlegen, um ihn anzupassen</button>`}` : ""}
     ${tel ? `<a class="btn full" style="margin-top:10px" href="${esc(tel)}">${esc(l.phone)} anrufen</a>` : `<p class="note" style="margin:0">Keine Telefonnummer hinterlegt.</p>`}
+    <label class="inline" style="margin-top:10px">Am <input type="date" id="callDay" value="${esc(c.day || today)}" max="${esc(today)}" aria-label="Tag des Anrufs"></label>
     <div class="chips" style="margin:10px 0">${CALL_OUTCOMES.map(([k, label]) => `<button class="chip${k === "kein-interesse" ? " lostc" : ""}" data-call="${k}" aria-pressed="${c.outcome === k}">${label}</button>`).join("")}</div>
     ${fields}${c.outcome ? `<label>Notiz <small>optional</small><input id="agNote" value="${esc(c.note || "")}"></label>` : ""}
     ${preview ? `<p class="hint">${esc(preview)}</p>` : ""}
@@ -839,9 +872,9 @@ export function leadEditView(state) {
   ${f("email", "name@betrieb.at", "email")}
   ${f("website", "https://", "url")}
   ${f("person")}
-  <label>${FIELD_LABEL.currentTool}<select name="currentTool">${options(RESERVATION_TOOLS, d.currentTool)}</select></label>
+  <label>${FIELD_LABEL.currentTool}<input name="currentTool" value="${esc(d.currentTool || "")}" list="tools" autocomplete="off"></label>${toolList(state)}
   ${f("hook", "z. B. Neuer\xF6ffnung")}
-  <label>${FIELD_LABEL.notes}<textarea name="notes" rows="8">${esc(d.notes || "")}</textarea></label>
+  ${l ? "" : `<label>${FIELD_LABEL.notes}<textarea name="notes" rows="4"></textarea></label>`}
   <button class="primary full" data-act="saveLead">Speichern</button>
   ${l ? `<button class="danger full" data-act="deleteLead" style="margin-top:28px">Betrieb l\xF6schen</button>` : ""}
 </form>`;

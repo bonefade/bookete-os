@@ -47,8 +47,10 @@ function countBy(leads, keyOf) {
 }
 export function toolCounts(state) {
   const m = countBy(scoped(state, state.data.leads, "tool"), (l) => l.currentTool || "unbekannt");
-  return RESERVATION_TOOLS.filter((t) => m[t] || t === state.ui.tool).map((t) => [t, m[t] || 0]).sort((a, b) => b[1] - a[1]);
+  return knownTools(state).filter((t) => m[t] || t === state.ui.tool).map((t) => [t, m[t] || 0]).sort((a, b) => b[1] - a[1]);
 }
+/** The systems to suggest: the usual ones, then every other one a lead has, by name. */
+export const knownTools = (state) => [...new Set([...RESERVATION_TOOLS, ...state.data.leads.map((l) => l.currentTool).filter(Boolean).sort((a, b) => a.localeCompare(b, "de"))])];
 export function regionCounts(state) {
   const m = countBy(scoped(state, state.data.leads, "region"), regionOf);
   return [...REGIONS, OTHER_REGION].filter((r) => m[r] || r === state.ui.region).map((r) => [r, m[r] || 0]);

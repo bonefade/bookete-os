@@ -7,10 +7,10 @@ import { ValidationError } from "../src/domain/errors.js";
 
 const clock = { today: () => "2026-10-15", now: () => "2026-10-15T10:00:00.000Z" };
 
-function setup({ mailer = null } = {}) {
+function setup({ mailer = null, email = "" } = {}) {
   const store = createStore(createD1());
   let n = 0;
-  const uc = createUseCases({ store, clock, ids: { newId: () => `id${++n}` }, actor: "jo@bookete.com (test)", mailer });
+  const uc = createUseCases({ store, clock, ids: { newId: () => `id${++n}` }, actor: "jo@bookete.com (test)", email, mailer });
   return { store, uc };
 }
 
@@ -300,13 +300,24 @@ test("a save that changes nothing writes nothing", async () => {
   assert.equal((await store.history(id)).length, 1);
 });
 
-test("a note goes below what Notizen holds when it is saved, so one written meanwhile stays", async () => {
-  const { store, uc } = setup();
+test("notes are entries, newest first, by whoever wrote them; text given to a lead adds one; one written meanwhile stays", async () => {
+  const { store, uc } = setup({ email: "jo@bookete.com" });
   const id = await uc.addLead({ name: "Krone", notes: "Ruhetag Mo" });
-  await uc.updateField(id, "notes", "Ruhetag Mo\n\nVom Agenten");
-  await uc.addNote(id, " Chef ab 15 Uhr ");
-  assert.equal((await store.get("leads", id)).notes, "Ruhetag Mo\n\nVom Agenten\n\n15.10.2026: Chef ab 15 Uhr");
-  await assert.rejects(uc.addNote(id, "  \n "), { message: "Die Notiz ist leer" });
+  // An agent's update_lead with notes as text adds a note, never rewrites them.
+  await uc.updateField(id, "notes", "Vom Agenten");
+  await uc.changeNote(id, { add: " Chef ab 15 Uhr " });
+  const texts = async () => (await store.get("leads", id)).noteEntries.map((n) => [n.text, n.by, n.date]);
+  assert.deepEqual(new Set(await texts()), new Set([["Ruhetag Mo", "jo@bookete.com", "2026-10-15"], ["Vom Agenten", "jo@bookete.com", "2026-10-15"], ["Chef ab 15 Uhr", "jo@bookete.com", "2026-10-15"]]));
+  await assert.rejects(uc.changeNote(id, { add: "  \n " }), { message: "Die Notiz ist leer" });
+  const [first] = (await store.get("leads", id)).noteEntries;
+  await uc.changeNote(id, { note: first.id, text: "Geändert" });
+  assert.ok((await texts()).some(([t]) => t === "Geändert"));
+  await uc.changeNote(id, { note: first.id, remove: true });
+  assert.equal((await store.get("leads", id)).noteEntries.length, 2);
+  assert.equal(await uc.changeNote(id, { note: first.id, remove: true }), false);
+  // Empty text given to a lead adds none.
+  await uc.updateLead(id, { notes: "  " });
+  assert.equal((await store.get("leads", id)).noteEntries.length, 2);
 });
 
 test("a deleted lead waits in the trash and comes back with its activities", async () => {

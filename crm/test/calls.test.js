@@ -9,7 +9,9 @@ import { ValidationError } from "../src/domain/errors.js";
 import { countTouches, hasSpoken, meetingDue } from "../src/domain/activity.js";
 import { BACKUP_FORMAT } from "../src/domain/backup.js";
 
-const clock = { today: () => "2026-10-15", now: () => "2026-10-15T10:00:00.000Z" };
+// Each write a second later, as calls one after another are: the newest call plans what comes next.
+let tick = 0;
+const clock = { today: () => "2026-10-15", now: () => new Date(Date.UTC(2026, 9, 15, 10, 0, tick++)).toISOString() };
 function setup() {
   const db = createD1();
   const store = createStore(db);
@@ -288,4 +290,36 @@ test("MCP records an appointment's outcome by the web's rules, and hasEmail is f
   await uc.optOut(former);
   const { leads } = JSON.parse((await mcp({ store, clock, uc }, "search_leads", { query: "" })).content[0].text);
   assert.deepEqual(Object.fromEntries(leads.map((l) => [l.id, l.hasEmail])), { [id]: false, [customer]: true, [open]: true, [former]: false });
+});
+
+test("a call made on an earlier day is entered with that day; one after today is refused", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Krone", phone: "+43 1" });
+  await rejects(uc.logCall(id, { outcome: "rueckruf", date: "2026-10-20", day: "2026-10-16" }), "day");
+  const { activity } = await uc.logCall(id, { outcome: "rueckruf", date: "2026-10-20", day: "2026-10-12" });
+  assert.equal(activity.date, "2026-10-12");
+  const l = await store.get("leads", id);
+  assert.deepEqual([l.status, l.contactedAt, l.followUp], ["kontaktiert", "2026-10-12", "2026-10-20"]);
+  const viaMcp = await mcp({ store, clock, uc }, "log_call", { id, outcome: "nicht-erreicht", day: "2026-10-13" });
+  assert.ok(!viaMcp.isError, JSON.stringify(viaMcp));
+  assert.deepEqual((await store.activitiesOf(id)).map((a) => a.date).sort(), ["2026-10-12", "2026-10-13"]);
+});
+
+test("a call entered for a day before a later contact plans nothing: the later contact's plan stays; an opt-out in it holds all the same", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Krone", phone: "+43 1" });
+  await uc.logActivity(id, { direction: "out", channel: "Vor Ort", text: "Besucht", date: "2026-10-14" });
+  const planned = await store.get("leads", id);
+  assert.deepEqual([planned.status, planned.followUp], ["kontaktiert", "2026-10-18"]);
+  await uc.logCall(id, { outcome: "nicht-erreicht", day: "2026-10-05" });
+  await uc.logCall(id, { outcome: "kein-interesse", reason: "Kein Bedarf", day: "2026-10-06" });
+  assert.deepEqual(shape(await store.get("leads", id)), ["kontaktiert", "2026-10-18", "", null]);
+  // A Termin agreed in it holds: its day is still to come.
+  const agreed = await uc.addLead({ name: "Linde", phone: "+43 2" });
+  await uc.logActivity(agreed, { direction: "out", channel: "E-Mail", text: "Hallo", date: "2026-10-14" });
+  await uc.logCall(agreed, { outcome: "termin", date: "2026-10-20", time: "10:00", day: "2026-10-12" });
+  assert.deepEqual(shape(await store.get("leads", agreed)), ["qualifiziert", "2026-10-20", "Termin um 10:00", null]);
+  await uc.logCall(id, { outcome: "kein-interesse", reason: "Keine Kontaktaufnahme gew\xFCnscht", day: "2026-10-07" });
+  const closed = await store.get("leads", id);
+  assert.deepEqual([closed.status, closed.lostReason, !!closed.optOutAt], ["disqualifiziert", "Keine Kontaktaufnahme gew\xFCnscht", true]);
 });

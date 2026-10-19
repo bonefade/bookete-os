@@ -57,7 +57,7 @@ export function createApi(onWrite) {
     closeWithoutReply: (lead) => rpc("closeWithoutReply", { id: lead.id }),
     setFollowUp: (lead, date) => rpc("setFollowUp", { id: lead.id, date }),
     setNextStep: (lead, text) => rpc("setNextStep", { id: lead.id, text }),
-    addNote: (lead, text) => rpc("addNote", { id: lead.id, text }),
+    changeNote: (lead, change) => rpc("changeNote", { id: lead.id, ...change }),
     // A read: nothing to sync after it.
     signature: () => post("signature", "{}"),
     logActivity: (lead, _acts, input) => rpc("logActivity", { id: lead.id, input }),

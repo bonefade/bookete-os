@@ -2,6 +2,7 @@ import { STAGE_LABEL, FIELD_LABEL } from './constants.js';
 import { timelinesByLead } from './stats.js';
 import { isPipeline } from './lead.js';
 import { regionOf } from './region.js';
+import { notesOf } from './notes.js';
 
 export function fold(text) {
   const src = String(text ?? "");
@@ -37,7 +38,9 @@ export function searchIndex(state) {
   if (idxLeads === leads && idxActs === activities) return idxVal;
   const byLead = timelinesByLead(activities);
   idxVal = leads.map((l) => {
-    const fields = SEARCH_FIELDS.filter(([k]) => l[k]).map(([key, label, w]) => ({ key, label, w, ...fold(l[key]) }));
+    // The notes are searched as one text, every note's.
+    const valueOf = (key) => key === "notes" ? notesOf(l).map((n) => n.text).join("\n") : l[key];
+    const fields = SEARCH_FIELDS.filter(([k]) => valueOf(k)).map(([key, label, w]) => ({ key, label, w, ...fold(valueOf(key)) }));
     const tags = [regionOf(l), STAGE_LABEL[l.status], l.lostReason, l.currentTool !== "unbekannt" ? l.currentTool : "", l.type].filter(Boolean).join(" \xB7 ");
     fields.push({ key: "tags", label: "Merkmale", w: 20, ...fold(tags) });
     // Newest first: of equal hits in the history, the newest is shown. The web app writes its heading (hitLabel).

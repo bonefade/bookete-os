@@ -123,17 +123,18 @@ export function planAfterActivity(lead, acts, activity, today, policy = SEQUENCE
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const atTime = (time) => (time ? ` um ${time}` : "");
 /**
- * A phone call today and how it ended, as the activity to log. Rückruf and Termin need a day from today on and
- * may have a time; Kein Interesse needs the reason why.
+ * A phone call and how it ended, as the activity to log: today's, or one on an earlier `day` entered later. Rückruf
+ * and Termin need a day from today on and may have a time; Kein Interesse needs the reason why.
  */
-export function callActivity({ outcome, date, time, reason, note }, today) {
+export function callActivity({ outcome, date, time, reason, note, day }, today) {
+  if (day && !(isDate(day) && day <= today)) throw new ValidationError("day", "Der Anruf liegt in der Zukunft");
   if (!OUTCOME_LABEL[outcome]) throw new ValidationError("outcome", "Wie ist das Gespr\xE4ch ausgegangen?");
   const dated = outcome === "rueckruf" || outcome === "termin";
   if (!dated && (date || time)) throw new ValidationError(date ? "date" : "time", "Datum und Uhrzeit geh\xF6ren nur zu R\xFCckruf und Termin");
   const at = dated ? agreedDate(date, time, today) : "";
   if (outcome === "kein-interesse" && !SPOKEN_REASONS.includes(reason)) throw new ValidationError("lostReason", "Bitte einen Grund w\xE4hlen");
   const head = outcome === "rueckruf" ? `R\xFCckruf am ${dayLabel(date)}${at}` : outcome === "termin" ? `Termin vereinbart: ${dayLabel(date)}${at}` : outcome === "kein-interesse" ? `Kein Interesse: ${reason}` : "Nicht erreicht";
-  return { direction: "out", channel: "Telefon", date: today, outcome, reason: reason ?? null, text: [head, String(note ?? "").trim()].filter(Boolean).join("\n") };
+  return { direction: "out", channel: "Telefon", date: day || today, outcome, reason: reason ?? null, text: [head, String(note ?? "").trim()].filter(Boolean).join("\n") };
 }
 // A day from today on, and an optional time: when we call back or meet.
 function agreedDate(date, time, today) {
@@ -170,11 +171,15 @@ export function meetingPatch(lead, { result, reason, date, time }, today) {
  * reason. A call never moves a customer out of Kunde.
  */
 export function planAfterCall(lead, acts, activity, { date, time }, policy = SEQUENCE_POLICY) {
-  // A call is logged on its day (callActivity), so that is today.
+  // A call is logged on its day (callActivity): today, or the earlier day it was entered for.
   const patch = planAfterActivity(lead, acts, activity, activity.date, policy);
   const kunde = lead.status === "kunde";
+  // A call entered for an earlier day, before a later contact: a missed one or a no plans nothing, as any contact does
+  // (planAfterActivity), but an opt-out in it holds all the same, and so does a Rückruf or Termin agreed in it.
+  const earlier = !acts.every((a) => byTimeline(a, activity) < 0);
   switch (activity.outcome) {
     case "nicht-erreicht": {
+      if (earlier) return patch;
       if (sequenceExhausted({ ...lead, ...patch }, [...acts, activity], policy)) return { ...patch, status: "disqualifiziert", lostReason: "Nicht erreicht", nextStep: "" };
       // A Neu lead has no date: the call list offers it again after callRetryDays. A closed one stays as it was.
       if (lead.status === "neu" || lead.status === "disqualifiziert") return patch;
@@ -192,6 +197,7 @@ export function planAfterCall(lead, acts, activity, { date, time }, policy = SEQ
     case "termin":
       return { ...patch, ...planMeeting(lead, { date, time }, activity.date) };
     default: {
+      if (earlier && activity.reason !== OPT_OUT_REASON) return patch;
       if (!kunde) return { ...patch, status: "disqualifiziert", lostReason: activity.reason, nextStep: "" };
       // The opt-out reason is an opt-out on a customer too.
       return activity.reason === OPT_OUT_REASON ? { ...patch, ...optOutPatch(activity.date, lead) } : patch;

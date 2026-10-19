@@ -2,6 +2,7 @@ import { STAGE_LABEL, OPT_OUT_REASON } from '../domain/constants.js';
 import { ValidationError } from '../domain/errors.js';
 import { actsOf, currentLead, icpOf, isReady, roundList } from './selectors.js';
 import { todosOf } from '../domain/todos.js';
+import { notesOf } from '../domain/notes.js';
 import { isDue, takesDate } from '../domain/lead.js';
 import { addDays } from '../domain/dates.js';
 import { copyText, channelLink, mailSubject, saveFile } from './platform.js';
@@ -12,7 +13,7 @@ import { relDate, actorName } from './format.js';
 import { PHASE_LABEL, customerOf } from '../domain/customer.js';
 import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, VISIT_NOTE } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "noteEditCancel", "logMenu", "visitOpen", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -47,17 +48,19 @@ const QUICK_ADD_FIELDS = { qaName: "name", qaCity: "city", qaIg: "instagram", qa
 const AGREED_FIELDS = { agDate: "date", agTime: "time", agReason: "reason", agNote: "note" };
 /** The open sheet the agreed fields belong to. */
 const sheetKey = (ui) => ui.termin ? "termin" : ui.meeting ? "meeting" : "call";
+/** The phone layout of index.html: the action row fixed at the bottom, above the tabs. */
+const PHONE_LAYOUT = "(max-width:759px),(max-height:479px)";
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 /** A screen holding input not yet saved: search stays shut there, so that it cannot leave the screen by accident. */
 // The call sheet holds input once an outcome is picked: its fields show only then.
-const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.todoDraft?.text?.trim() || u.todoEdit || u.meeting || u.contactPick || u.quick || u.icpEdit);
+const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.todoDraft?.text?.trim() || u.todoEdit || u.noteDraft?.trim() || u.noteEdit || u.meeting || u.contactPick || u.quick || u.icpEdit);
 /**
  * What a lead page holds open and not yet saved: the composer, the sheets, a todo, a quick edit with what is typed
  * in it. It belongs to its lead until saved or cancelled: leaving the page keeps it in `ui.drafts` under the lead's
  * id, coming back opens it again, and the device keeps all of them (draftsOf), through a reload or the phone
  * dropping the page.
  */
-const DRAFT_KEYS = ["compose", "call", "termin", "meeting", "checkIn", "contactPick", "todoDraft", "todoEdit", "editField", "editDraft"];
+const DRAFT_KEYS = ["compose", "call", "termin", "meeting", "checkIn", "contactPick", "todoDraft", "todoEdit", "noteDraft", "noteEdit", "editField", "editDraft"];
 function draftOf(ui) {
   const open = DRAFT_KEYS.filter((k) => ui[k]);
   return open.length ? Object.fromEntries(open.map((k) => [k, ui[k]])) : null;
@@ -85,7 +88,7 @@ export function enterRoute(ui, route) {
     if (LEAD_VIEWS.has(ui.view) && ui.leadId) drafts[ui.leadId] = draftOf(ui);
     const opened = LEAD_VIEWS.has(route.view) && drafts[route.leadId];
     if (opened) delete drafts[route.leadId];
-    page = { ...Object.fromEntries(DRAFT_KEYS.map((k) => [k, null])), ...opened, drafts: Object.fromEntries(Object.entries(drafts).filter(([, d]) => d)), lostPick: false, cancelPick: false, todosDone: false, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false };
+    page = { ...Object.fromEntries(DRAFT_KEYS.map((k) => [k, null])), ...opened, drafts: Object.fromEntries(Object.entries(drafts).filter(([, d]) => d)), lostPick: false, cancelPick: false, todosDone: false, changes: null, expanded: new Set(), statusMenu: false, logMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false };
   }
   const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...page };
   if (route.view) return next;
@@ -447,20 +450,21 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     render();
   }, null, "Laden fehlgeschlagen");
   /**
-   * Opens the composer: "out" to write (a note instead on an opted-out lead, who gets no message), "in" to log what
+   * Opens the composer: "out" to write (on an opted-out lead, who gets no message, "in" instead), "in" to enter what
    * came in. `channel` defaults to the last one used; from a mail thread (`thread`) the answer goes by mail as "Re: …".
    */
   function startCompose(direction, channel = null, thread = null) {
     const st = S();
     const lead = currentLead(st);
     const acts = actsOf(st, lead.id);
-    const mode = direction === "out" && lead.optOutAt ? "note" : direction;
+    const mode = direction === "out" && lead.optOutAt ? "in" : direction;
     const tpl = mode === "out" ? defaultTemplate(lead, acts, st.data.templates) : null;
     const filled = tpl ? fillTemplate(tpl.body, lead) : { text: "", missing: [] };
     const subject = thread ? (/^re:/i.test(thread.subject) ? thread.subject : "Re: " + thread.subject) : mailSubject(lead);
-    ui({ compose: { direction: mode, templateId: tpl?.id || "", channel: channel || lastChannel(acts) || (lead.instagram ? "Instagram" : "E-Mail"), date: clock.today(), subject, text: filled.text, missing: filled.missing, thread, followUp: null, fuEdit: false }, call: null, termin: null, contactPick: null, statusMenu: false });
+    ui({ compose: { direction: mode, templateId: tpl?.id || "", channel: channel || lastChannel(acts) || (lead.instagram ? "Instagram" : "E-Mail"), date: clock.today(), subject, text: filled.text, missing: filled.missing, thread, followUp: null, fuEdit: false }, call: null, termin: null, contactPick: null, statusMenu: false, logMenu: false });
     render();
-    root.querySelector("#cText")?.scrollIntoView({ block: "center" });
+    // The composer opens above; on a phone the buttons are at the bottom, so it comes into view, with its title on top.
+    reveal(".compose");
   }
   /** Closes the composer after a save, then sets the follow-up picked under "Danach" where the save planned another. */
   async function composeSaved(c) {
@@ -477,6 +481,16 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     // In the call list's round, saving moves on to the next call.
     if (S().ui.round?.list === "calls") return roundNext();
     render();
+  }
+  /**
+   * A form just opened comes into view, with its title on top, on a phone only (the owner's call), where the buttons
+   * sit at the bottom, and only when it is out of view. On a laptop the page stays where it is.
+   */
+  function reveal(selector) {
+    const el = root.querySelector(selector);
+    const box = el?.getBoundingClientRect?.();
+    const phone = window.matchMedia?.(PHONE_LAYOUT).matches;
+    if (phone && box && (box.top < 0 || box.top > window.innerHeight - 200)) el.scrollIntoView({ block: "start", behavior: "smooth" });
   }
   async function saveTermin(lead, { date, time }) {
     if (await run(() => uc.scheduleMeeting(lead, { date, time: time || undefined }), "Termin eingetragen") !== undefined) {
@@ -593,13 +607,26 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       // The answer goes into that thread: the server sends it there with the newest mail's Message-ID.
       startCompose("out", "E-Mail", { threadId: el.dataset.thread, subject: msg?.mail.subject || "", replyTo: msg?.id || null });
     },
-    async saveNote() {
-      const lead = currentLead(S());
-      const c = S().ui.compose;
-      const text = c.text.trim();
-      if (!text) return toast("Bitte Text eingeben");
-      // A note is no contact: it goes into the lead's Notizen, dated, below what is there.
-      if (await run(() => uc.addNote(lead, text), "Notiz gespeichert") !== undefined) composeSaved(c);
+    async noteAdd() {
+      const text = (S().ui.noteDraft || "").trim();
+      if (!text) return;
+      if (await run(() => uc.changeNote(currentLead(S()), { add: text }), "Notiz gespeichert") === undefined) return;
+      ui({ noteDraft: null });
+      render();
+    },
+    async noteSave() {
+      const { id, text } = S().ui.noteEdit;
+      const changed = await run(() => uc.changeNote(currentLead(S()), { note: id, text }));
+      if (changed === undefined) return;
+      // Removed meanwhile: the form gives way to a new note with the text (unshownSheets).
+      if (!changed) return toast("Die Notiz wurde inzwischen gel\xF6scht. Ihr Text steht oben als neue Notiz.");
+      toast("Gespeichert");
+      ui({ noteEdit: null });
+      render();
+    },
+    noteEditCancel: () => {
+      ui({ noteEdit: null });
+      render();
     },
     statusMenu: () => {
       ui({ statusMenu: !S().ui.statusMenu });
@@ -617,14 +644,25 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ changesOpen: !S().ui.changesOpen });
       render();
     },
-    /** The call sheet, opened by the call itself (the tel link goes on to dial) or from the composer. */
-    callOpen: () => {
-      ui({ call: S().ui.call || {}, termin: null, compose: null, contactPick: null, statusMenu: false });
+    logMenu: () => {
+      ui({ logMenu: !S().ui.logMenu, statusMenu: false });
       render();
+    },
+    /** A visit, from "Eintragen": the visit's form, on any lead open to contact. */
+    visitOpen: () => {
+      ui({ contactPick: { channel: "Vor Ort", text: "" }, compose: null, call: null, termin: null, logMenu: false });
+      render();
+      reveal("#cpText");
+    },
+    /** The call sheet, opened by the call itself (the tel link goes on to dial), from "Eintragen" or the Kontaktiert question. */
+    callOpen: () => {
+      ui({ call: S().ui.call || {}, termin: null, compose: null, contactPick: null, statusMenu: false, logMenu: false });
+      render();
+      reveal(".sheet");
     },
     /** An appointment agreed outside a call: its own sheet, which logs no call. */
     terminOpen: () => {
-      ui({ termin: S().ui.termin || {}, call: null, compose: null, statusMenu: false });
+      ui({ termin: S().ui.termin || {}, call: null, compose: null, statusMenu: false, logMenu: false });
       render();
       root.querySelector("#agDate")?.scrollIntoView({ block: "center" });
     },
@@ -656,7 +694,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const { channel, text } = st.ui.contactPick;
       const r = await run(
         () => uc.logActivity(lead, actsOf(st, lead.id), { direction: "out", channel, date: clock.today(), text: text.trim() || VISIT_NOTE }),
-        (res) => res.plan.followUp ? "Kontaktiert \xB7 nachfassen " + relDate(res.plan.followUp, clock.today()) : "Kontaktiert"
+        (res) => res.plan.status !== "kontaktiert" ? "Besuch eingetragen" : res.plan.followUp ? "Kontaktiert \xB7 nachfassen " + relDate(res.plan.followUp, clock.today()) : "Kontaktiert"
       );
       if (r) {
         ui({ contactPick: null });
@@ -834,8 +872,6 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (d.open) return st.ui.searchOpen ? openResult(d.open) : openLead(d.open);
     if (d.queue) return startRound("queue", d.queue);
     if (d.compose) return d.compose === "in" ? startCompose("in") : startCompose("out", d.compose);
-    // Back to writing with nothing written yet: the template fills it again.
-    if (d.mode) return d.mode === "out" && !st.ui.compose.text ? startCompose("out", st.ui.compose.channel, st.ui.compose.thread) : sheet("compose", { direction: d.mode });
     if (d.ch) return sheet("compose", { channel: d.ch });
     if (d.cp) return sheet("contactPick", { channel: d.cp });
     if (d.feed) {
@@ -864,7 +900,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const a = st.data.activities.find((x) => x.id === d.copy);
       return toast(a && copyText(a.text) ? "Kopiert" : "Kopieren nicht m\xF6glich");
     }
-    const writes = d.status || d.lost || d.todoDone || d.todoUndo || d.todoRemove || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.step || d.stepUndo || d.skip || d.cancel || d.phase && d.phase !== "gekuendigt" || d.act && !UI_ONLY_ACTIONS.has(d.act);
+    const writes = d.status || d.lost || d.todoDone || d.todoUndo || d.todoRemove || d.noteRemove || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.step || d.stepUndo || d.skip || d.cancel || d.phase && d.phase !== "gekuendigt" || d.act && !UI_ONLY_ACTIONS.has(d.act);
     if (writes && !uc) return toast("Keine Verbindung zur Datenbank");
     if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash(st.ui.trashBefore);
     if (d.purge) {
@@ -906,6 +942,14 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       return root.querySelector("#teText")?.focus();
     }
     if (d.todoRemove) return run(() => uc.changeTodo(lead, { todo: d.todoRemove, remove: true }), "Todo gel\xF6scht");
+    if (d.noteRemove) return confirm("Diese Notiz l\xF6schen?") && run(() => uc.changeNote(lead, { note: d.noteRemove, remove: true }), "Notiz gel\xF6scht");
+    if (d.noteEdit) {
+      const n = notesOf(lead).find((x) => x.id === d.noteEdit);
+      if (!n) return;
+      ui({ noteEdit: { id: n.id, text: n.text } });
+      render();
+      return root.querySelector("#neText")?.focus();
+    }
     if (d.hall) {
       ui({ hAll: d.hall === "1" });
       return render();
@@ -977,6 +1021,14 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     }
     // A quick edit keeps what is typed, with the value it was typed over, so a redraw or a return draws it back.
     if (t.id === "qe" && S().ui.editField) return ui({ editDraft: { value: t.value, from: S().ui.editDraft?.from ?? String(currentLead(S())?.[t.dataset.field] ?? "") } });
+    // A note being written or changed is kept as typed; only the add button follows it, so the field keeps its focus.
+    if (t.id === "ntText") {
+      ui({ noteDraft: t.value });
+      const add = root.querySelector('[data-act="noteAdd"]');
+      if (add) add.disabled = !t.value.trim();
+      return lockForInput(S(), clock.today());
+    }
+    if (t.id === "neText" && S().ui.noteEdit) return ui({ noteEdit: { ...S().ui.noteEdit, text: t.value } });
     if (t.id === "teText" && S().ui.todoEdit) return ui({ todoEdit: { ...S().ui.todoEdit, text: t.value } });
     if (t.id === "cpText" && S().ui.contactPick) return ui({ contactPick: { ...S().ui.contactPick, text: t.value } });
     if (t.id === "ciNote" && S().ui.checkIn) return ui({ checkIn: { ...S().ui.checkIn, note: t.value } });
@@ -1013,6 +1065,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (t.id === "teDue" && st.ui.todoEdit) return ui({ todoEdit: { ...st.ui.todoEdit, due: t.value } });
     if (t.id === "tdDue") return ui({ todoDraft: { ...st.ui.todoDraft, due: t.value } });
     if (t.id === "ciNext" && st.ui.checkIn) return sheet("checkIn", { next: t.value });
+    // A call entered later: its day, today unless picked; today itself is no day picked.
+    if (t.id === "callDay" && st.ui.call) return sheet("call", { day: t.value && t.value !== clock.today() ? t.value : "" });
     if (t.id === "kOwnerOf") return run(() => uc.changeCustomer(lead, { owner: t.value }), t.value ? "Betreut von " + actorName(t.value) : "Niemand betreut");
     if (t.dataset.filter) {
       ui({ [t.dataset.filter]: t.value });

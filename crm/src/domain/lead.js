@@ -18,6 +18,7 @@ export const LEAD_FIELDS = {
   currentTool: "unbekannt",
   hook: "",
   notes: "",
+  // the notes as one text, from before 1.25.0; since then each note is an entry in noteEntries (notes.js)
   nextStep: "",
   followUp: null,
   lostReason: null,
@@ -34,6 +35,14 @@ export const LEAD_FIELDS = {
 export const str = (v, max = Infinity) => (v == null ? "" : String(v).trim()).slice(0, max);
 /** One line of text: every run of white space, line breaks included, one space; trimmed and capped as `str`. */
 export const oneLine = (v, max = Infinity) => str(String(v ?? "").replace(/\s+/g, " "), max);
+/**
+ * A reservation system as stored: one of RESERVATION_TOOLS or of the `known` ones other leads have, spelled as there
+ * whatever the case, or any other name typed (a system new to us, such as Respilot); none is "unbekannt".
+ */
+export function toolName(v, known = []) {
+  const name = oneLine(v, 60);
+  return !name ? "unbekannt" : [...RESERVATION_TOOLS, ...known].find((t) => t.toLowerCase() === name.toLowerCase()) || name;
+}
 export const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 /**
  * The one place the lead rules live: every write (web, MCP, import) runs the merged lead through here.
@@ -47,7 +56,7 @@ export function normalizeLead(input, base = LEAD_FIELDS, today) {
   if (!STATUSES.has(out.status)) throw new ValidationError("status", "Unbekannter Status");
   out.fit = Math.min(3, Math.max(1, parseInt(out.fit, 10) || 2));
   if (!BUSINESS_TYPES.includes(out.type)) out.type = "Sonstiges";
-  if (!RESERVATION_TOOLS.includes(out.currentTool)) out.currentTool = "unbekannt";
+  out.currentTool = toolName(out.currentTool);
   out.followUp = isDate(out.followUp) ? out.followUp : null;
   out.optOutAt = isDate(out.optOutAt) ? out.optOutAt : null;
   out.contactedAt = isDate(out.contactedAt) ? out.contactedAt : null;
