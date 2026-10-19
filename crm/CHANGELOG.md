@@ -2,6 +2,12 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.21.0 (2026-10-19)
+
+- **Check-ins:** a customer who goes live gets a check-in 14 days later, a second 90 days after going live, then one every 90 days. Each is the customer's next step on its day, so it shows in Heute. On the customer's page, "Check-in eintragen" asks how it went (Gut, Offene Fragen, Unzufrieden), with a note and, if you like, the day of the next one; "Unzufrieden" asks for that day. A mail or message of ours leaves the check-in planned, as the onboarding step is in onboarding. A live customer from before, or one stored as Live by 1.20.0, gets its first check-in 14 days after you first change something on it, as its next step. A customer live again after a cancellation starts that day: its first check-in 14 days on, an unhappy check-in from before past.
+- **Achtung:** a customer whose onboarding step is 3 days late, whose check-in is a week late, or whose last check-in was "Unzufrieden" shows "Achtung" with the reason, on its page, first in the Kunden tab (also as a filter), and in Heute in its own section "Kunden: Achtung", right after new answers.
+- **Heute, Meine or Alle:** Heute shows your own customers and all leads; "Alle" adds the customers the other looks after. A customer's row in Heute says Onboarding, Check-in or why it needs attention.
+
 ## 1.20.0 (2026-10-19)
 
 - **Kunden, a tab of their own:** every customer with its phase (Onboarding with how far it is, Live, Gekündigt), its next step and who looks after it. Filter by phase and by "Betreut von"; the next step due comes first.

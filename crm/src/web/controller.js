@@ -10,7 +10,7 @@ import { relDate, actorName } from './format.js';
 import { PHASE_LABEL, customerOf } from '../domain/customer.js';
 import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostPick", "lostCancel", "cancelPickClose", "statusMenu", "statusDirect", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostPick", "lostCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "statusDirect", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -48,7 +48,7 @@ const sheetKey = (ui) => ui.termin ? "termin" : ui.meeting ? "meeting" : "call";
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 /** A screen holding input not yet saved: search stays shut there, so that it cannot leave the screen by accident. */
 // The call sheet holds input once an outcome is picked: its fields show only then.
-const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.meeting || u.quick || u.icpEdit);
+const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.meeting || u.quick || u.icpEdit);
 /**
  * The UI state for an address. What a lead page has open lasts only while that lead is on screen: leaving it, or
  * opening another, starts fresh. The quick-add and ICP forms close on any address, as they show on their tab only;
@@ -58,7 +58,7 @@ const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField 
  */
 export function enterRoute(ui, route) {
   const sameLead = LEAD_VIEWS.has(route.view) && LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
-  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, cancelPick: false, call: null, termin: null, meeting: null, editField: null, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false }) };
+  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, cancelPick: false, checkIn: null, call: null, termin: null, meeting: null, editField: null, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false }) };
   if (route.view) return next;
   return { ...next, round: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
 }
@@ -623,6 +623,22 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ lostPick: true, statusMenu: false });
       render();
     },
+    checkInOpen: () => {
+      ui({ checkIn: {} });
+      render();
+      root.querySelector('[data-checkin-result]')?.scrollIntoView({ block: "center" });
+    },
+    checkInCancel: () => {
+      ui({ checkIn: null });
+      render();
+    },
+    async checkInSave() {
+      const { result, note, next } = S().ui.checkIn;
+      if (await run(() => uc.changeCustomer(currentLead(S()), { checkIn: result, note: note || undefined, next: next || undefined }), "Check-in eingetragen") !== undefined) {
+        ui({ checkIn: null });
+        render();
+      }
+    },
     cancelPickClose: () => {
       ui({ cancelPick: false });
       render();
@@ -779,6 +795,11 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ lostPick: false });
       return run(() => pickLostReason(uc, lead, d.lost), lead.status === "disqualifiziert" ? "Grund gespeichert" : "Status: " + STAGE_LABEL.disqualifiziert);
     }
+    if (d.checkinResult) return sheet("checkIn", { result: d.checkinResult });
+    if (d.hall) {
+      ui({ hAll: d.hall === "1" });
+      return render();
+    }
     // A Kunde's care: a step done, open again or skipped; the phase, Gekündigt with its reason.
     if (d.step) return run(() => uc.changeCustomer(lead, { step: d.step }), "Erledigt");
     if (d.stepUndo) return run(() => uc.changeCustomer(lead, { step: d.stepUndo, done: false }), "Wieder offen");
@@ -836,6 +857,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     // The call, Termin and meeting sheets keep what is typed in the UI state too, for their preview and any redraw.
     const outcomeKey = sheetKey(S().ui);
     if (AGREED_FIELDS[t.id] && S().ui[outcomeKey]) return ui({ [outcomeKey]: { ...S().ui[outcomeKey], [AGREED_FIELDS[t.id]]: t.value.trim() } });
+    if (t.id === "ciNote" && S().ui.checkIn) return ui({ checkIn: { ...S().ui.checkIn, note: t.value } });
     if (t.id === "cSubj" && c) return ui({ compose: { ...c, subject: t.value } });
     if (t.id === "cText" && c) {
       ui({ compose: { ...c, text: t.value } });
@@ -866,6 +888,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (AGREED_FIELDS[t.id] && st.ui[outcomeKey] && t.id !== "agNote") return sheet(outcomeKey, { [AGREED_FIELDS[t.id]]: t.value.trim() });
     if (t.id === "laterDate" && t.value) return postpone(t.value);
     if (t.id === "qe" && t.tagName === "SELECT") return saveQuickEdit();
+    if (t.id === "ciNext" && st.ui.checkIn) return sheet("checkIn", { next: t.value });
     if (t.id === "kOwnerOf") return run(() => uc.changeCustomer(lead, { owner: t.value }), t.value ? "Betreut von " + actorName(t.value) : "Niemand betreut");
     if (t.dataset.filter) {
       ui({ [t.dataset.filter]: t.value });

@@ -1593,7 +1593,7 @@ test("the Kunden tab lists the customers by phase and owner, the next step due f
   assert.deepEqual(rows(view({ kOwner: "ich" })).map(([id]) => id), ["K1"]);
   assert.deepEqual(rows(view({ kPhase: "alle" })).length, 0);
   // Each select counts what the other leaves.
-  assert.deepEqual(optionsOf(view({ kOwner: "ich" }), "kPhase"), ["*aktiv Aktiv (1)", "onboarding Onboarding (1)", "live Live (0)", "gekuendigt Gekündigt (0)"]);
+  assert.deepEqual(optionsOf(view({ kOwner: "ich" }), "kPhase"), ["*aktiv Aktiv (1)", "achtung Achtung (0)", "onboarding Onboarding (1)", "live Live (0)", "gekuendigt Gekündigt (0)"]);
   assert.deepEqual(optionsOf(view({}), "kOwner"), ["*alle Betreut: Alle (2)", "ich Betreut: Ich (1)", "niemand Betreut: Niemand (0)"]);
 });
 
@@ -1611,7 +1611,9 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
   assert.match(page, /data-step-undo="vertrag"/);
   // A customer live already, from before, ticks its list once: its first open step has the buttons too.
   state.ui.leadId = "K2";
-  assert.match(detailView(state, TODAY), /<li class="now"><b>Vertrag unterschrieben<\/b>(<small[^>]*>[^<]*<\/small>)?<div class="two"><button class="primary" data-step="vertrag">Erledigt/);
+  // Its steps are no longer due: no day, nothing late.
+  assert.match(detailView(state, TODAY), /<li class="now"><b>Vertrag unterschrieben<\/b><div class="two"><button class="primary" data-step="vertrag">Erledigt/);
+  assert.doesNotMatch(detailView(state, TODAY), /fällig war/);
   // Cancelled: the reason in view, no step to tick or open again.
   state.ui.leadId = "K3";
   const gone = detailView(state, TODAY);
@@ -1633,6 +1635,73 @@ test("on a Kunde's page a tick, the owner and a cancellation with its reason go 
     await click({ phase: "gekuendigt" });
     await click({ cancel: root.innerHTML.match(/data-cancel="([^"]+)"/)[1] });
     assert.deepEqual(sent, [["K1", { step: "abo" }], ["K1", { owner: "anna@bookete.com" }], ["K1", { phase: "gekuendigt", reason: "Preis" }]]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+// Customers who need attention: Jo's stuck onboarding (a step due the 8th), Anna's unhappy customer, and Jo's live one due today.
+const ATTENTION = [
+  { id: "A1", name: "Linde", status: "kunde", followUp: "2026-10-08", nextStep: "Vertrag unterschrieben", customer: { phase: "onboarding", since: "2026-10-08", owner: "jo@bookete.com" } },
+  { id: "A2", name: "Seeblick", status: "kunde", followUp: "2026-10-30", nextStep: "Check-in", customer: { phase: "live", since: "2026-06-01", liveAt: "2026-06-20", owner: "anna@bookete.com", checkIns: [{ at: "2026-10-14", result: "unzufrieden", by: "anna" }], nextCheckIn: "2026-10-30" } },
+  { id: "A3", name: "Post", status: "kunde", followUp: "2026-10-15", nextStep: "Check-in", customer: { phase: "live", since: "2026-06-01", liveAt: "2026-06-20", owner: "jo@bookete.com", nextCheckIn: "2026-10-15" } },
+  { id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-01", followUp: "2026-10-15" },
+];
+
+test("Heute puts customers who need attention right after the answers, tags customer rows, and shows only my customers unless Alle", async () => {
+  const view = (ui) => {
+    const state = stateWith(ATTENTION, ui);
+    state.me = ME;
+    return todayView(state, TODAY);
+  };
+  const sections = (html) => [...html.matchAll(/<h3>([^<]+) <small>[^]*?<\/ul>/g)].map(([part, title]) => [title, [...part.matchAll(/data-queue="(\w+)"><span class="q-name">[^<]*<\/span><span class="q-ch[^"]*">([^<]*)/g)].map(([, id, tag]) => id + " " + tag)]).filter(([, rows]) => rows.length);
+  // Linde's first step was due the 8th, a week ago; Post's check-in is due today; Anna's customer is not mine.
+  assert.deepEqual(sections(view({})), [["Kunden: Achtung", ["A1 Onboarding hängt"]], ["Heute fällig", ["A3 Check-in", "L1 Kontaktiert"]]]);
+  // Anna's unhappy customer shows with Alle.
+  assert.deepEqual(sections(view({ hAll: true }))[0], ["Kunden: Achtung", ["A1 Onboarding hängt", "A2 Unzufrieden"]]);
+  assert.match(view({}), /data-hall="0" aria-pressed="true">Meine[^]*data-hall="1" aria-pressed="false">Alle/);
+  // A tap on Alle shows everyone's customers.
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const store = createStore(initialState());
+    store.data("leads", ATTENTION.map((l) => ({ ...LEAD_FIELDS, ...l })));
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    store.set((s) => ({ ...s, me: ME }));
+    const { root, click } = fakeBrowser("#/heute", store, {});
+    assert.doesNotMatch(root.innerHTML, /data-queue="A2"/);
+    await click({ hall: "1" });
+    assert.match(root.innerHTML, /data-queue="A2"/);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("the Kunden tab puts customers who need attention first, with why, and filters them", () => {
+  const state = stateWith(ATTENTION, { kOwner: "alle" });
+  state.me = ME;
+  const html = kundenView(state, TODAY);
+  assert.deepEqual([...html.matchAll(/<li( class="att")?><button class="qrow" data-open="(\w+)">[^]*?<span class="q-ch[^"]*">([^<]*)/g)].map(([, att, id, ch]) => [id, !!att, ch]), [["A1", true, "Onboarding hängt"], ["A2", true, "Unzufrieden"], ["A3", false, "Live"]]);
+  assert.deepEqual([...kundenView(stateWith(ATTENTION, { kPhase: "achtung" }), TODAY).matchAll(/data-open="(\w+)"/g)].map(([, id]) => id), ["A1", "A2"]);
+});
+
+test("a live customer's check-in: how it went, a note, and the next date, which Unzufrieden asks for", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const sent = [];
+    const store = createStore(initialState());
+    store.data("leads", ATTENTION.map((l) => ({ ...LEAD_FIELDS, ...l })));
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    store.set((s) => ({ ...s, me: ME }));
+    const { root, click, change, input } = fakeBrowser("#/betrieb/A3", store, { changeCustomer: async (l, c) => (sent.push([l.id, c]), true) });
+    assert.match(root.innerHTML, /Nächster Check-in <b>Do\., 15\. Okt\.<\/b>/);
+    await click({ act: "checkInOpen" });
+    await click({ checkinResult: "unzufrieden" });
+    assert.match(root.innerHTML, /data-act="checkInSave" disabled>/);
+    input("ciNote", "Widget lädt langsam");
+    await change({ id: "ciNext", value: "2026-10-22" });
+    assert.doesNotMatch(root.innerHTML, /data-act="checkInSave" disabled>/);
+    await click({ act: "checkInSave" });
+    assert.deepEqual(sent, [["A3", { checkIn: "unzufrieden", note: "Widget lädt langsam", next: "2026-10-22" }]]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }

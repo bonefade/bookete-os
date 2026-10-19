@@ -3,6 +3,7 @@ import { RESERVATION_TOOLS } from '../domain/constants.js';
 import { meetingDue } from '../domain/activity.js';
 import { isPipeline, isDue, takesFollowUp, lacksNextStep, addressKey, addressOpen } from '../domain/lead.js';
 import { timelinesByLead } from '../domain/stats.js';
+import { customerOf, attentionOf } from '../domain/customer.js';
 
 let cacheKey = null;
 let cacheVal = null;
@@ -69,18 +70,27 @@ export const freshLeads = (state) => scoped(state).filter((l) => l.status === "n
 /** Their message is the newest on the lead: a reply to answer. Not on an opted-out lead, which is not answered from here. */
 export const awaitsAnswer = (state, l) => takesFollowUp(l) && !l.optOutAt && actsOf(state, l.id).at(-1)?.direction === "in";
 /**
- * Heute as one queue, in the order to work it: new replies (newest first), then what is overdue, then what is due
- * today and the leads in work with no next step. A lead shows once, in the first section it belongs to.
+ * Heute as one queue, in the order to work it: new replies (newest first), customers who need attention, then what is
+ * overdue, then what is due today and the leads in work with no next step. A lead shows once, in the first section
+ * it belongs to. "Meine" (the default) leaves out the customers someone else on the team looks after.
  */
 export function todayQueue(state, today) {
-  const leads = scoped(state);
+  const leads = scoped(state).filter((l) => state.ui.hAll || !othersCustomer(state, l));
   const lastDate = (l) => actsOf(state, l.id).at(-1).date;
   const replies = leads.filter((l) => awaitsAnswer(state, l)).sort((a, b) => lastDate(b).localeCompare(lastDate(a)));
   const answered = new Set(replies.map((l) => l.id));
-  const due = leads.filter((l) => !answered.has(l.id) && isDue(l, today)).sort((a, b) => a.followUp < b.followUp ? -1 : a.followUp > b.followUp ? 1 : b.fit - a.fit);
-  const unplanned = leads.filter((l) => !answered.has(l.id) && lacksNextStep(l)).sort((a, b) => b.fit - a.fit);
-  return { replies, overdue: due.filter((l) => l.followUp < today), today: [...due.filter((l) => l.followUp === today), ...unplanned] };
+  // Customers who need attention come right after the answers: an unhappy customer or a stuck onboarding before new sales.
+  const attention = leads.filter((l) => !answered.has(l.id) && l.status === "kunde" && attentionOf(customerOf(l), today)).sort((a, b) => a.name.localeCompare(b.name, "de"));
+  const shown = new Set([...answered, ...attention.map((l) => l.id)]);
+  const due = leads.filter((l) => !shown.has(l.id) && isDue(l, today)).sort((a, b) => a.followUp < b.followUp ? -1 : a.followUp > b.followUp ? 1 : b.fit - a.fit);
+  const unplanned = leads.filter((l) => !shown.has(l.id) && lacksNextStep(l)).sort((a, b) => b.fit - a.fit);
+  return { replies, attention, overdue: due.filter((l) => l.followUp < today), today: [...due.filter((l) => l.followUp === today), ...unplanned] };
 }
+/** A customer someone else on the team looks after: Heute leaves it out unless it shows everyone's ("Alle"). */
+export const othersCustomer = (state, l) => {
+  const owner = l.status === "kunde" ? customerOf(l)?.owner : "";
+  return !!owner && owner !== state.me?.email;
+};
 export const queueList = (state, today) => Object.values(todayQueue(state, today)).flat();
 /** The leads a round works through, freshly computed, so one dealt with drops out by itself. */
 export const roundList = (state, today, list) => list === "calls" ? callList(state, today) : list === "fresh" ? freshLeads(state) : queueList(state, today);

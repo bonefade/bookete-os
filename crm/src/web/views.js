@@ -11,7 +11,7 @@ import { lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
-import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, customerOf, onboardingOf } from '../domain/customer.js';
+import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, onboardingOf, attentionOf } from '../domain/customer.js';
 
 export const ICONS = {
   heute: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
@@ -64,18 +64,23 @@ const quoted = (text) => `„${(text || "").split("\n").find((x) => x.trim()) ||
 function queueRow(state, l, today) {
   const acts = actsOf(state, l.id);
   const last = acts.at(-1);
+  // A customer's row says so: why it needs attention, else what its care is at.
+  const care = l.status === "kunde" ? customerOf(l) : null;
+  const tag = care && (attentionOf(care, today) || (care.phase === "onboarding" ? PHASE_LABEL.onboarding : l.nextStep === CHECK_IN ? CHECK_IN : STAGE_LABEL.kunde));
   const [chip, why, go] = awaitsAnswer(state, l) ? [last.channel, quoted(last.text), "Antworten"]
     : meetingDue(l, today) ? ["Termin", `Wie war der Termin? \xB7 ${fmtDate(l.followUp)}`, "Ergebnis"]
     : lacksNextStep(l) ? ["Kein n\xE4chster Schritt", `${STAGE_LABEL[l.status]}${last ? `, zuletzt ${relDate(last.date, today)}` : ""}, nichts geplant`, "Planen"]
-    : [lastChannel(acts) || STAGE_LABEL[l.status], [nextActionHint(l, acts) || "Nachfassen", l.followUp < today ? "f\xE4llig " + relDate(l.followUp, today) : ""].filter(Boolean).join(" \xB7 "), "\xD6ffnen"];
-  return `<li><button class="qrow" data-queue="${esc(l.id)}"><span class="q-name">${esc(l.name)}</span><span class="q-ch${go === "Planen" ? " none" : ""}">${esc(chip)}</span><span class="q-why">${esc(why)}</span><span class="q-go">${go} ›</span></button></li>`;
+    : [tag || lastChannel(acts) || STAGE_LABEL[l.status], [nextActionHint(l, acts) || "Nachfassen", l.followUp < today ? "f\xE4llig " + relDate(l.followUp, today) : ""].filter(Boolean).join(" \xB7 "), "\xD6ffnen"];
+  return `<li><button class="qrow" data-queue="${esc(l.id)}"><span class="q-name">${esc(l.name)}</span><span class="q-ch${go === "Planen" || care && attentionOf(care, today) ? " none" : ""}">${esc(chip)}</span><span class="q-why">${esc(why)}</span><span class="q-go">${go} ›</span></button></li>`;
 }
 /** The best hours to reach a restaurant by phone, between lunch and dinner service. */
 const CALL_HOURS = "Am besten 14:30–17:00 Uhr, Montag und Dienstag schw\xE4cher.";
 /** Heute as one queue, worked from the top; on a wide screen the week, the next days and the new businesses beside it. */
 export function todayView(state, today) {
   const q = todayQueue(state, today);
-  const open = q.replies.length + q.overdue.length + q.today.length;
+  const open = q.replies.length + q.attention.length + q.overdue.length + q.today.length;
+  // Meine or Alle: whether the customers someone else looks after show too. Only where there are customers.
+  const scope = state.data.leads.some((l) => l.status === "kunde") ? `<div class="chips">${[["0", "Meine"], ["1", "Alle"]].map(([k, label]) => `<button class="chip" data-hall="${k}" aria-pressed="${String(!!state.ui.hAll) === (k === "1" ? "true" : "false")}">${label}</button>`).join("")}</div>` : "";
   const date = (new Date(today + "T12:00:00")).toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long" });
   const sec = (title, sub, arr) => arr.length ? `<div class="sec"><h3>${title} <small>${sub}</small></h3><ul class="ltable">${arr.map((l) => queueRow(state, l, today)).join("")}</ul></div>` : "";
   const calls = callList(state, today).length;
@@ -96,10 +101,11 @@ export function todayView(state, today) {
   <div class="sec"><h3>Bereit zum Anschreiben <small>${fresh.length}</small></h3>${fresh.length ? `<p class="note" style="margin:0 0 8px">${fresh.length} ${fresh.length === 1 ? "neuer Betrieb" : "neue Betriebe"} ohne Kontakt, die besten zuerst.</p><button class="full" data-act="freshStart">Erstkontakte starten ›</button>` : `<div class="empty">Keine neuen Betriebe in dieser Auswahl.</div>`}</div>`;
   return `<div class="wrap wide">
   <div class="head"><div><h1>Heute</h1><p>${esc(date)}${state.ui.region !== "alle" ? " \xB7 " + esc(state.ui.region) : ""}${open ? ` \xB7 ${open} offen` : ""}</p></div>${open ? `<button class="primary" data-act="queueStart">Abarbeiten ›</button>` : ""}</div>
-  ${filterBar(state)}
+  ${filterBar(state, scope)}
   ${loadingOr(state, `<div class="today"><div class="t-main">
   ${open ? `<p class="note" style="margin:0 0 4px">Der Reihe nach von oben. Was Sie erledigen, verschwindet von der Liste.</p>` : `<div class="empty">Alles erledigt.</div>`}
   ${sec("Neue Antworten", `${q.replies.length} \xB7 halten die Nachfass-Folge an`, q.replies)}
+  ${sec("Kunden: Achtung", q.attention.length, q.attention)}
   ${sec("\xDCberf\xE4llig", q.overdue.length, q.overdue)}
   ${sec("Heute f\xE4llig", q.today.length, q.today)}
   ${callSec}
@@ -117,15 +123,16 @@ export function kundenView(state, today) {
   const { kPhase, kOwner } = state.ui;
   const me = state.me?.email;
   const all = state.data.leads.filter((l) => l.status === "kunde").map((l) => ({ l, c: customerOf(l) }));
-  const inPhase = (x, p = kPhase) => p === "aktiv" ? x.c.phase !== "gekuendigt" : x.c.phase === p;
+  const inPhase = (x, p = kPhase) => p === "aktiv" ? x.c.phase !== "gekuendigt" : p === "achtung" ? !!attentionOf(x.c, today) : x.c.phase === p;
   const ownedBy = (x, o = kOwner) => o === "alle" || (o === "ich" ? x.c.owner === me : !x.c.owner);
-  const list = all.filter((x) => inPhase(x) && ownedBy(x)).sort((a, b) => (a.l.followUp || "9") < (b.l.followUp || "9") ? -1 : (a.l.followUp || "9") > (b.l.followUp || "9") ? 1 : a.l.name.localeCompare(b.l.name, "de"));
-  const phases = [["aktiv", "Aktiv"], ...PHASES].map(([k, label]) => [k, label, all.filter((x) => ownedBy(x) && inPhase(x, k)).length]);
+  const list = all.filter((x) => inPhase(x) && ownedBy(x)).sort((a, b) => !!attentionOf(b.c, today) - !!attentionOf(a.c, today) || ((a.l.followUp || "9") < (b.l.followUp || "9") ? -1 : (a.l.followUp || "9") > (b.l.followUp || "9") ? 1 : a.l.name.localeCompare(b.l.name, "de")));
+  const phases = [["aktiv", "Aktiv"], ["achtung", "Achtung"], ...PHASES].map(([k, label]) => [k, label, all.filter((x) => ownedBy(x) && inPhase(x, k)).length]);
   const owners = [["alle", "Alle"], ["ich", "Ich"], ["niemand", "Niemand"]].map(([k, label]) => [k, `Betreut: ${label}`, all.filter((x) => inPhase(x) && ownedBy(x, k)).length]);
   const row = ({ l, c }) => {
     const due = l.followUp && l.followUp <= today;
+    const att = attentionOf(c, today);
     const why = [l.nextStep, l.followUp && relDate(l.followUp, today)].filter(Boolean).join(" \xB7 ") || (c.phase === "gekuendigt" ? c.cancelReason : "nichts geplant");
-    return `<li><button class="qrow" data-open="${esc(l.id)}"><span class="q-name">${esc(l.name)}${l.city ? ` <small>${esc(l.city)}</small>` : ""}</span><span class="q-ch">${esc(phaseText(c))}</span><span class="q-why${due ? " due" : ""}">${esc(why)}</span><span class="q-go">${esc(c.owner ? actorName(c.owner) : "\u2013")} ›</span></button></li>`;
+    return `<li${att ? ' class="att"' : ""}><button class="qrow" data-open="${esc(l.id)}"><span class="q-name">${esc(l.name)}${l.city ? ` <small>${esc(l.city)}</small>` : ""}</span><span class="q-ch${att ? " none" : ""}">${esc(att || phaseText(c))}</span><span class="q-why${due ? " due" : ""}">${esc(why)}</span><span class="q-go">${esc(c.owner ? actorName(c.owner) : "\u2013")} ›</span></button></li>`;
   };
   const active = all.filter((x) => x.c.phase !== "gekuendigt");
   return `<div class="wrap wide">
@@ -446,15 +453,35 @@ function customerHtml(state, l, c, today) {
   const open = c.phase !== "gekuendigt" ? steps.find((s) => !s.at) : null;
   const rows = steps.map((s) => {
     if (s.at) return `<li class="ok"><b>${esc(s.title)}${s.skipped ? " \xB7 entf\xE4llt" : ""}</b><small>${esc(fmtDate(s.at))} \xB7 ${esc(actorName(s.by))}${s.skipped && s.skipped !== "entf\xE4llt" ? " \xB7 " + esc(s.skipped) : ""}</small>${c.phase === "gekuendigt" ? "" : `<button class="more" data-step-undo="${s.id}">Wieder offen</button>`}</li>`;
-    const late = s.due && s.due < today;
-    const when = s.due ? `<small${late ? ' class="late"' : ""}>${late ? "f\xE4llig war " : ""}${esc(fmtDate(s.due))}</small>` : "";
+    // Due days belong to the onboarding; once live, a step still open is no longer late.
+    const late = c.phase === "onboarding" && s.due && s.due < today;
+    const when = c.phase === "onboarding" && s.due ? `<small${late ? ' class="late"' : ""}>${late ? "f\xE4llig war " : ""}${esc(fmtDate(s.due))}</small>` : "";
     if (s === open) return `<li class="now"><b>${esc(s.title)}</b>${when}<div class="two"><button class="primary" data-step="${s.id}">Erledigt</button>${s.id === "live" ? "" : `<button data-skip="${s.id}">Entf\xE4llt \u2026</button>`}</div></li>`;
     return `<li class="todo"><b>${esc(s.title)}</b>${when}</li>`;
   }).join("");
   const where = c.phase === "gekuendigt" ? ` \xB7 ${esc(c.cancelReason)}` : c.phase === "live" && c.liveAt ? ` seit ${esc(fmtDate(c.liveAt))}` : ` \xB7 Tag ${c.since ? Math.max(0, daysBetween(c.since, today)) : 0} von ${ONBOARDING.at(-1)[2]}`;
+  const att = attentionOf(c, today);
+  const onboarding = `<h3 style="margin-top:14px">Onboarding <small>${c.steps.length} von ${ONBOARDING.length}</small></h3><ol class="card checks">${rows}</ol>`;
+  // Live: the check-ins first, the onboarding as it stood below them.
   return `<div class="sec cust"><h3>Kunde <small>${esc(PHASE_LABEL[c.phase])}${where}</small></h3>
+    ${att ? `<p class="att-line">Achtung: ${esc(att)}</p>` : ""}
     <div class="card">${owner}${phases}</div>${cancel}
-    <h3 style="margin-top:14px">Onboarding <small>${c.steps.length} von ${ONBOARDING.length}</small></h3><ol class="card checks">${rows}</ol></div>`;
+    ${c.phase === "live" ? checkInsHtml(c, state.ui.checkIn, today) + onboarding : onboarding}</div>`;
+}
+/** A live customer's check-ins: when the next is due, the form to enter one, and the last three. */
+function checkInsHtml(c, form, today) {
+  const late = c.nextCheckIn && c.nextCheckIn < today;
+  const due = c.nextCheckIn ? `N\xE4chster Check-in <b${late ? ' class="late"' : ""}>${esc(fmtDate(c.nextCheckIn))}</b>` : "Kein Check-in geplant";
+  const sheet = form ? `<div class="card sheet">
+    <p style="margin:0 0 8px;font-weight:600">Wie l\xE4uft's?</p>
+    <div class="chips">${CHECK_IN_RESULTS.map(([k, label]) => `<button class="chip${k === "unzufrieden" ? " lostc" : ""}" data-checkin-result="${k}" aria-pressed="${form.result === k}">${label}</button>`).join("")}</div>
+    <label>Notiz <small>optional</small><textarea id="ciNote" rows="2">${esc(form.note || "")}</textarea></label>
+    <label>N\xE4chster Check-in ${form.result === "unzufrieden" ? "" : "<small>leer: nach dem Rhythmus</small>"}<input type="date" id="ciNext" min="${esc(addDays(today, 1))}" value="${esc(form.next || "")}"></label>
+    <div class="two" style="margin-top:8px"><button data-act="checkInCancel">Abbrechen</button><button class="primary" data-act="checkInSave"${form.result && (form.result !== "unzufrieden" || form.next) ? "" : " disabled"}>Speichern</button></div>
+  </div>` : `<button class="full" data-act="checkInOpen">Check-in eintragen</button>`;
+  const past = c.checkIns.slice(-3).reverse().map((x) => `<li class="ok"><b>${esc(RESULT_LABEL[x.result])}</b><small>${esc(fmtDate(x.at))} \xB7 ${esc(actorName(x.by))}${x.note ? " \xB7 " + esc(x.note) : ""}</small></li>`).join("");
+  return `<h3 style="margin-top:14px">Check-ins <small>${c.checkIns.length}</small></h3>
+    <div class="card"><p class="note" style="margin:0 0 8px">${due}</p>${sheet}${past ? `<ol class="checks" style="padding:4px 0 0">${past}</ol>` : ""}</div>`;
 }
 /**
  * The sequence on a wide screen, as a checklist: a row per day we made contact (as countTouches counts them), the
@@ -544,7 +571,7 @@ function roundBar(state, l, today) {
   if (!r) return "";
   const rest = roundList(state, today, r.list).filter((x) => x.id !== l.id && !r.seen.includes(x.id));
   const q = r.list === "queue" ? todayQueue(state, today) : null;
-  const part = q ? [["replies", "Neue Antworten"], ["overdue", "\xDCberf\xE4llig"], ["today", "Heute f\xE4llig"]].find(([k]) => q[k].some((x) => x.id === l.id)) : null;
+  const part = q ? [["replies", "Neue Antworten"], ["attention", "Kunden: Achtung"], ["overdue", "\xDCberf\xE4llig"], ["today", "Heute f\xE4llig"]].find(([k]) => q[k].some((x) => x.id === l.id)) : null;
   const label = r.list === "calls" ? "Anrufliste" : r.list === "fresh" ? "Erstkontakte" : `Heute${part ? " \xB7 " + part[1] : ""}`;
   const later = state.ui.later ? `<div class="chips later"><button class="chip" data-later="1">Morgen</button><button class="chip" data-later="7">N\xE4chste Woche</button><input type="date" id="laterDate" min="${esc(addDays(today, 1))}" aria-label="Sp\xE4ter am"></div>` : "";
   return `<div class="l-round"><div class="qbar"><span class="q-pos"><b>${label}</b> \xB7 ${r.seen.length + 1} von ${r.seen.length + 1 + rest.length}</span>${takesFollowUp(l) ? `<button class="link" data-act="later" aria-expanded="${!!state.ui.later}">Sp\xE4ter ▾</button>` : ""}<button class="primary" data-act="roundNext">Weiter ›</button></div>${later}</div>`;
