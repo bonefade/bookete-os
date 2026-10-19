@@ -237,7 +237,7 @@ test("the forms, the lead page, the list and search name a field as FIELD_LABEL 
     assert.match(page, />Feld nextStep<input id="nextStep"/);
     assert.match(page, />Feld followUp<\/label>/);
     assert.match(page, /<input type="date" id="fu"[^>]*aria-label="Feld followUp"/);
-    assert.match(page, /<b>Feld status direkt setzen …<\/b>/);
+    assert.match(page, /class="chips stchips" role="group" aria-label="Feld status"/);
     assert.match(page, /<h3>Feld notes<\/h3>/);
     const list = leadsView(state, today);
     const head = list.match(/<li class="lhead"[^>]*>([^]*?)<\/li>/)[1];
@@ -454,17 +454,23 @@ test("Heute offers the new leads to write to first, the best first", async () =>
   }
 });
 
-test("the lead view: the status chip opens the usual moves and setting it directly, the reason picker, and since when the lead is contacted", () => {
+test("the lead view: the status as chips, one tap each, the other moves under Weitere, the reason picker, and since when the lead is contacted", () => {
   const lead = { id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-12" };
   const view = detailView(stateWith([lead], { leadId: "L1" }), TODAY);
-  assert.match(view, /<button class="pill" data-act="statusMenu" aria-expanded="false">Kontaktiert ▾<\/button>/);
-  assert.doesNotMatch(view, /data-status=|data-act="optOut"/);
+  assert.deepEqual([...view.matchAll(/data-status="([^"]+)" aria-pressed="(\w+)"/g)].map((m) => m[1] + " " + m[2]), ["neu false", "kontaktiert true", "qualifiziert false", "kunde false", "disqualifiziert false"]);
+  assert.match(view, /data-act="statusMenu" aria-expanded="false">Weitere ▾/);
+  assert.doesNotMatch(view, /data-act="optOut"/);
   const menu = detailView(stateWith([lead], { leadId: "L1", statusMenu: true }), TODAY);
-  assert.deepEqual([...menu.matchAll(/class="mitem[^"]*" data-act="(\w+)"/g)].map((m) => m[1]), ["terminOpen", "lostPick", "closeWithoutReply", "statusDirect", "optOut"]);
+  assert.deepEqual([...menu.matchAll(/class="mitem[^"]*" data-act="(\w+)"/g)].map((m) => m[1]), ["terminOpen", "closeWithoutReply", "optOut"]);
   // Ohne Antwort abschließen waits for the last of the five contacts.
   assert.match(menu, /data-act="closeWithoutReply" disabled>/);
-  const direct = detailView(stateWith([lead], { leadId: "L1", statusMenu: "direct" }), TODAY);
-  assert.deepEqual([...direct.matchAll(/data-status="([^"]+)"/g)].map((m) => m[1]), ["neu", "kontaktiert", "qualifiziert", "kunde", "disqualifiziert"]);
+  // After an opt-out only Kunde and Disqualifiziert can be set, and there is no menu.
+  const out = detailView(stateWith([{ ...lead, status: "disqualifiziert", lostReason: "Keine Kontaktaufnahme gewünscht", optOutAt: "2026-10-14" }], { leadId: "L1" }), TODAY);
+  assert.deepEqual([...out.matchAll(/data-status="([^"]+)"[^>]*?( disabled)?>/g)].map((m) => m[1] + (m[2] || "")), ["neu disabled", "kontaktiert disabled", "qualifiziert disabled", "kunde", "disqualifiziert"]);
+  assert.doesNotMatch(out, /Weitere ▾/);
+  // Disqualifiziert on it offers only the opt-out reason, the one the server takes.
+  const why = detailView(stateWith([{ ...lead, status: "disqualifiziert", lostReason: "Keine Kontaktaufnahme gewünscht", optOutAt: "2026-10-14" }], { leadId: "L1", lostPick: true }), TODAY);
+  assert.deepEqual([...why.matchAll(/data-lost="([^"]+)"/g)].map((m) => m[1]), ["Keine Kontaktaufnahme gewünscht"]);
   assert.match(view, /seit Mo\., 12\. Okt\./);
   assert.doesNotMatch(view, /data-lost=/);
   const picking = detailView(stateWith([lead], { leadId: "L1", lostPick: true }), TODAY);
@@ -474,8 +480,7 @@ test("the lead view: the status chip opens the usual moves and setting it direct
   const fresh = detailView(stateWith([{ id: "L2", name: "Frisch", status: "neu" }], { leadId: "L2" }), TODAY);
   assert.match(fresh, /Nie kontaktiert/);
   const closed = detailView(stateWith([{ id: "L3", name: "Zu", status: "disqualifiziert", lostReason: "Zu klein" }], { leadId: "L3" }), TODAY);
-  assert.match(closed, /Disqualifiziert \xB7 Zu klein ▾/);
-  assert.match(detailView(stateWith([{ id: "L3", name: "Zu", status: "disqualifiziert", lostReason: "Zu klein" }], { leadId: "L3", statusMenu: true, nextEdit: true }), TODAY), /data-act="lostPick"><span><b>Grund \xE4ndern<\/b><small>Zu klein/);
+  assert.match(closed, /data-status="disqualifiziert" aria-pressed="true">Disqualifiziert \xB7 Zu klein</);
   assert.doesNotMatch(closed, /id="fu"|class="next/);
 });
 
@@ -1601,10 +1606,12 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
   const state = stateWith(KUNDEN, { leadId: "K1" });
   state.me = ME;
   const page = detailView(state, TODAY);
-  assert.match(page, /data-act="statusMenu" aria-expanded="false">Kunde · Onboarding 1\/7 ▾/);
+  assert.match(page, /data-status="kunde" aria-pressed="true">Kunde</);
+  assert.match(page, /class="chips phchips"><span class="note">Phase<\/span><button class="chip" data-phase="onboarding" aria-pressed="true">Onboarding 1\/7</);
+  // The phase is on the customer card too.
+  assert.match(page.split('class="sec cust"')[1], /data-phase="onboarding" aria-pressed="true">Onboarding</);
   assert.doesNotMatch(page, /Für das Gespräch|class="sec desk seq"/);
   assert.match(page, /<select id="kOwnerOf"><option value="">–<\/option><option value="jo@bookete.com" selected>jo \(ich\)<\/option><option value="anna@bookete.com">anna<\/option><\/select>/);
-  assert.match(page, /data-phase="onboarding" aria-pressed="true"/);
   const steps = [...page.split('class="card checks">')[1].split("</ol>")[0].matchAll(/<li class="(\w+)"><b>([^<]*)<\/b>/g)].map(([, cls, b]) => cls + " " + b);
   assert.deepEqual(steps, ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo bookete-Konto angelegt", "todo Widget auf der Website", "todo Google-Profil verknüpft", "todo Team eingeschult", "todo Live"]);
   assert.match(page, /data-step="abo">Erledigt<\/button><button data-skip="abo">/);
@@ -1705,6 +1712,122 @@ test("a live customer's check-in: how it went, a note, and the next date, which 
     assert.doesNotMatch(root.innerHTML, /data-act="checkInSave" disabled>/);
     await click({ act: "checkInSave" });
     assert.deepEqual(sent, [["A3", { checkIn: "unzufrieden", note: "Widget lädt langsam", next: "2026-10-22" }]]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("in Heute, an answer, an appointment's outcome and a customer's Achtung each say more than a todo due the same day", () => {
+  const todo = [{ id: "t", text: "Fotos anfragen", due: "2026-10-15", done: "" }];
+  const leads = [
+    { id: "M1", name: "Termin", status: "qualifiziert", contactedAt: "2026-10-01", followUp: "2026-10-15", nextStep: "Termin", todos: todo },
+    { id: "M2", name: "Achtung", status: "kunde", followUp: "2026-10-08", nextStep: "Vertrag unterschrieben", customer: { phase: "onboarding", since: "2026-10-08" }, todos: [{ id: "u", text: "Logo anfragen", due: "2026-10-07", done: "" }] },
+  ];
+  const html = todayView(stateWith(leads), TODAY);
+  assert.match(html, /data-queue="M1"><span class="q-name">Termin<\/span><span class="q-ch">Termin<\/span><span class="q-why">Wie war der Termin\?/);
+  assert.match(html, /data-queue="M2"><span class="q-name">Achtung<\/span><span class="q-ch none">Onboarding hängt<\/span>/);
+});
+
+test("Heute lists a business whose todo is due, by the earlier of its todo and its next step, and the next 7 days count todos", () => {
+  const leads = [
+    { id: "T1", name: "Linde", status: "kunde", followUp: "2026-10-20", nextStep: "Check-in", todos: [{ id: "a", text: "Fotos anfragen", due: "2026-10-13", done: "" }] },
+    { id: "T2", name: "Krone", status: "neu", todos: [{ id: "b", text: "Speisekarte ansehen", due: "2026-10-15", done: "" }, { id: "c", text: "Morgen", due: "2026-10-16", done: "" }] },
+    { id: "T3", name: "Post", status: "neu", todos: [{ id: "d", text: "erledigt", due: "2026-10-10", done: "2026-10-11" }] },
+  ];
+  const html = todayView(stateWith(leads), TODAY);
+  assert.match(html, /<h3>Überfällig <small>1<\/small>[^]*?data-queue="T1"><span class="q-name">Linde<\/span><span class="q-ch">Todo<\/span><span class="q-why">Fotos anfragen · fällig seit 2 Tagen<\/span>/);
+  assert.match(html, /<h3>Heute fällig <small>1<\/small>[^]*?data-queue="T2"><span class="q-name">Krone<\/span><span class="q-ch">Todo<\/span><span class="q-why">Speisekarte ansehen<\/span>/);
+  assert.doesNotMatch(html, /data-queue="T3"/);
+  assert.match(html, /Fr\., 16\. Okt\. · 1 fällig/);
+  // A Termin counts on its own day, not on a todo's.
+  const termin = [{ id: "T4", name: "Hirsch", status: "qualifiziert", followUp: "2026-10-20", nextStep: "Termin um 10:00", todos: [{ id: "e", text: "Angebot vorbereiten", due: "2026-10-17", done: "" }] }];
+  const days = todayView(stateWith(termin), TODAY);
+  assert.match(days, /Sa\., 17\. Okt\. · 1 fällig</);
+  assert.match(days, /Di\., 20\. Okt\. · 1 fällig, 1 Termin</);
+});
+
+test("Später in a Heute round moves the todo a business is due by; a business due by its next step moves that", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const sent = [];
+    const leads = [
+      { ...LEAD_FIELDS, id: "R1", name: "Frisch", status: "neu", todos: [{ id: "a", text: "Speisekarte ansehen", due: "2026-10-14", done: "" }] },
+      { ...LEAD_FIELDS, id: "R2", name: "Dran", status: "kontaktiert", contactedAt: "2026-10-01", followUp: "2026-10-14" },
+    ];
+    const store = createStore(initialState());
+    store.data("leads", leads);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const uc = { changeTodo: async (l, c) => (sent.push([l.id, "changeTodo", c]), true), setFollowUp: async (l, d) => (sent.push([l.id, "setFollowUp", d]), true) };
+    store.data("leads", [...leads, { ...LEAD_FIELDS, id: "R0", name: "Beides", status: "kontaktiert", contactedAt: "2026-10-01", followUp: "2026-10-13", todos: [{ id: "x", text: "Preise", due: "2026-10-12", done: "" }, { id: "y", text: "Fotos", due: "2026-10-15", done: "" }] }]);
+    const { click } = fakeBrowser("#/heute", store, uc);
+    await click({ act: "queueStart" });
+    // Both due: every todo due and the next step move, so it leaves today's list.
+    await click({ later: "1" });
+    await click({ later: "1" });
+    await click({ later: "1" });
+    assert.deepEqual(sent, [["R0", "changeTodo", { todo: "x", due: "2026-10-16" }], ["R0", "changeTodo", { todo: "y", due: "2026-10-16" }], ["R0", "setFollowUp", "2026-10-16"], ["R1", "changeTodo", { todo: "a", due: "2026-10-16" }], ["R2", "setFollowUp", "2026-10-16"]]);
+    // In a round of first contacts, Später plans the new business, whatever todo it has.
+    sent.length = 0;
+    const fresh = createStore(initialState());
+    fresh.data("leads", [leads[0]]);
+    for (const c of ["activities", "templates", "settings"]) fresh.data(c, []);
+    const round = fakeBrowser("#/heute", fresh, uc);
+    await round.click({ act: "freshStart" });
+    await round.click({ later: "1" });
+    assert.deepEqual(sent, [["R1", "setFollowUp", "2026-10-16"]]);
+    // A business closed already, in Heute for its todo, can put that todo off too.
+    const closed = stateWith([{ id: "R3", name: "Zu", status: "disqualifiziert", lostReason: "Zu klein", todos: [{ id: "c", text: "Absage bestätigen", due: "2026-10-14", done: "" }] }], { leadId: "R3", round: { list: "queue", seen: [] } });
+    assert.match(detailView(closed, TODAY), /data-act="later"/);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("on a business's page: todos to add with a day, tick and remove; the status is one tap, Disqualifiziert asks why", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const sent = [];
+    const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kontaktiert", contactedAt: "2026-10-12", todos: [{ id: "a", text: "Speisekarte ansehen", due: "2026-10-14", done: "" }, { id: "b", text: "erledigt", due: "", done: "2026-10-13" }] };
+    const store = createStore(initialState());
+    store.data("leads", [lead]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    const uc = { changeTodo: async (l, c) => (sent.push(["changeTodo", c]), true), changeStatus: async (l, s) => (sent.push(["changeStatus", s]), true) };
+    const { root, click, change, input, field, app } = fakeBrowser("#/betrieb/L1", store, uc);
+    assert.match(root.innerHTML, /<h3>Todos <small>1 offen<\/small>[^]*Speisekarte ansehen<small class="late">fällig war Mi\., 14\. Okt\.<\/small>[^]*1 erledigt/);
+    assert.match(root.innerHTML, /data-act="todoAdd" disabled>/);
+    input("tdText", "Agentur anrufen");
+    await change({ id: "tdDue", value: "2026-10-20" });
+    await click({ act: "todoAdd" });
+    // Added: the line is empty again. While a todo is typed or changed, search is shut, as for any form.
+    assert.match(root.innerHTML, /<input id="tdText" placeholder="Neues Todo …" value=""/);
+    input("tdText", "halb getippt");
+    await change({ id: "tdDue", value: "2026-10-22" });
+    assert.equal(field.disabled, true);
+    input("tdText", "");
+    await change({ id: "tdDue", value: "" });
+    assert.equal(field.disabled, false);
+    // A tap on a todo opens its text and day to change.
+    await click({ todoEdit: "a" });
+    input("teText", "Speisekarte und Preise ansehen");
+    await change({ id: "teDue", value: "2026-10-21" });
+    await click({ act: "todoSave" });
+    await click({ todoDone: "a" });
+    await click({ todoRemove: "a" });
+    // One tap sets the status; nothing asks first.
+    let asked = false;
+    globalThis.confirm = () => (asked = true);
+    await click({ status: "qualifiziert" });
+    assert.equal(asked, false);
+    await click({ status: "disqualifiziert" });
+    assert.match(root.innerHTML, /Warum disqualifiziert\?/);
+    // A todo being changed that the other user removes meanwhile: the edit ends with it, and the screen is free again.
+    await click({ todoEdit: "a" });
+    assert.equal(field.disabled, true);
+    store.data("leads", [{ ...lead, todos: lead.todos.filter((t) => t.id !== "a") }]);
+    await app.onDataChanged();
+    assert.equal(field.disabled, false);
+    store.data("leads", [lead]);
+    assert.deepEqual(sent, [["changeTodo", { add: "Agentur anrufen", due: "2026-10-20" }], ["changeTodo", { todo: "a", text: "Speisekarte und Preise ansehen", due: "2026-10-21" }], ["changeTodo", { todo: "a", done: true }], ["changeTodo", { todo: "a", remove: true }], ["changeStatus", "qualifiziert"]]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }

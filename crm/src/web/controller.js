@@ -1,6 +1,8 @@
 import { STAGE_LABEL, OPT_OUT_REASON } from '../domain/constants.js';
 import { ValidationError } from '../domain/errors.js';
 import { actsOf, currentLead, icpOf, isReady, roundList } from './selectors.js';
+import { todosOf } from '../domain/todos.js';
+import { isDue, takesFollowUp } from '../domain/lead.js';
 import { addDays } from '../domain/dates.js';
 import { copyText, channelLink, mailSubject, saveFile } from './platform.js';
 import { createBackup } from '../domain/backup.js';
@@ -10,7 +12,7 @@ import { relDate, actorName } from './format.js';
 import { PHASE_LABEL, customerOf } from '../domain/customer.js';
 import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostPick", "lostCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "statusDirect", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -48,7 +50,7 @@ const sheetKey = (ui) => ui.termin ? "termin" : ui.meeting ? "meeting" : "call";
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 /** A screen holding input not yet saved: search stays shut there, so that it cannot leave the screen by accident. */
 // The call sheet holds input once an outcome is picked: its fields show only then.
-const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.meeting || u.quick || u.icpEdit);
+const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.todoDraft?.text?.trim() || u.todoEdit || u.meeting || u.quick || u.icpEdit);
 /**
  * The UI state for an address. What a lead page has open lasts only while that lead is on screen: leaving it, or
  * opening another, starts fresh. The quick-add and ICP forms close on any address, as they show on their tab only;
@@ -58,7 +60,7 @@ const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField 
  */
 export function enterRoute(ui, route) {
   const sameLead = LEAD_VIEWS.has(route.view) && LEAD_VIEWS.has(ui.view) && ui.leadId === route.leadId;
-  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, cancelPick: false, checkIn: null, call: null, termin: null, meeting: null, editField: null, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false }) };
+  const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...(!sameLead && { compose: null, lostPick: false, cancelPick: false, checkIn: null, todoDraft: null, todoEdit: null, todosDone: false, call: null, termin: null, meeting: null, editField: null, changes: null, expanded: new Set(), statusMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false }) };
   if (route.view) return next;
   return { ...next, round: null, ...(route.tab === "mehr" && ui.tab !== "mehr" && { trash: null }) };
 }
@@ -180,16 +182,24 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
   }
   let pending = false;
   /** Draws the current screen; false when there was none to draw and it went to the tab instead. */
+  /** Search and the tabs shut while the screen holds input not yet saved, so neither can leave it by accident. */
+  function lockForInput(st, today) {
+    searchEl.disabled = holdsInput(st.ui);
+    tabsEl.innerHTML = tabBar(st, today, holdsInput(st.ui));
+  }
   function render() {
+    // A todo being changed that the other user ticked or removed meanwhile: its form is gone, so is the edit.
+    const editing = S().ui.todoEdit;
+    if (editing && !(currentLead(S())?.todos || []).some((t) => t.id === editing.id && !t.done)) ui({ todoEdit: null });
     const st = S();
     const today = clock.today();
     const view = st.ui.view;
     if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
-    searchEl.disabled = holdsInput(st.ui);
+    lockForInput(st, today);
     drawSearch(st);
     root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, betriebe: leadsView, kunden: kundenView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     // The tabs show on every screen; while a form holds input they are shut, as the search field is, so nothing typed is lost.
-    tabsEl.innerHTML = tabBar(st, today, holdsInput(st.ui));
+
     if (view === "detail") loadHistory(st);
     if (st.ui.compose?.channel === "E-Mail" && st.caps.gmail) loadSignature();
     return true;
@@ -371,9 +381,22 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     ui({ round: { ...st.ui.round, seen } });
     go(routeOf({ view: "detail", leadId: next.id }), { replace: true });
   }
-  /** Später in a round: the lead's follow-up moves to `date`, and the round goes on. */
+  /**
+   * "Später" in a round: whatever puts the business on today's list moves to `date`, so it leaves it. In Heute, each
+   * todo due and the next step if it is due (or, with neither, the next step); in a round of calls or first
+   * contacts, the next step, which is what put it there.
+   */
   async function postpone(date) {
-    if (await run(() => uc.setFollowUp(currentLead(S()), date), "Sp\xE4ter: " + relDate(date, clock.today())) === undefined) return;
+    const lead = currentLead(S());
+    const today = clock.today();
+    const todos = S().ui.round?.list === "queue" ? todosOf(lead).filter((t) => !t.done && t.due && t.due <= today) : [];
+    const followUp = takesFollowUp(lead) && (!todos.length || isDue(lead, today));
+    const later = async () => {
+      for (const t of todos) await uc.changeTodo(lead, { todo: t.id, due: date });
+      if (followUp) await uc.setFollowUp(lead, date);
+      return true;
+    };
+    if (await run(later, "Sp\xE4ter: " + relDate(date, today)) === undefined) return;
     ui({ later: false });
     roundNext();
   }
@@ -542,10 +565,6 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ statusMenu: !S().ui.statusMenu });
       render();
     },
-    statusDirect: () => {
-      ui({ statusMenu: "direct" });
-      render();
-    },
     nextEdit: () => {
       ui({ nextEdit: !S().ui.nextEdit });
       render();
@@ -619,8 +638,26 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ statusMenu: false });
       return run(() => uc.closeWithoutReply(currentLead(S())), "Abgeschlossen");
     },
-    lostPick: () => {
-      ui({ lostPick: true, statusMenu: false });
+    async todoAdd() {
+      const { text = "", due = "" } = S().ui.todoDraft || {};
+      if (await run(() => uc.changeTodo(currentLead(S()), { add: text, ...(due && { due }) }), "Todo angelegt") !== undefined) {
+        ui({ todoDraft: null });
+        render();
+      }
+    },
+    async todoSave() {
+      const { id, text, due } = S().ui.todoEdit;
+      if (await run(() => uc.changeTodo(currentLead(S()), { todo: id, text, due }), "Gespeichert") !== undefined) {
+        ui({ todoEdit: null });
+        render();
+      }
+    },
+    todoEditCancel: () => {
+      ui({ todoEdit: null });
+      render();
+    },
+    todosDoneToggle: () => {
+      ui({ todosDone: !S().ui.todosDone });
       render();
     },
     checkInOpen: () => {
@@ -769,7 +806,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const a = st.data.activities.find((x) => x.id === d.copy);
       return toast(a && copyText(a.text) ? "Kopiert" : "Kopieren nicht m\xF6glich");
     }
-    const writes = d.status || d.lost || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.step || d.stepUndo || d.skip || d.cancel || d.phase && d.phase !== "gekuendigt" || d.act && !UI_ONLY_ACTIONS.has(d.act);
+    const writes = d.status || d.lost || d.todoDone || d.todoUndo || d.todoRemove || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.step || d.stepUndo || d.skip || d.cancel || d.phase && d.phase !== "gekuendigt" || d.act && !UI_ONLY_ACTIONS.has(d.act);
     if (writes && !uc) return toast("Keine Verbindung zur Datenbank");
     if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash(st.ui.trashBefore);
     if (d.purge) {
@@ -778,14 +815,13 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     }
     const lead = currentLead(st);
     if (d.status) {
-      if (lead.status === d.status) return;
-      // Disqualifiziert needs a reason: the picker asks for it, and the reason picked writes both at once.
+      // Disqualifiziert needs a reason: the picker asks for it (on a closed lead, for a new one), and the reason
+      // picked writes both at once. Any other status is one tap.
       if (d.status === "disqualifiziert") {
         ui({ lostPick: true, statusMenu: false });
         return render();
       }
-      // Set directly, past what happened, is the rare fix: it asks once.
-      if (!confirm(`Status direkt auf „${STAGE_LABEL[d.status]}“ setzen?`)) return;
+      if (lead.status === d.status) return;
       ui({ statusMenu: false, lostPick: false });
       return run(() => uc.changeStatus(lead, d.status), "Status: " + STAGE_LABEL[d.status]);
     }
@@ -796,6 +832,15 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       return run(() => pickLostReason(uc, lead, d.lost), lead.status === "disqualifiziert" ? "Grund gespeichert" : "Status: " + STAGE_LABEL.disqualifiziert);
     }
     if (d.checkinResult) return sheet("checkIn", { result: d.checkinResult });
+    if (d.todoDone) return run(() => uc.changeTodo(lead, { todo: d.todoDone, done: true }), "Erledigt");
+    if (d.todoUndo) return run(() => uc.changeTodo(lead, { todo: d.todoUndo, done: false }), "Wieder offen");
+    if (d.todoEdit) {
+      const t = (currentLead(st).todos || []).find((x) => x.id === d.todoEdit);
+      ui({ todoEdit: t ? { id: t.id, text: t.text, due: t.due || "" } : null });
+      render();
+      return root.querySelector("#teText")?.focus();
+    }
+    if (d.todoRemove) return run(() => uc.changeTodo(lead, { todo: d.todoRemove, remove: true }), "Todo gel\xF6scht");
     if (d.hall) {
       ui({ hAll: d.hall === "1" });
       return render();
@@ -857,6 +902,15 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     // The call, Termin and meeting sheets keep what is typed in the UI state too, for their preview and any redraw.
     const outcomeKey = sheetKey(S().ui);
     if (AGREED_FIELDS[t.id] && S().ui[outcomeKey]) return ui({ [outcomeKey]: { ...S().ui[outcomeKey], [AGREED_FIELDS[t.id]]: t.value.trim() } });
+    // The new todo's text is kept as typed; only its button follows it, so the field keeps its focus.
+    if (t.id === "tdText") {
+      ui({ todoDraft: { ...S().ui.todoDraft, text: t.value } });
+      const add = root.querySelector('[data-act="todoAdd"]');
+      if (add) add.disabled = !t.value.trim();
+      // Typed text is input to keep: search and the tabs shut while it is there.
+      return lockForInput(S(), clock.today());
+    }
+    if (t.id === "teText" && S().ui.todoEdit) return ui({ todoEdit: { ...S().ui.todoEdit, text: t.value } });
     if (t.id === "ciNote" && S().ui.checkIn) return ui({ checkIn: { ...S().ui.checkIn, note: t.value } });
     if (t.id === "cSubj" && c) return ui({ compose: { ...c, subject: t.value } });
     if (t.id === "cText" && c) {
@@ -888,6 +942,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (AGREED_FIELDS[t.id] && st.ui[outcomeKey] && t.id !== "agNote") return sheet(outcomeKey, { [AGREED_FIELDS[t.id]]: t.value.trim() });
     if (t.id === "laterDate" && t.value) return postpone(t.value);
     if (t.id === "qe" && t.tagName === "SELECT") return saveQuickEdit();
+    if (t.id === "teDue" && st.ui.todoEdit) return ui({ todoEdit: { ...st.ui.todoEdit, due: t.value } });
+    if (t.id === "tdDue") return ui({ todoDraft: { ...st.ui.todoDraft, due: t.value } });
     if (t.id === "ciNext" && st.ui.checkIn) return sheet("checkIn", { next: t.value });
     if (t.id === "kOwnerOf") return run(() => uc.changeCustomer(lead, { owner: t.value }), t.value ? "Betreut von " + actorName(t.value) : "Niemand betreut");
     if (t.dataset.filter) {

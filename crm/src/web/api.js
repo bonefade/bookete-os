@@ -64,6 +64,7 @@ export function createApi(onWrite) {
     logCall: (lead, call) => rpc("logCall", { id: lead.id, ...call }),
     undoCall: (activity) => rpc("undoCall", { activityId: activity.id }),
     meetingOutcome: (lead, meeting) => rpc("meetingOutcome", { id: lead.id, ...meeting }),
+    changeTodo: (lead, change) => rpc("changeTodo", { id: lead.id, ...change }),
     changeCustomer: (lead, change) => rpc("changeCustomer", { id: lead.id, ...change }),
     scheduleMeeting: (lead, meeting) => rpc("scheduleMeeting", { id: lead.id, ...meeting }),
     optOut: (lead, note) => rpc("optOut", { id: lead.id, note }),

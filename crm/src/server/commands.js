@@ -39,6 +39,14 @@ const CustomerChange = z.union([
   z.object({ id, phase: z.enum(PHASES.map(([k]) => k)), reason: z.enum(CANCEL_REASONS).optional() }).strict(),
   z.object({ id, checkIn: z.enum(CHECK_IN_RESULTS.map(([k]) => k)), note: z.string().max(500).optional(), next: date.optional() }).strict(),
 ]);
+// One change to a business's todos: a new one with an optional due day, one done or open again, its text or due day, or gone.
+const dueDay = z.union([date, z.literal("")]);
+const TodoChange = z.union([
+  z.object({ id, add: z.string().min(1).max(300), due: dueDay.optional() }).strict(),
+  z.object({ id, todo: id, done: z.boolean() }).strict(),
+  z.object({ id, todo: id, text: z.string().min(1).max(300).optional(), due: dueDay.optional() }).strict().refine((c) => "text" in c || "due" in c, "Text oder Datum"),
+  z.object({ id, todo: id, remove: z.literal(true) }).strict(),
+]);
 const Email = z.object({ id, subject: z.string().min(1).max(300), text: text.min(1), templateId: z.string().max(100).nullish(), replyTo: id.nullish(), signed: z.boolean().optional() });
 
 /** Web-app commands: name → input schema and the use case it runs. */
@@ -55,6 +63,7 @@ export const COMMANDS = {
   logCall: [CallInput.extend({ id }), (uc, { id: leadId, ...call }) => uc.logCall(leadId, call)],
   undoCall: [z.object({ activityId: id }), (uc, a) => uc.undoCall(a.activityId)],
   meetingOutcome: [MeetingInput, (uc, { id: leadId, ...meeting }) => uc.meetingOutcome(leadId, meeting)],
+  changeTodo: [TodoChange, (uc, { id: leadId, ...change }) => uc.changeTodo(leadId, change)],
   changeCustomer: [CustomerChange, (uc, { id: leadId, ...change }) => uc.changeCustomer(leadId, change)],
   scheduleMeeting: [z.object({ id, date, time: time.optional() }).strict(), (uc, { id: leadId, ...meeting }) => uc.scheduleMeeting(leadId, meeting)],
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],

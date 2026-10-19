@@ -1,6 +1,6 @@
 import { ValidationError } from './errors.js';
 import { addDays, daysBetween, isDate } from './dates.js';
-import { isEmail } from './lead.js';
+import { isEmail, oneLine as line } from './lead.js';
 
 /**
  * A customer's care after the deal: the phase, who looks after them, the onboarding steps and, once live, the
@@ -37,7 +37,6 @@ const STEP_IDS = new Set(ONBOARDING.map(([id]) => id));
 const CARE_STEPS = new Set([...ONBOARDING.map(([, title]) => title), CHECK_IN]);
 /** Whether a next step is one the care set: a step's title or the check-in. */
 export const isCareStep = (text) => CARE_STEPS.has(text);
-const line = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
 /** A new customer, from the day they became one; `owner` is the user who won them, when known. */
 export const startCustomer = (since, owner = "") => normalizeCustomer({ phase: "onboarding", since, owner });

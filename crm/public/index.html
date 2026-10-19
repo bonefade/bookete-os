@@ -92,9 +92,7 @@ ul.rows{list-style:none;margin:0;padding:0}
 .card+.card{margin-top:10px}
 
 /* detail */
-.hero .line{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 .pill{display:inline-block;background:var(--pine-soft);color:var(--pine);border-radius:999px;padding:3px 10px;font-weight:600;font-size:.9rem}
-.pill.lost{background:var(--due-soft);color:var(--due)}
 .touch{color:var(--muted);font-size:.9rem}
 .furow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .furow input{flex:1 1 140px;width:auto}
@@ -251,7 +249,6 @@ html:has(#sbox:not([hidden])){scroll-padding-top:0;overflow:hidden}
 .chips.later{margin:-4px 0 10px}
 .chips.later input{flex:1 1 140px;width:auto;min-height:36px;padding:4px 10px}
 /* the status chip opens the menu of the usual next moves */
-button.pill{min-height:36px;border:none;padding:4px 12px}
 .menu{margin-top:10px;padding:4px 6px}
 .mitem{display:flex;width:100%;justify-content:space-between;text-align:left;border:none;background:transparent;padding:8px}
 .mitem+.mitem{border-top:1px solid var(--line);border-radius:0}
@@ -310,6 +307,24 @@ button.pill{min-height:36px;border:none;padding:4px 12px}
 .cust .owner{display:flex;align-items:center;gap:10px;margin:0 0 10px}
 .cust .owner select{flex:1;width:auto}
 .q-why.due{color:var(--due);font-weight:600}
+/* a business's todos: a tick, the text with its day, a bin; a line to add one */
+.tlist{list-style:none;margin:0 0 10px;padding:0}
+.tlist li{display:grid;grid-template-columns:30px minmax(0,1fr) 36px;column-gap:6px;align-items:start;padding:7px 0;border-bottom:1px solid var(--line)}
+.tlist .tick{width:24px;height:24px;min-width:0;min-height:0;padding:0;margin-top:1px;border-radius:50%;border:2px solid var(--line);background:transparent;font-size:.75rem;line-height:1}
+.tlist li.done .tick{background:var(--pine);border-color:var(--pine);color:var(--bg)}
+.tlist li.done span{color:var(--muted)}
+.tlist small{display:block;color:var(--muted);font-size:.83rem}
+.tlist small.late{color:var(--due);font-weight:600}
+.tlist .ttext{display:block;min-height:0;padding:0;border:none;background:transparent;text-align:left;font:inherit;color:inherit;cursor:text}
+.tlist li.edit{display:block}
+.tlist .bin{min-width:0;min-height:0;padding:0 8px;border:none;background:transparent;color:var(--muted);font-size:1.1rem}
+.tadd{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.tadd #tdText{flex:1 1 160px;width:auto}
+.tadd #tdDue{flex:0 1 150px;width:auto}
+.tadd button{min-width:44px}
+.stchips{align-items:center}
+.phchips{margin-top:6px;align-items:center}
+.phchips .note{margin-right:2px}
 .att-line{margin:0 0 8px;padding:6px 10px;border-radius:10px;background:var(--mark);font-weight:600;font-size:.9rem}
 .ltable li.att{box-shadow:inset 4px 0 0 var(--brass)}
 .cust .late{color:var(--due)}

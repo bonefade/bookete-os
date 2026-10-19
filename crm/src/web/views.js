@@ -1,5 +1,5 @@
-import { STAGES, STAGE_LABEL, LOST_REASONS, SPOKEN_REASONS, BUSINESS_TYPES, RESERVATION_TOOLS, CHANNELS, TEMPLATE_PURPOSES, PURPOSE_LABEL, SEQUENCE_POLICY, CALL_OUTCOMES, OUTCOME_LABEL, TRASH_SHOWN, FIELD_LABEL } from '../domain/constants.js';
-import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, regionCounts, toolCounts, contactCounts, callList, freshLeads, awaitsAnswer, todayQueue, queueList, roundList } from './selectors.js';
+import { STAGES, STAGE_LABEL, OPT_OUT_REASON, LOST_REASONS, SPOKEN_REASONS, BUSINESS_TYPES, RESERVATION_TOOLS, CHANNELS, TEMPLATE_PURPOSES, PURPOSE_LABEL, SEQUENCE_POLICY, CALL_OUTCOMES, OUTCOME_LABEL, TRASH_SHOWN, FIELD_LABEL } from '../domain/constants.js';
+import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, dueByTodo, regionCounts, toolCounts, contactCounts, callList, freshLeads, awaitsAnswer, todayQueue, queueList, roundList } from './selectors.js';
 import { addDays, dayLabel, daysBetween, toDateString } from '../domain/dates.js';
 import { channelLink } from './platform.js';
 import { countTouches, hasReply, isReply, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting, byTimeline } from '../domain/activity.js';
@@ -11,6 +11,7 @@ import { lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
+import { todosOf } from '../domain/todos.js';
 import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, onboardingOf, attentionOf } from '../domain/customer.js';
 
 export const ICONS = {
@@ -67,11 +68,17 @@ function queueRow(state, l, today) {
   // A customer's row says so: why it needs attention, else what its care is at.
   const care = l.status === "kunde" ? customerOf(l) : null;
   const tag = care && (attentionOf(care, today) || (care.phase === "onboarding" ? PHASE_LABEL.onboarding : l.nextStep === CHECK_IN ? CHECK_IN : STAGE_LABEL.kunde));
+  // A todo due before (or on the day of) the next step is why the business is in the queue, after an answer to
+  // write, an appointment to record and a customer's Achtung, which each say more.
+  const todo = dueByTodo(l, today);
+  const att = care && attentionOf(care, today);
   const [chip, why, go] = awaitsAnswer(state, l) ? [last.channel, quoted(last.text), "Antworten"]
     : meetingDue(l, today) ? ["Termin", `Wie war der Termin? \xB7 ${fmtDate(l.followUp)}`, "Ergebnis"]
+    : att ? [att, nextActionHint(l, acts) || "", "\xD6ffnen"]
+    : todo ? ["Todo", [todo.text, todo.due < today ? "f\xE4llig " + relDate(todo.due, today) : ""].filter(Boolean).join(" \xB7 "), "\xD6ffnen"]
     : lacksNextStep(l) ? ["Kein n\xE4chster Schritt", `${STAGE_LABEL[l.status]}${last ? `, zuletzt ${relDate(last.date, today)}` : ""}, nichts geplant`, "Planen"]
     : [tag || lastChannel(acts) || STAGE_LABEL[l.status], [nextActionHint(l, acts) || "Nachfassen", l.followUp < today ? "f\xE4llig " + relDate(l.followUp, today) : ""].filter(Boolean).join(" \xB7 "), "\xD6ffnen"];
-  return `<li><button class="qrow" data-queue="${esc(l.id)}"><span class="q-name">${esc(l.name)}</span><span class="q-ch${go === "Planen" || care && attentionOf(care, today) ? " none" : ""}">${esc(chip)}</span><span class="q-why">${esc(why)}</span><span class="q-go">${go} ›</span></button></li>`;
+  return `<li><button class="qrow" data-queue="${esc(l.id)}"><span class="q-name">${esc(l.name)}</span><span class="q-ch${go === "Planen" || att ? " none" : ""}">${esc(chip)}</span><span class="q-why">${esc(why)}</span><span class="q-go">${go} ›</span></button></li>`;
 }
 /** The best hours to reach a restaurant by phone, between lunch and dinner service. */
 const CALL_HOURS = "Am besten 14:30–17:00 Uhr, Montag und Dienstag schw\xE4cher.";
@@ -91,8 +98,8 @@ export function todayView(state, today) {
   <div class="stats">${[[w.calls, "Anrufe"], [w.reached, "erreicht"], [w.meetings, "Termine"], [w.customers, "neue Kunden"]].map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join("")}</div>
   ${w.reasons.length ? `<p class="note">H\xE4ufigste Gr\xFCnde f\xFCr Kein Interesse: ${w.reasons.map(([r, n]) => `${esc(r)} (${n})`).join(", ")}</p>` : ""}</div>`;
   const days = Array.from({ length: 7 }, (_, i) => addDays(today, i + 1)).map((d) => {
-    const on = leads.filter((l) => takesFollowUp(l) && l.followUp === d);
-    const meetings = on.filter((l) => /^Termin\b/.test(l.nextStep || "")).length;
+    const on = leads.filter((l) => takesFollowUp(l) && l.followUp === d || todosOf(l).some((t) => !t.done && t.due === d));
+    const meetings = on.filter((l) => l.followUp === d && /^Termin\b/.test(l.nextStep || "")).length;
     return on.length ? `<li>${esc(fmtDate(d))} \xB7 ${on.length} f\xE4llig${meetings ? `, ${meetings} Termin${meetings > 1 ? "e" : ""}` : ""}</li>` : "";
   }).join("");
   const fresh = freshLeads(state);
@@ -113,6 +120,8 @@ export function todayView(state, today) {
 </div>`;
 }
 /** The Betriebe status filter: [value, label, test]. Offen is the pipeline. */
+/** A customer's phase as chips, one tap each; `progress` names how far its onboarding is on the chip of its phase. */
+const phaseChips = (c, progress = false) => PHASES.map(([k, label]) => `<button class="chip${k === "gekuendigt" ? " lostc" : ""}" data-phase="${k}" aria-pressed="${c.phase === k}">${esc(progress && c.phase === k ? phaseText(c) : label)}</button>`).join("");
 /** How far a customer's onboarding is: "Onboarding 3/7", or its phase. */
 const phaseText = (c) => c.phase === "onboarding" ? `${PHASE_LABEL.onboarding} ${c.steps.length}/${ONBOARDING.length}` : PHASE_LABEL[c.phase];
 /**
@@ -411,18 +420,25 @@ function signatureHtml(sig, on) {
     : sig.text ? `<p class="hint sig">${esc(sig.text)}</p>` : `<p class="note">Signatur ohne Text (ein Bild, etwa ein Logo).</p>`;
   return `<label class="check"><input type="checkbox" id="cSig"${on ? " checked" : ""}> Mit Signatur</label>${on ? preview : ""}`;
 }
-/** The status chip's menu: the usual next moves from this status, then setting it directly, then the opt-out. */
-function statusMenuHtml(l, acts, ui, today) {
-  const lost = l.status === "disqualifiziert";
+/** "Weitere": the moves beside the status chips: an appointment agreed, closing without an answer, the opt-out. */
+function statusMenuHtml(l, acts, today) {
   const item = (act, title, sub, disabled = false) => `<button class="mitem" data-act="${act}"${disabled ? " disabled" : ""}><span><b>${title}</b><small>${sub}</small></span><span aria-hidden="true">›</span></button>`;
-  const direct = ui.statusMenu === "direct" ? `<div class="chips" style="margin:6px 0 4px">${STAGES.map(([k, v]) => `<button class="chip${k === "disqualifiziert" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}">${v}</button>`).join("")}</div>` : item("statusDirect", `${FIELD_LABEL.status} direkt setzen …`, "f\xFCr den seltenen Fall, fragt einmal nach");
-  return `<div class="card menu"><p class="note" style="margin:0 0 4px">Normaler Weg ab ${esc(STAGE_LABEL[l.status])}</p>
+  return `<div class="card menu">
     ${takesCall(l, today) ? item("terminOpen", "Termin eintragen", `wird ${STAGE_LABEL.qualifiziert}`) : ""}
-    ${lost ? item("lostPick", "Grund \xE4ndern", esc(l.lostReason)) : item("lostPick", "Absage eintragen", `wird ${STAGE_LABEL.disqualifiziert}, mit Grund`)}
     ${l.status === "kontaktiert" ? item("closeWithoutReply", "Ohne Antwort abschlie\xDFen", `ab Kontakt ${SEQUENCE_POLICY.maxTouches} von ${SEQUENCE_POLICY.maxTouches}`, !sequenceExhausted(l, acts)) : ""}
-    ${direct}
     <button class="mitem danger" data-act="optOut"><span><b>Keine Kontaktaufnahme gew\xFCnscht</b></span></button>
   </div>`;
+}
+/**
+ * The status as chips, one tap each: Disqualifiziert asks for the reason (and changes it on a lead closed already).
+ * After an opt-out only Kunde and Disqualifiziert can be set, as the server holds. A Kunde has its phase beside it.
+ */
+function statusChipsHtml(l, customer, ui) {
+  const lost = l.status === "disqualifiziert";
+  const status = STAGES.map(([k, v]) => `<button class="chip${k === "disqualifiziert" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}"${l.optOutAt && isPipeline({ status: k }) ? " disabled" : ""}>${esc(v)}${k === "disqualifiziert" && lost ? " \xB7 " + esc(l.lostReason) : ""}</button>`).join("");
+  const more = l.optOutAt ? "" : `<button class="link" data-act="statusMenu" aria-expanded="${!!ui.statusMenu}">Weitere ▾</button>`;
+  const phases = customer ? `<div class="chips phchips"><span class="note">Phase</span>${phaseChips(customer, true)}</div>` : "";
+  return `<div class="chips stchips" role="group" aria-label="${esc(FIELD_LABEL.status)}">${status}${more}</div>${phases}`;
 }
 /** The one next-step line: when and what, yellow when a lead in work has none, with the date and text to change. */
 function nextStepHtml(l, acts, ui, today) {
@@ -438,7 +454,8 @@ function nextStepHtml(l, acts, ui, today) {
     ${l.status === "kontaktiert" && hasReply(acts) ? `<p class="note" style="margin:4px 0 0">Die Antwort hat die Nachfass-Folge angehalten.</p>` : ""}${edit}`;
 }
 /**
- * A Kunde's care on its page: who looks after it, its phase, and the onboarding as a checklist. The first open step
+ * A Kunde's care on its page: who looks after it and its phase (also in the header), the check-ins once live, and
+ * the onboarding as a checklist. The first open step
  * stands out with its buttons, and every other open step can be done or left out before it; a done one can be opened
  * again. Gekündigt shows the steps as they stood. A step without a day
  * belongs to a customer from before whose care is not stored yet.
@@ -447,8 +464,6 @@ function customerHtml(state, l, c, today) {
   const me = state.me?.email;
   const team = [...new Set([...(state.me?.team || []), c.owner].filter(Boolean))];
   const owner = `<label class="owner">Betreut von<select id="kOwnerOf">${options([["", "\u2013"], ...team.map((e) => [e, actorName(e) + (e === me ? " (ich)" : "")])], c.owner)}</select></label>`;
-  const phases = `<div class="chips">${PHASES.map(([k, label]) => `<button class="chip${k === "gekuendigt" ? " lostc" : ""}" data-phase="${k}" aria-pressed="${c.phase === k}">${label}</button>`).join("")}</div>`;
-  const cancel = state.ui.cancelPick ? `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Warum gek\xFCndigt?</p><div class="chips">${CANCEL_REASONS.map((r) => `<button class="chip lostc" data-cancel="${esc(r)}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="cancelPickClose">Abbrechen</button></div>` : "";
   const steps = onboardingOf(c);
   // Steps can be ticked in every phase but Gekündigt: a customer from before, live already, ticks its list once.
   const open = c.phase !== "gekuendigt" ? steps.find((s) => !s.at) : null;
@@ -468,7 +483,7 @@ function customerHtml(state, l, c, today) {
   // Live: the check-ins first, the onboarding as it stood below them.
   return `<div class="sec cust"><h3>Kunde <small>${esc(PHASE_LABEL[c.phase])}${where}</small></h3>
     ${att ? `<p class="att-line">Achtung: ${esc(att)}</p>` : ""}
-    <div class="card">${owner}${phases}</div>${cancel}
+    <div class="card">${owner}<div class="chips">${phaseChips(c)}</div></div>
     ${c.phase === "live" ? checkInsHtml(c, state.ui.checkIn, today) + onboarding : onboarding}</div>`;
 }
 /** A live customer's check-ins: when the next is due, the form to enter one, and the last three. */
@@ -485,6 +500,25 @@ function checkInsHtml(c, form, today) {
   const past = c.checkIns.slice(-3).reverse().map((x) => `<li class="ok"><b>${esc(RESULT_LABEL[x.result])}</b><small>${esc(fmtDate(x.at))} \xB7 ${esc(actorName(x.by))}${x.note ? " \xB7 " + esc(x.note) : ""}</small></li>`).join("");
   return `<h3 style="margin-top:14px">Check-ins <small>${c.checkIns.length}</small></h3>
     <div class="card"><p class="note" style="margin:0 0 8px">${due}</p>${sheet}${past ? `<ol class="checks" style="padding:4px 0 0">${past}</ol>` : ""}</div>`;
+}
+/**
+ * The business's todos: the open ones by due day with a tick and a bin, and a tap on one to change its text or day;
+ * a line to add one; the done ones folded.
+ */
+function todosHtml(l, ui, today) {
+  const all = todosOf(l);
+  const open = all.filter((t) => !t.done), done = all.filter((t) => t.done);
+  const draft = ui.todoDraft || {};
+  const editing = ui.todoEdit && all.find((t) => t.id === ui.todoEdit.id && !t.done) ? ui.todoEdit : null;
+  const when = (t) => t.done ? `<small>erledigt ${esc(fmtDate(t.done))}</small>` : t.due ? `<small${t.due < today ? ' class="late"' : ""}>${t.due < today ? "f\xE4llig war " : ""}${esc(fmtDate(t.due))}</small>` : "";
+  const row = (t) => editing?.id === t.id
+    ? `<li class="edit"><div class="tadd"><input id="teText" value="${esc(editing.text)}" aria-label="Todo"><input type="date" id="teDue" value="${esc(editing.due)}" aria-label="F\xE4llig am"></div><div class="two" style="margin-top:6px"><button data-act="todoEditCancel">Abbrechen</button><button class="primary" data-act="todoSave">Speichern</button></div></li>`
+    : `<li${t.done ? ' class="done"' : ""}><button class="tick" data-todo-${t.done ? "undo" : "done"}="${esc(t.id)}" aria-label="${t.done ? "Wieder offen" : "Erledigt"}">${t.done ? "\u2713" : ""}</button>${t.done ? `<span>${esc(t.text)}${when(t)}</span>` : `<button class="ttext" data-todo-edit="${esc(t.id)}">${esc(t.text)}${when(t)}</button>`}<button class="bin" data-todo-remove="${esc(t.id)}" aria-label="Todo l\xF6schen">\xD7</button></li>`;
+  return `<div class="sec todos"><h3>Todos <small>${open.length ? `${open.length} offen` : "keine offen"}</small></h3><div class="card">
+    ${open.length ? `<ul class="tlist">${open.map(row).join("")}</ul>` : ""}
+    <div class="tadd"><input id="tdText" placeholder="Neues Todo \u2026" value="${esc(draft.text || "")}" aria-label="Neues Todo"><input type="date" id="tdDue" value="${esc(draft.due || "")}" aria-label="F\xE4llig am"><button class="primary" data-act="todoAdd"${(draft.text || "").trim() ? "" : " disabled"}>+</button></div>
+    ${done.length ? `<button class="more" data-act="todosDoneToggle">${ui.todosDone ? "Erledigte ausblenden" : `${done.length} erledigt`}</button>${ui.todosDone ? `<ul class="tlist">${done.map(row).join("")}</ul>` : ""}` : ""}
+  </div></div>`;
 }
 /**
  * The sequence on a wide screen, as a checklist: a row per day we made contact (as countTouches counts them), the
@@ -577,7 +611,7 @@ function roundBar(state, l, today) {
   const part = q ? [["replies", "Neue Antworten"], ["attention", "Kunden: Achtung"], ["overdue", "\xDCberf\xE4llig"], ["today", "Heute f\xE4llig"]].find(([k]) => q[k].some((x) => x.id === l.id)) : null;
   const label = r.list === "calls" ? "Anrufliste" : r.list === "fresh" ? "Erstkontakte" : `Heute${part ? " \xB7 " + part[1] : ""}`;
   const later = state.ui.later ? `<div class="chips later"><button class="chip" data-later="1">Morgen</button><button class="chip" data-later="7">N\xE4chste Woche</button><input type="date" id="laterDate" min="${esc(addDays(today, 1))}" aria-label="Sp\xE4ter am"></div>` : "";
-  return `<div class="l-round"><div class="qbar"><span class="q-pos"><b>${label}</b> \xB7 ${r.seen.length + 1} von ${r.seen.length + 1 + rest.length}</span>${takesFollowUp(l) ? `<button class="link" data-act="later" aria-expanded="${!!state.ui.later}">Sp\xE4ter ▾</button>` : ""}<button class="primary" data-act="roundNext">Weiter ›</button></div>${later}</div>`;
+  return `<div class="l-round"><div class="qbar"><span class="q-pos"><b>${label}</b> \xB7 ${r.seen.length + 1} von ${r.seen.length + 1 + rest.length}</span>${takesFollowUp(l) || r.list === "queue" && dueByTodo(l, today) ? `<button class="link" data-act="later" aria-expanded="${!!state.ui.later}">Sp\xE4ter ▾</button>` : ""}<button class="primary" data-act="roundNext">Weiter ›</button></div>${later}</div>`;
 }
 export function detailView(state, today) {
   if (!isReady(state)) return loadingOr(state, "");
@@ -585,7 +619,6 @@ export function detailView(state, today) {
   const acts = actsOf(state, l.id);
   const ui = state.ui;
   const t = countTouches(acts);
-  const lost = l.status === "disqualifiziert";
   const clamp = (key, txt) => {
     const long = (txt || "").length > 220 || (txt || "").split("\n").length > 4;
     const o = ui.expanded.has(key);
@@ -606,7 +639,6 @@ export function detailView(state, today) {
   const offersMailto = (email) => !(addressKey(email) === addressKey(l.email) ? closedTo || onlyByGmail : getsUnsubscribeLink(l) && optOutByAddress(state.data.leads, { email }));
   const sub = [l.type, l.city, touchTxt, l.contactedAt ? "seit " + fmtDate(l.contactedAt) : "Nie kontaktiert"].filter(Boolean).map(esc).join(" \xB7 ");
   const customer = l.status === "kunde" ? customerOf(l) : null;
-  const chip = `${esc(STAGE_LABEL[l.status])}${lost ? " \xB7 " + esc(l.lostReason) : ""}${customer ? " \xB7 " + esc(phaseText(customer)) : ""}`;
   const tel = channelLink(l, "Telefon");
   const act = (href, label, attrs = "") => href ? `<a class="btn" href="${esc(href)}"${href.startsWith("tel:") ? "" : ' target="_blank" rel="noopener"'}${attrs}>${label}</a>` : `<a class="btn" aria-disabled="true">${label}</a>`;
   const write = (channel, label, can) => `<button data-compose="${esc(channel)}"${can ? "" : " disabled"}>${label}</button>`;
@@ -623,16 +655,17 @@ export function detailView(state, today) {
   <div class="card hero">
     <div class="h-top">
     <h1 class="desk">${esc(l.name)}</h1>
-    <div class="line">${l.optOutAt ? `<span class="pill lost">${chip}</span>` : `<button class="pill${lost ? " lost" : ""}" data-act="statusMenu" aria-expanded="${!!ui.statusMenu}">${chip} ▾</button>`}${l.website ? `<a class="note" href="${esc(l.website)}" target="_blank" rel="noopener">Website ↗</a>` : ""}</div>
+    ${statusChipsHtml(l, customer, ui)}${l.website ? `<a class="note" href="${esc(l.website)}" target="_blank" rel="noopener">Website ↗</a>` : ""}
     <p class="note" style="margin:8px 0 0">${sub}</p>
     </div>
     ${actions}
-    ${ui.statusMenu ? statusMenuHtml(l, acts, ui, today) : ""}
+    ${ui.statusMenu && !l.optOutAt ? statusMenuHtml(l, acts, today) : ""}
     ${nextStepHtml(l, acts, ui, today)}
   </div>
   <div class="l-top">
   ${l.optOutAt ? `<div class="card sec optout"><p style="margin:0;font-weight:600">M\xF6chte keine Nachrichten mehr</p><p class="note" style="margin:2px 0 8px">Opt-out seit ${esc(fmtDate(l.optOutAt))}. Keine Mails, DMs oder Anrufe. Nur aufheben, wenn der Betrieb sich selbst wieder meldet.</p><button class="more" data-act="clearOptOut">Opt-out aufheben</button></div>` : ""}
-  ${ui.lostPick ? `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Warum disqualifiziert?</p><div class="chips">${LOST_REASONS.map((r) => `<button class="chip lostc" data-lost="${esc(r)}" aria-pressed="${l.lostReason === r}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="lostCancel">Abbrechen</button></div>` : ""}
+  ${customer && ui.cancelPick ? `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Warum gek\xFCndigt?</p><div class="chips">${CANCEL_REASONS.map((r) => `<button class="chip lostc" data-cancel="${esc(r)}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="cancelPickClose">Abbrechen</button></div>` : ""}
+  ${ui.lostPick ? `<div class="card sec"><p style="margin:0 0 8px;font-weight:600">Warum disqualifiziert?</p><div class="chips">${(l.optOutAt ? [OPT_OUT_REASON] : LOST_REASONS).map((r) => `<button class="chip lostc" data-lost="${esc(r)}" aria-pressed="${l.lostReason === r}">${esc(r)}</button>`).join("")}</div><button class="more" data-act="lostCancel">Abbrechen</button></div>` : ""}
   ${sheet}
   ${ui.compose ? `<div class="sec">${composerHtml(state, l, acts, today, offersMailto)}</div>` : ""}
   </div>
@@ -641,6 +674,7 @@ export function detailView(state, today) {
   ${showsAccount(l) ? accountHtml(l, offersMailto) : ""}
   </aside>
   <div class="l-work">
+  ${todosHtml(l, ui, today)}
   ${customer ? customerHtml(state, l, customer, today) : `<div class="sec talk"><h3>F\xFCr das Gespr\xE4ch</h3><dl class="card facts qe">${fields("talk")}</dl></div>
   ${sequenceHtml(l, acts, today)}`}
   </div>

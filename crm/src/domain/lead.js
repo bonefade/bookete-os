@@ -32,6 +32,8 @@ export const LEAD_FIELDS = {
 };
 /** Trimmed text, "" for none; `max` caps its length. */
 export const str = (v, max = Infinity) => (v == null ? "" : String(v).trim()).slice(0, max);
+/** One line of text: every run of white space, line breaks included, one space; trimmed and capped as `str`. */
+export const oneLine = (v, max = Infinity) => str(String(v ?? "").replace(/\s+/g, " "), max);
 export const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 /**
  * The one place the lead rules live: every write (web, MCP, import) runs the merged lead through here.

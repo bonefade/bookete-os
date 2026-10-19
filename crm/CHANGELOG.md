@@ -2,6 +2,12 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.22.0 (2026-10-19)
+
+- **Todos on every business,** lead or customer: as many as you need, each with a text and, if you like, the day it is due. Tap one to change its text or its day, tick it when done, tap × to remove it; the done ones fold away under "n erledigt". A todo due shows the business in Heute (under Überfällig or Heute fällig, marked "Todo"), as its next step does, and counts in "Nächste 7 Tage". "Später" in a Heute round moves whatever puts the business on today's list, its todos due and its next step if due, so it leaves the list; in a round of calls or first contacts it moves the next step, as before. An answer to write, an appointment's outcome and a customer's Achtung still show before a todo. At most 50 open; the newest 100 done are kept. Todos belong to nobody; either of you does them. The one next step stays as it is, for the follow-ups, the onboarding and the check-ins.
+- **The status is one tap:** the five statuses are chips in the header, always visible, without the menu and without asking first. Disqualifiziert asks why (on a business closed already, for a new reason). "Termin eintragen", "Ohne Antwort abschließen" and "Keine Kontaktaufnahme gewünscht" are under "Weitere". After an opt-out only Kunde and Disqualifiziert with the opt-out reason can be set, as before.
+- **A customer's phase** (Onboarding, Live, Gekündigt) can be set in the header too, beside the status, as on the customer card.
+
 ## 1.21.1 (2026-10-19)
 
 - **Onboarding steps in any order:** every open step now has "Erledigt" and "Entfällt …", not only the first. A customer who booked the Abo but has not signed the website contract yet gets "Abo abgeschlossen" ticked while "Vertrag unterschrieben" stays open, and remains its next step. Any step but "Live" can be left out, with a word why.

@@ -4,6 +4,7 @@ import { meetingDue } from '../domain/activity.js';
 import { isPipeline, isDue, takesFollowUp, lacksNextStep, addressKey, addressOpen } from '../domain/lead.js';
 import { timelinesByLead } from '../domain/stats.js';
 import { customerOf, attentionOf } from '../domain/customer.js';
+import { dueTodo } from '../domain/todos.js';
 
 let cacheKey = null;
 let cacheVal = null;
@@ -71,7 +72,7 @@ export const freshLeads = (state) => scoped(state).filter((l) => l.status === "n
 export const awaitsAnswer = (state, l) => takesFollowUp(l) && !l.optOutAt && actsOf(state, l.id).at(-1)?.direction === "in";
 /**
  * Heute as one queue, in the order to work it: new replies (newest first), customers who need attention, then what is
- * overdue, then what is due today and the leads in work with no next step. A lead shows once, in the first section
+ * overdue, then what is due today (a next step or a todo, dueOn) and the leads in work with no next step. A lead shows once, in the first section
  * it belongs to. "Meine" (the default) leaves out the customers someone else on the team looks after.
  */
 export function todayQueue(state, today) {
@@ -82,9 +83,20 @@ export function todayQueue(state, today) {
   // Customers who need attention come right after the answers: an unhappy customer or a stuck onboarding before new sales.
   const attention = leads.filter((l) => !answered.has(l.id) && l.status === "kunde" && attentionOf(customerOf(l), today)).sort((a, b) => a.name.localeCompare(b.name, "de"));
   const shown = new Set([...answered, ...attention.map((l) => l.id)]);
-  const due = leads.filter((l) => !shown.has(l.id) && isDue(l, today)).sort((a, b) => a.followUp < b.followUp ? -1 : a.followUp > b.followUp ? 1 : b.fit - a.fit);
-  const unplanned = leads.filter((l) => !shown.has(l.id) && lacksNextStep(l)).sort((a, b) => b.fit - a.fit);
-  return { replies, attention, overdue: due.filter((l) => l.followUp < today), today: [...due.filter((l) => l.followUp === today), ...unplanned] };
+  const due = leads.filter((l) => !shown.has(l.id) && dueOn(l, today)).sort((a, b) => dueOn(a, today) < dueOn(b, today) ? -1 : dueOn(a, today) > dueOn(b, today) ? 1 : b.fit - a.fit);
+  const unplanned = leads.filter((l) => !shown.has(l.id) && !dueOn(l, today) && lacksNextStep(l)).sort((a, b) => b.fit - a.fit);
+  return { replies, attention, overdue: due.filter((l) => dueOn(l, today) < today), today: [...due.filter((l) => dueOn(l, today) === today), ...unplanned] };
+}
+/** The day a business is due by, if it is due today or before: its next step or its first todo due, whichever is earlier. */
+export function dueOn(l, today) {
+  const todo = dueTodo(l, today)?.due;
+  const next = isDue(l, today) ? l.followUp : null;
+  return todo && next ? (todo < next ? todo : next) : todo || next;
+}
+/** The todo a business is due by, when that todo is due on or before its next step: Heute shows it, and "Später" moves it. */
+export function dueByTodo(l, today) {
+  const todo = dueTodo(l, today);
+  return todo && !(isDue(l, today) && l.followUp < todo.due) ? todo : null;
 }
 /** A customer someone else on the team looks after: Heute leaves it out unless it shows everyone's ("Alle"). */
 export const othersCustomer = (state, l) => {
