@@ -2,7 +2,7 @@ import { z } from "zod";
 import { LEAD_FIELDS } from "../domain/lead.js";
 import { IMPORT_CHUNK } from "../domain/backup.js";
 import { STAGES, LOST_REASONS, SPOKEN_REASONS, CALL_OUTCOMES } from "../domain/constants.js";
-import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
+import { SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
 import { ONBOARDING, PACKAGES, PHASES, CANCEL_REASONS, CHECK_IN_RESULTS } from "../domain/customer.js";
 import { NOTE_MAX } from "../domain/notes.js";
 
@@ -16,15 +16,10 @@ const FIELD = { fit: z.coerce.number().int().min(1).max(3), followUp: date.nulla
 // optOutAt is not writable here: it is set by optOut or by picking the opt-out reason, and cleared only by clearOptOut.
 export const LeadInput = z.object(Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt" && k !== "wonAt").map((k) => [k, FIELD[k] ?? text.nullable()]))).partial().strict();
 // The Kundenakte, part by part; normalizeAccount checks values. Strict, so no field for a password can be added.
-// Choices and dates also take "" from the form's empty option and empty date field.
 const str = (max) => z.string().max(max).nullish();
-const choice = (values) => z.union([z.enum(values), z.literal("")]).nullish();
-const day = z.union([date, z.literal("")]).nullish();
-const Owner = choice(OWNERS.map(([k]) => k));
 const System = z.object({ what: str(200), by: str(100) }).strict();
 export const AccountInput = z.object({
-  services: z.array(z.object({ id: str(100), kind: choice(SERVICE_KINDS), state: choice(SERVICE_STATES.map(([k]) => k)), since: day, goLive: day, contractEnd: day, price: str(200), note: str(2000) }).strict()).max(ACCOUNT_LIMIT),
-  systems: z.object({ ...Object.fromEntries(SYSTEMS.map(([k]) => [k, System])), domainOwner: Owner, registrar: str(200), googleProfile: Owner, access: str(500) }).strict().partial(),
+  systems: z.object({ ...Object.fromEntries(SYSTEMS.map(([k]) => [k, System])), access: str(500) }).strict().partial(),
   contacts: z.array(z.object({ id: str(100), name: z.string().max(200), company: str(200), role: str(200), handles: str(500), email: str(200), phone: str(100), note: str(2000) }).strict()).max(ACCOUNT_LIMIT),
 }).partial().strict();
 const ActivityInput = z.object({ direction: z.enum(["out", "in"]), channel: z.string().max(40), date: z.union([date, z.literal("")]).optional(), text, templateId: z.string().max(100).nullish() });

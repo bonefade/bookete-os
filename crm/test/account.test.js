@@ -23,42 +23,42 @@ test("an empty Kundenakte has every part, all empty", () => {
   assert.deepEqual(normalizeAccount(null, newId), EMPTY_ACCOUNT);
 });
 
-test("services, systems and contacts are trimmed, checked and get ids", () => {
+test("systems and contacts are trimmed, checked and get ids", () => {
   n = 0;
   const a = normalizeAccount({
-    services: [{ kind: "Website", state: "in-arbeit", since: "2026-10-01", goLive: "", price: " 49 €/Monat ", note: "Zeile 1\nZeile 2" }],
-    systems: { domain: { what: " krone.at ", by: "c1" }, domainOwner: "Agentur", registrar: "World4You", dns: { what: "Cloudflare", by: "c1" }, hosting: { what: "", by: "gibt-es-nicht" }, googleProfile: "Kunde", access: "1Password,\r\nTresor Kunden" },
+    systems: { domain: { what: " krone.at, gehört dem Kunden ", by: "c1" }, dns: { what: "Cloudflare", by: "c1" }, website: { what: "", by: "gibt-es-nicht" }, access: "1Password,\r\nTresor Kunden" },
     contacts: [{ id: "c1", name: " Max Muster ", company: "Webagentur\nX", role: "Agentur", handles: "Domain, DNS", email: "max@x.at", phone: "+43 1 234" }, { name: "Anna", role: "Inhaberin" }],
   }, newId);
   // Only notes keep their line breaks: every other field is one line, as the form shows it.
-  assert.deepEqual(a.services, [{ id: "x1", kind: "Website", state: "in-arbeit", since: "2026-10-01", goLive: "", contractEnd: "", price: "49 €/Monat", note: "Zeile 1\nZeile 2" }]);
   assert.equal(a.systems.access, "1Password, Tresor Kunden");
-  assert.deepEqual(a.systems.domain, { what: "krone.at", by: "c1" });
-  assert.equal(a.systems.domainOwner, "Agentur");
+  assert.deepEqual(a.systems.domain, { what: "krone.at, gehört dem Kunden", by: "c1" });
   assert.deepEqual(a.systems.dns, { what: "Cloudflare", by: "c1" });
   // "betreut von" must name a contact of this business.
-  assert.deepEqual(a.systems.hosting, { what: "", by: "" });
-  assert.deepEqual(a.contacts.map((c) => [c.id, c.name, c.company]), [["c1", "Max Muster", "Webagentur X"], ["x2", "Anna", ""]]);
+  assert.deepEqual(a.systems.website, { what: "", by: "" });
+  assert.deepEqual(a.contacts.map((c) => [c.id, c.name, c.company]), [["c1", "Max Muster", "Webagentur X"], ["x1", "Anna", ""]]);
   assert.deepEqual(handledBy(a, "c1"), ["Domain", "DNS"]);
   // Each field has a cap, notes too.
   const long = normalizeAccount({ contacts: [{ name: "x".repeat(300), note: "y".repeat(3000) }] }, newId).contacts[0];
   assert.deepEqual([long.name.length, long.note.length], [200, 2000]);
 });
 
-test("unknown kinds, states, owners and dates are refused, not replaced; a service needs a kind, a contact a name and a valid email", () => {
-  for (const service of [{ kind: "Homepage" }, { kind: "Website", state: "Live" }, { kind: "Website", since: "17.10.2026" }, { kind: "" }, {}]) rejects(() => normalizeAccount({ services: [service] }, newId), "services");
-  for (const systems of [{ domainOwner: "bookete" }, { googleProfile: "?" }]) rejects(() => normalizeAccount({ systems }, newId), "systems");
-  // Not given is not unknown: a service without a state is planned, an owner not given is unknown.
-  const a = normalizeAccount({ services: [{ kind: "Website", state: "" }], systems: { domainOwner: "" } }, newId);
-  assert.deepEqual([a.services[0].state, a.systems.domainOwner], ["geplant", "unbekannt"]);
+test("a contact needs a name and a valid email", () => {
   rejects(() => normalizeAccount({ contacts: [{ name: "" }] }, newId), "contacts");
   rejects(() => normalizeAccount({ contacts: [{ name: "Max", email: "kein-mail" }] }, newId), "contacts");
+});
+
+test("a Kundenakte stored before 1.27.0 reads without what that release dropped", () => {
+  const stored = {
+    services: [{ id: "s1", kind: "Website", state: "live", note: "in die Notizen übernommen" }],
+    systems: { domain: { what: "krone.at", by: "" }, hosting: { what: "Hetzner", by: "" }, pos: { what: "Gastrofix", by: "" }, domainOwner: "Agentur", registrar: "World4You", googleProfile: "Kunde", access: "" },
+    contacts: [],
+  };
+  assert.deepEqual(normalizeAccount(stored, newId), { ...EMPTY_ACCOUNT, systems: { ...EMPTY_ACCOUNT.systems, domain: { what: "krone.at", by: "" } } });
 });
 
 test("lists are capped, so one record stays small", () => {
   const many = Array.from({ length: ACCOUNT_LIMIT + 1 }, (_, i) => ({ name: `P${i}` }));
   rejects(() => normalizeAccount({ contacts: many }, newId), "contacts");
-  rejects(() => normalizeAccount({ services: many.map(() => ({ kind: "bookete" })) }, newId), "services");
 });
 
 test("two entries with the same id are refused", () => {
@@ -81,19 +81,19 @@ test("the Kundenakte is saved on the lead: guarded, in its history, and only the
   const s = setup();
   const { store, uc } = s;
   const id = await uc.addLead({ name: "Krone", status: "kunde" });
-  await saveFresh(s, id, { services: [{ kind: "Website", state: "in-arbeit" }], contacts: [agency] });
+  await saveFresh(s, id, { contacts: [agency] });
   let a = (await store.get("leads", id)).account;
-  assert.deepEqual([a.services[0].kind, a.contacts[0].company, a.systems.domainOwner], ["Website", "Webagentur X", "unbekannt"]);
-  // Systems merge by field; lists replace the stored list.
+  assert.deepEqual([a.contacts[0].company, a.systems.access], ["Webagentur X", ""]);
+  // Systems merge by field; the contacts replace the stored list only when given.
   await saveFresh(s, id, { systems: { domain: { what: "krone.at", by: a.contacts[0].id }, dns: { what: "Cloudflare", by: a.contacts[0].id } } });
-  await saveFresh(s, id, { systems: { domainOwner: "Agentur" } });
+  await saveFresh(s, id, { systems: { access: "1Password" } });
   a = (await store.get("leads", id)).account;
-  assert.deepEqual([a.systems.domain, a.systems.domainOwner, a.systems.dns.by, a.services.length], [{ what: "krone.at", by: a.contacts[0].id }, "Agentur", a.contacts[0].id, 1]);
+  assert.deepEqual([a.systems.domain, a.systems.access, a.systems.dns.by, a.contacts.length], [{ what: "krone.at", by: a.contacts[0].id }, "1Password", a.contacts[0].id, 1]);
   // Each system too: naming the DNS provider keeps who runs it.
   await saveFresh(s, id, { systems: { dns: { what: "Hetzner" } } });
   a = (await store.get("leads", id)).account;
   assert.deepEqual(a.systems.dns, { what: "Hetzner", by: a.contacts[0].id });
-  assert.equal(await saveFresh(s, id, { systems: { domainOwner: "Agentur" } }), false);
+  assert.equal(await saveFresh(s, id, { systems: { access: "1Password" } }), false);
   const [last] = await store.history(id);
   assert.deepEqual(describeChange(last), ["Kundenakte ge\xE4ndert"]);
 });
@@ -170,16 +170,17 @@ test("RPC and MCP take the Kundenakte through one schema; no passwords field, no
   assert.equal(save.safeParse({ id: "a", account: { systems: { password: "geheim" } }, before: {} }).success, false);
   assert.equal(save.safeParse({ id: "a", account: { contacts: [{ name: "A", pin: "1" }] }, before: {} }).success, false);
   assert.equal(save.safeParse({ id: "a", account: { contacts: Array.from({ length: ACCOUNT_LIMIT + 1 }, () => ({ name: "A" })) }, before: {} }).success, false);
-  for (const account of [{ services: [{ kind: "Homepage" }] }, { services: [{ kind: "Website", since: "17.10.2026" }] }, { systems: { domainOwner: "bookete" } }, { systems: { domain: "x.at" } }]) assert.equal(save.safeParse({ id: "a", account, before: {} }).success, false, JSON.stringify(account));
+  // What 1.27.0 dropped is refused, not ignored, so a writer learns it is gone.
+  for (const account of [{ services: [{ kind: "Website" }] }, { systems: { domainOwner: "Agentur" } }, { systems: { hosting: { what: "Hetzner" } } }, { systems: { domain: "x.at" } }]) assert.equal(save.safeParse({ id: "a", account, before: {} }).success, false, JSON.stringify(account));
   const context = { store, clock, uc };
   const id = await uc.addLead({ name: "Krone", status: "kunde" });
   // An agent names the Kundenakte it read; a lead without one has {}.
   assert.ok((await mcp(context, "update_account", { id, contacts: [agency] })).isError);
-  const r = await mcp(context, "update_account", { id, before: {}, contacts: [agency], systems: { domainOwner: "Agentur" } });
+  const r = await mcp(context, "update_account", { id, before: {}, contacts: [agency], systems: { access: "1Password" } });
   assert.ok(!r.isError, JSON.stringify(r));
   const read = async () => JSON.parse((await mcp(context, "get_lead", { id })).content[0].text).lead.account;
   const got = await read();
-  assert.deepEqual([got.contacts[0].name, got.systems.domainOwner], ["Max Muster", "Agentur"]);
+  assert.deepEqual([got.contacts[0].name, got.systems.access], ["Max Muster", "1Password"]);
   // A web edit saved after the agent read is not overwritten.
   await uc.saveAccount(id, { contacts: [...got.contacts, { name: "Anna" }] }, got);
   const stale = await mcp(context, "update_account", { id, before: got, contacts: [{ name: "Y" }] });
@@ -187,25 +188,30 @@ test("RPC and MCP take the Kundenakte through one schema; no passwords field, no
   assert.deepEqual((await read()).contacts.map((c) => c.name), ["Max Muster", "Anna"]);
 });
 
-test("agents see the allowed values and that before is required", async () => {
+test("agents see the systems they can write and that before is required", async () => {
   const { result } = await (await handleMcp(new Request("https://crm/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) }), {})).json();
   const schema = JSON.stringify(result.tools.find((t) => t.name === "update_account").inputSchema);
-  for (const value of ["Google-Profil", "in-arbeit", "Agentur", "unbekannt"]) assert.ok(schema.includes(`"${value}"`), value);
+  for (const key of ["domain", "dns", "website", "email", "access"]) assert.ok(schema.includes(`"${key}"`), key);
+  for (const key of ["services", "hosting", "pos", "domainOwner"]) assert.ok(!schema.includes(`"${key}"`), key);
   assert.ok(result.tools.find((t) => t.name === "update_account").inputSchema.required.includes("before"));
 });
 
-test("a Kundenakte stored before a part was added still compares, shows and saves", async () => {
+test("a Kundenakte stored before 1.27.0 compares, shows and saves in today's shape, and an agent reads it so", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Krone", status: "kontaktiert", contactedAt: "2026-10-01" });
-  const { pos: _pos, ...olderSystems } = EMPTY_ACCOUNT.systems;
-  const older = { ...EMPTY_ACCOUNT, systems: olderSystems };
+  const older = { services: [{ id: "s1", kind: "Website", state: "live" }], systems: { ...EMPTY_ACCOUNT.systems, hosting: { what: "Hetzner", by: "" }, pos: { what: "", by: "" }, domainOwner: "unbekannt", registrar: "", googleProfile: "unbekannt" }, contacts: [] };
   await store.commit([{ type: "patch", collection: "leads", id, base: await store.get("leads", id), data: { account: older } }], "test");
+  // What it holds besides is gone from view, so a Kontaktiert lead shows none.
   assert.equal(showsAccount(await store.get("leads", id)), false);
-  // As an agent read it (stored shape) and as the form showed it (today's shape).
-  assert.equal(await uc.saveAccount(id, { systems: { domain: { what: "krone.at" } } }, older), true);
-  const shown = accountOf(await store.get("leads", id));
-  assert.equal(await uc.saveAccount(id, { systems: { pos: { what: "Gastrofix" } } }, shown), true);
-  assert.deepEqual((await store.get("leads", id)).account.systems.pos, { what: "Gastrofix", by: "" });
+  // An agent reads it in today's shape, and that goes back to update_account as `before`.
+  const read = JSON.parse((await mcp({ store, clock, uc }, "get_lead", { id })).content[0].text).lead.account;
+  assert.deepEqual(read, EMPTY_ACCOUNT);
+  const r = await mcp({ store, clock, uc }, "update_account", { id, before: read, systems: { domain: { what: "krone.at" } } });
+  assert.ok(!r.isError, JSON.stringify(r));
+  // The save writes today's shape; the history keeps the one before.
+  assert.deepEqual((await store.get("leads", id)).account, { ...EMPTY_ACCOUNT, systems: { ...EMPTY_ACCOUNT.systems, domain: { what: "krone.at", by: "" } } });
+  // A `before` still in the old shape compares as today's: the same Kundenakte, so nothing to save.
+  assert.equal(await uc.saveAccount(id, { systems: { domain: { what: "krone.at" } } }, { ...older, systems: { ...older.systems, domain: { what: "krone.at", by: "" } } }), false);
 });
 
 test("the lead page shows the Kundenakte for Qualifiziert and Kunde, or once it holds anything", () => {
@@ -213,14 +219,17 @@ test("the lead page shows the Kundenakte for Qualifiziert and Kunde, or once it 
   assert.equal(showsAccount(lead), false);
   assert.equal(showsAccount({ ...lead, status: "qualifiziert" }), true);
   assert.equal(showsAccount({ ...lead, account: normalizeAccount({ systems: { domain: { what: "krone.at" } } }, newId) }), true);
-  const account = normalizeAccount({ services: [{ kind: "Website", state: "live", price: "49 \u20AC/Monat", contractEnd: "2026-12-31", note: "Zeile 1\nZeile 2" }], systems: { domain: { what: "krone.at", by: "c1" }, domainOwner: "Agentur", registrar: "World4You", dns: { what: "Cloudflare", by: "c1" }, access: "1Password" }, contacts: [{ id: "c1", ...agency, phone: "+43 1 234", note: "erreichbar\nab 9" }, { id: "c2", name: "<b>Anna</b>" }] }, newId);
+  const account = normalizeAccount({ systems: { domain: { what: "krone.at, geh\xF6rt der Agentur, bei World4You", by: "c1" }, dns: { what: "Cloudflare", by: "c1" }, access: "1Password" }, contacts: [{ id: "c1", ...agency, phone: "+43 1 234", note: "erreichbar\nab 9" }, { id: "c2", name: "<b>Anna</b>" }] }, newId);
   const state = initialState();
   state.data = { leads: [{ ...lead, status: "kunde", account }], activities: [], templates: [], settings: [] };
   state.status = { ...state.status, leads: true, activities: true };
   state.ui = { ...state.ui, view: "detail", leadId: "L1" };
   const html = detailView(state, "2026-10-15");
-  for (const text of ["Kundenakte", "Website", "Live", "49 \u20AC/Monat", "Vertrag bis 31. Dez. 2026", "krone.at \xB7 geh\xF6rt: Agentur \xB7 World4You \xB7 betreut von Max Muster", "Cloudflare \xB7 betreut von Max Muster", "Webagentur X", 'href="tel:+431234"', 'href="mailto:max@x.at"', "1Password", "&lt;b&gt;Anna&lt;/b&gt;"]) assert.ok(html.includes(text), text);
+  for (const text of ["Kundenakte", "krone.at, geh\xF6rt der Agentur, bei World4You \xB7 betreut von Max Muster", "Cloudflare \xB7 betreut von Max Muster", "Webagentur X", 'href="tel:+431234"', 'href="mailto:max@x.at"', "1Password", "&lt;b&gt;Anna&lt;/b&gt;"]) assert.ok(html.includes(text), text);
   assert.ok(!html.includes("<b>Anna"));
+  assert.ok(!/Leistung|Kassensystem|Google-Profil verwaltet/.test(html));
+  // The systems are open where something is written down.
+  assert.match(html, /<details open><summary><h4>Systeme<\/h4><\/summary>/);
   assert.ok(detailView({ ...state, data: { ...state.data, leads: [lead] } }, "2026-10-15").indexOf("Kundenakte") === -1);
   state.ui.view = "editAccount";
   const form = accountEditView(state);
@@ -228,13 +237,35 @@ test("the lead page shows the Kundenakte for Qualifiziert and Kunde, or once it 
   assert.match(form, /name="contacts\.0\.name" type="text" value="Max Muster"/);
   // The domain has its "betreut von" like every system.
   assert.match(form, /<select name="systems\.domain\.by"><option value="">\u2013<\/option><option value="c1" selected>Max Muster<\/option>/);
+  assert.deepEqual([...form.matchAll(/name="systems\.(\w+)\.what"/g)].map(([, k]) => k), ["domain", "dns", "website", "email"]);
+  assert.ok(!/services\.|domainOwner|registrar|googleProfile/.test(form));
   assert.ok(!form.includes("<b>Anna"));
   // Notes are text areas, so saving the form untouched keeps their line breaks.
-  assert.match(form, /<textarea name="services\.0\.note" rows="3">Zeile 1\nZeile 2<\/textarea>/);
   assert.match(form, /<textarea name="contacts\.0\.note" rows="3">erreichbar\nab 9<\/textarea>/);
-  // One empty row each, to add to.
-  assert.match(form, /name="services\.1\.kind"/);
+  // One empty row, to add to.
   assert.match(form, /name="contacts\.2\.name" type="text" value=""/);
+});
+
+test("the systems open shut for a customer on bookete alone with none written down, open for a website", () => {
+  const lead = { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kunde", contactedAt: "2026-10-01", customer: { phase: "onboarding", since: "2026-10-15" } };
+  const view = (l, v = "detail") => {
+    const state = initialState();
+    state.data = { leads: [l], activities: [], templates: [], settings: [] };
+    state.status = { ...state.status, leads: true, activities: true };
+    state.ui = { ...state.ui, view: v, leadId: "L1" };
+    return v === "detail" ? detailView(state, "2026-10-15") : accountEditView(state);
+  };
+  const open = (html) => /<details[^>]*? open><summary><h[34]>Systeme/.test(html);
+  assert.deepEqual([open(view(lead)), open(view(lead, "editAccount"))], [false, false]);
+  const website = { ...lead, customer: { ...lead.customer, package: "website" } };
+  assert.deepEqual([open(view(website)), open(view(website, "editAccount"))], [true, true]);
+  const written = { ...lead, account: normalizeAccount({ systems: { email: { what: "office@krone.at bei A1" } } }, newId) };
+  assert.deepEqual([open(view(written)), open(view(written, "editAccount"))], [true, true]);
+  // Only who runs a system is written down: that counts too.
+  const runBy = { ...lead, account: normalizeAccount({ systems: { dns: { by: "c1" } }, contacts: [{ id: "c1", name: "Max" }] }, newId) };
+  assert.equal(open(view(runBy)), true);
+  // A lead that is no customer yet shows them open.
+  assert.equal(open(view({ ...lead, status: "qualifiziert", customer: undefined })), true);
 });
 
 test("the Kundenakte form has its own address and reads back as the account it shows", () => {
@@ -242,14 +273,12 @@ test("the Kundenakte form has its own address and reads back as the account it s
   assert.deepEqual(parseRoute("#/betrieb/L1/kunde"), { view: "editAccount", leadId: "L1" });
   const el = (name, value, extra = {}) => ({ name, value, ...extra });
   const input = accountInput([
-    el("services.0.id", "s1"), el("services.0.kind", "Website"), el("services.0.state", "live"), el("services.0.price", ""), el("services.0.drop", "1", { type: "checkbox", checked: false }),
-    el("services.1.id", ""), el("services.1.kind", ""), el("services.1.state", ""), el("services.1.price", ""), el("services.1.drop", "1", { type: "checkbox", checked: false }),
-    el("contacts.0.id", "c1"), el("contacts.0.name", "Max"), el("contacts.0.drop", "1", { type: "checkbox", checked: true }),
-    el("contacts.1.id", ""), el("contacts.1.name", ""), el("contacts.1.email", ""),
-    el("systems.domain.what", "krone.at"), el("systems.domainOwner", "Agentur"), el("systems.dns.what", "Cloudflare"), el("systems.dns.by", ""),
+    el("contacts.0.id", "c1"), el("contacts.0.name", "Max"), el("contacts.0.drop", "1", { type: "checkbox", checked: false }),
+    el("contacts.1.id", "c2"), el("contacts.1.name", "Anna"), el("contacts.1.drop", "1", { type: "checkbox", checked: true }),
+    el("contacts.2.id", ""), el("contacts.2.name", ""), el("contacts.2.email", ""),
+    el("systems.domain.what", "krone.at"), el("systems.access", "1Password"), el("systems.dns.what", "Cloudflare"), el("systems.dns.by", ""),
   ]);
   // The untouched empty row and the row marked to remove are left out.
-  assert.deepEqual(input.services, [{ id: "s1", kind: "Website", state: "live", price: "" }]);
-  assert.deepEqual(input.contacts, []);
-  assert.deepEqual(input.systems, { domain: { what: "krone.at" }, domainOwner: "Agentur", dns: { what: "Cloudflare", by: "" } });
+  assert.deepEqual(input.contacts, [{ id: "c1", name: "Max" }]);
+  assert.deepEqual(input.systems, { domain: { what: "krone.at" }, access: "1Password", dns: { what: "Cloudflare", by: "" } });
 });

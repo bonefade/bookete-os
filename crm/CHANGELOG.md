@@ -2,6 +2,12 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.27.0 (2026-10-20)
+
+- **A simpler Kundenakte:** four lines for the systems (Domain, DNS, Website / Hosting, E-Mail), each with who runs it, where the logins are kept, and the contacts. Write whose the domain is and where it is registered in the Domain line.
+- **No more Leistungen:** the package says what we deliver. What the customers had under Leistungen, and in the fields that are gone (Hosting, Kassensystem, Domain gehört, Registriert bei, Google-Profil verwaltet), is in a note on each of them, word for word.
+- **The systems stay shut** for a customer on bookete alone with nothing written down; tap "Systeme" to open them.
+
 ## 1.26.0 (2026-10-20)
 
 - **Each customer has a package:** bookete, Website, or bookete + Website. Pick it in the customer's header, next to the phase. A customer from before is bookete.

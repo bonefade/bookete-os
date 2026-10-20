@@ -145,7 +145,7 @@ export const backRoute = (ui) => ui.view === "editLead" || ui.view === "editAcco
  * row left empty.
  */
 export function accountInput(elements) {
-  const rows = { services: [], contacts: [] };
+  const rows = { contacts: [] };
   const systems = {};
   const dropped = new Set();
   for (const el of elements) {
@@ -158,7 +158,7 @@ export function accountInput(elements) {
     } else if (rows[part] && b) (rows[part][a] ||= {})[b] = el.value;
   }
   const keep = (part) => rows[part].filter((r, i) => r && !dropped.has(`${part}.${i}`) && (r.id || Object.values(r).some((v) => v !== "")));
-  return { services: keep("services"), contacts: keep("contacts"), systems };
+  return { contacts: keep("contacts"), systems };
 }
 /**
  * A form's fields by name. With `onlyChanged`, only those whose value differs from what the form showed when

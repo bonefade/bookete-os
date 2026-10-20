@@ -188,7 +188,13 @@ label.drop,label.check{display:flex;align-items:center;gap:8px;margin:0}
 label.drop>input,label.check>input{width:20px;min-height:20px;flex:none;margin:0;padding:0}
 .sig{white-space:pre-line}
 .account h4{margin:14px 0 2px}
-.account h4:first-child{margin-top:0}
+.account details:first-child h4{margin-top:0}
+/* the Kundenakte's systems open and shut by their heading */
+details>summary{cursor:pointer;list-style:none}
+details>summary::-webkit-details-marker{display:none}
+details>summary>h3,details>summary>h4{display:inline-block}
+details>summary::after{content:" \25B8";color:var(--muted)}
+details[open]>summary::after{content:" \25BE"}
 /* brand: the Connected Circles mark from the bookete app (public/brand/), colors as there */
 /* The top bar stays in view, so the search field does while results scroll; it holds the safe area above it. */
 .brandbar{position:sticky;top:0;z-index:6;background:var(--bg);height:calc(env(safe-area-inset-top,0px) + var(--topbar));padding:env(safe-area-inset-top,0px) max(16px,calc(50% - 624px)) 0;display:flex;align-items:center;gap:12px}

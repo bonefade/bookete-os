@@ -3,8 +3,6 @@ import { STAGE_LABEL, FIELD_LABEL } from '../domain/constants.js';
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 export const fmtDate = (d) => d ? (new Date(d + "T12:00:00")).toLocaleDateString("de-AT", { weekday: "short", day: "numeric", month: "short" }) : "";
-/** For dates that may lie in another year, such as a contract end: "31. Dez. 2026". */
-export const fmtDateWithYear = (d) => d ? (new Date(d + "T12:00:00")).toLocaleDateString("de-AT", { day: "numeric", month: "short", year: "numeric" }) : "";
 export function relDate(d, today) {
   if (!d) return "";
   if (d === today) return "heute";

@@ -3,14 +3,14 @@ import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, knownTools, dueB
 import { addDays, dayLabel, daysBetween, toDateString } from '../domain/dates.js';
 import { channelLink } from './platform.js';
 import { countTouches, hasSpoken, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting, byTimeline } from '../domain/activity.js';
-import { esc, fmtDate, fmtDateWithYear, relDate, options, describeChange, statusMove, actorName, fmtTime } from './format.js';
+import { esc, fmtDate, relDate, options, describeChange, statusMove, actorName, fmtTime } from './format.js';
 import { fold, searchTokens, searchLeads } from '../domain/search.js';
 import { hitLabel, markRanges, markHtml, snippetHtml } from './search.js';
 import { isPipeline, takesFollowUp, takesDate, isDue, lacksNextStep, getsUnsubscribeLink, addressKey, optOutByAddress, mailClosedBy, addressOptOutText } from '../domain/lead.js';
 import { lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
-import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
+import { SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
 import { todosOf } from '../domain/todos.js';
 import { notesOf } from '../domain/notes.js';
 import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, PACKAGES, STEP_GROUPS, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, onboardingOf, attentionOf } from '../domain/customer.js';
@@ -797,24 +797,22 @@ function meetingHtml(ui, today) {
   const chip = (k, label, cls = "") => `<button class="chip${cls}" data-meeting="${k}" aria-pressed="${m?.result === k}">${label}</button>`;
   return `<div class="sec"><h3>Wie war der Termin?</h3><div class="card"><div class="chips">${chip("kunde", "Kunde")}${chip("kein-abschluss", "Kein Abschluss", " lostc")}${chip("neuer-termin", "Neuer Termin")}</div>${form}</div></div>`;
 }
-const STATE_LABEL = Object.fromEntries(SERVICE_STATES);
-const OWNER_LABEL = Object.fromEntries(OWNERS);
 const fact = (label, html) => html ? `<div class="fact"><dt>${esc(label)}</dt><dd>${html}</dd></div>` : "";
-const dated = (label, d) => d ? `${label} ${esc(fmtDateWithYear(d))}` : "";
-/** The Kundenakte on the lead page: what we deliver, their systems and who runs them, the people to reach. */
+/**
+ * Whether the Kundenakte opens with its systems: shut for a customer who takes bookete alone and has none written
+ * down, as bookete needs no domain or hosting of theirs.
+ */
+const showsSystems = (l, a) => customerOf(l)?.package !== "bookete" || [...SYSTEMS.flatMap(([k]) => [a.systems[k].what, a.systems[k].by]), a.systems.access].some(Boolean);
+/** The Kundenakte on the lead page: their systems and who runs them, the people to reach. */
 function accountHtml(l, offersMailto) {
   const a = accountOf(l);
   const who = Object.fromEntries(a.contacts.map((c) => [c.id, c.name]));
-  const services = a.services.map((s) => `<div class="fact"><dt>${esc(STATE_LABEL[s.state])}</dt><dd><b>${esc(s.kind)}</b>${s.price ? " \xB7 " + esc(s.price) : ""}${[dated("seit", s.since), dated("live", s.goLive), dated("Vertrag bis", s.contractEnd)].filter(Boolean).map((x) => " \xB7 " + x).join("")}${s.note ? `<br>${esc(s.note)}` : ""}</dd></div>`).join("");
   const sys = a.systems;
-  // The domain's line also says who owns it and where it is registered.
-  const more = { domain: [sys.domainOwner !== "unbekannt" && `geh\xF6rt: ${OWNER_LABEL[sys.domainOwner]}`, sys.registrar] };
   const systems = [
     ...SYSTEMS.map(([k, label]) => {
-      const rest = [...(more[k] || []), sys[k].by && `betreut von ${who[sys[k].by]}`].filter(Boolean);
-      return fact(label, sys[k].what || rest.length ? esc([sys[k].what || "\u2013", ...rest].join(" \xB7 ")) : "");
+      const by = sys[k].by && `betreut von ${who[sys[k].by]}`;
+      return fact(label, sys[k].what || by ? esc([sys[k].what || "\u2013", by].filter(Boolean).join(" \xB7 ")) : "");
     }),
-    fact("Google-Profil", sys.googleProfile !== "unbekannt" ? "verwaltet: " + esc(OWNER_LABEL[sys.googleProfile]) : ""),
     fact("Zug\xE4nge liegen", esc(sys.access)),
   ].join("");
   const contacts = a.contacts.map((c) => {
@@ -822,9 +820,10 @@ function accountHtml(l, offersMailto) {
     const handles = [c.handles, ...handledBy(a, c.id)].filter(Boolean).join(", ");
     return `<div class="fact"><dt>${esc([c.company, c.role].filter(Boolean).join(" \xB7 ") || "Kontakt")}</dt><dd><b>${esc(c.name)}</b>${handles ? ` \xB7 ${esc(handles)}` : ""}${c.email ? `<br>${offersMailto(c.email) ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : esc(c.email)}` : ""}${tel ? `<br><a href="${esc(tel)}">${esc(c.phone)}</a>` : ""}${c.note ? `<br>${esc(c.note)}` : ""}</dd></div>`;
   }).join("");
-  const part = (title, html, empty) => `<h4>${title}</h4>${html ? `<dl class="facts" style="padding:0">${html}</dl>` : `<p class="note">${empty}</p>`}`;
+  const body = (html, empty) => html ? `<dl class="facts" style="padding:0">${html}</dl>` : `<p class="note">${empty}</p>`;
   return `<div class="sec"><h3>Kundenakte <button class="link" data-act="accountEdit">Bearbeiten</button></h3><div class="card account">
-    ${part("Leistungen", services, "Noch keine Leistung eingetragen.")}${part("Systeme", systems, "Noch nichts zu Domain, Hosting oder Kasse.")}${part("Kontakte", contacts, "Noch keine Kontakte, etwa die Agentur.")}
+    <details${showsSystems(l, a) ? " open" : ""}><summary><h4>Systeme</h4></summary>${body(systems, "Noch nichts zu Domain, Website oder E-Mail.")}</details>
+    <h4>Kontakte</h4>${body(contacts, "Noch keine Kontakte, etwa die Agentur.")}
   </div></div>`;
 }
 /** A labelled one-line field of a form. */
@@ -834,20 +833,13 @@ export function accountEditView(state) {
   if (!isReady(state)) return loadingOr(state, "");
   const l = currentLead(state);
   const a = accountOf(l);
-  const blank = [["", "\u2013"]];
   const note = (name, v) => `<label>Notiz<textarea name="${name}" rows="3">${esc(v || "")}</textarea></label>`;
   const drop = (name, id) => id ? `<label class="drop"><input type="checkbox" name="${name}.drop" value="1"> Entfernen</label>` : "";
-  const services = [...a.services, {}].map((s, i) => `<div class="card"><input type="hidden" name="services.${i}.id" value="${esc(s.id || "")}">
-    <div class="two"><label>Leistung<select name="services.${i}.kind">${options(s.id ? SERVICE_KINDS : [...blank, ...SERVICE_KINDS], s.kind || "")}</select></label><label>Stand<select name="services.${i}.state">${options(s.id ? SERVICE_STATES : [...blank, ...SERVICE_STATES], s.state || "")}</select></label></div>
-    <div class="two">${textField(`services.${i}.since`, s.since, "Seit", "date")}${textField(`services.${i}.goLive`, s.goLive, "Live seit", "date")}</div>
-    <div class="two">${textField(`services.${i}.contractEnd`, s.contractEnd, "Vertrag bis", "date")}${textField(`services.${i}.price`, s.price, "Preis", "text", "z. B. 49 \u20AC/Monat")}</div>
-    ${note(`services.${i}.note`, s.note)}${drop(`services.${i}`, s.id)}</div>`).join("");
   const people = [["", "\u2013"], ...a.contacts.map((c) => [c.id, c.name])];
   const sys = a.systems;
+  const hint = { domain: "z. B. krone.at, geh\xF6rt dem Kunden, bei World4You", website: "z. B. WordPress bei der Agentur" };
   const systems = `<div class="card">
-    <div class="two"><label>Domain geh\xF6rt<select name="systems.domainOwner">${options(OWNERS, sys.domainOwner)}</select></label>${textField("systems.registrar", sys.registrar, "Registriert bei", "text", "z. B. World4You")}</div>
-    ${SYSTEMS.map(([k, label]) => `<div class="two">${textField(`systems.${k}.what`, sys[k].what, label)}<label>betreut von<select name="systems.${k}.by">${options(people, sys[k].by || "")}</select></label></div>`).join("")}
-    <label>Google-Profil verwaltet<select name="systems.googleProfile">${options(OWNERS, sys.googleProfile)}</select></label>
+    ${SYSTEMS.map(([k, label]) => `<div class="two">${textField(`systems.${k}.what`, sys[k].what, label, "text", hint[k] || "")}<label>betreut von<select name="systems.${k}.by">${options(people, sys[k].by || "")}</select></label></div>`).join("")}
     ${textField("systems.access", sys.access, "Wo liegen die Zug\xE4nge? (keine Passw\xF6rter)", "text", "z. B. 1Password, Tresor Kunden")}
     <p class="hint">\u201Ebetreut von\u201C w\xE4hlt aus den gespeicherten Kontakten. Einen neuen Kontakt erst sichern.</p></div>`;
   const contacts = [...a.contacts, {}].map((c, i) => `<div class="card"><input type="hidden" name="contacts.${i}.id" value="${esc(c.id || "")}">
@@ -858,8 +850,7 @@ export function accountEditView(state) {
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>Kundenakte</h2><button class="link" data-act="accountSave">Sichern</button></div>
 <form class="wrap" id="aform"><input type="hidden" name="before" value="${esc(JSON.stringify(a))}">
   <p class="note">${esc(l.name)}</p>
-  <div class="sec"><h3>Leistungen</h3>${services}</div>
-  <div class="sec"><h3>Systeme</h3>${systems}</div>
+  <details class="sec"${showsSystems(l, a) ? " open" : ""}><summary><h3>Systeme</h3></summary>${systems}</details>
   <div class="sec"><h3>Kontakte</h3>${contacts}</div>
 </form>`;
 }

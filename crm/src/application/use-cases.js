@@ -4,7 +4,7 @@ import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity,
 import { normalizeLead, toolName, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
 import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isCareStep, careFromToday } from "../domain/customer.js";
 import { normalizeTemplate } from "../domain/template.js";
-import { normalizeAccount, accountOf, mergeAccount } from "../domain/account.js";
+import { normalizeAccount, accountOf, mergeAccount, accountPatch } from "../domain/account.js";
 import { normalizeTodos, todosOf, todosAfter } from "../domain/todos.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
 import { notesAfter, normalizeEntries } from "../domain/notes.js";
@@ -255,7 +255,7 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
       }
       const account = normalizeAccount(mergeAccount(stored, parts), ids.newId);
       if (JSON.stringify(account) === JSON.stringify(stored)) return false;
-      await commit([patchOp(l, { account })]);
+      await commit([patchOp(l, { account: accountPatch(l.account, account) })]);
       return true;
     }),
     logActivity,

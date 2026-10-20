@@ -87,14 +87,13 @@ test("the owner changes alone, and only to one of the team; Gekündigt needs a r
   await rejects(uc.changeCustomer(await uc.addLead({ name: "Post" }), { step: "vertrag" }), "status");
 });
 
-test("a Kunde won before customers were stored is Live where a service is live, else onboarding; its steps count from its first change", async () => {
+test("a Kunde won before customers were stored is in onboarding with no step done; its steps count from its first change", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Seeblick", status: "kunde" });
   const won = await store.get("leads", id);
-  // As a Kunde from before: no care stored, a service live in the Kundenakte.
+  // As a Kunde from before: no care stored, whatever its Kundenakte from before held.
   const old = { ...won, customer: undefined, wonAt: "2026-06-01", account: { services: [{ kind: "bookete", state: "live", goLive: "2026-06-20" }] } };
-  assert.deepEqual(customerOf(old), { phase: "live", package: "bookete", since: "", owner: "", steps: [], liveAt: "2026-06-20", cancelReason: "", checkIns: [], nextCheckIn: "" });
-  assert.deepEqual(customerOf({ ...old, account: undefined }).phase, "onboarding");
+  assert.deepEqual(customerOf(old), { phase: "onboarding", package: "bookete", since: "", owner: "", steps: [], liveAt: "", cancelReason: "", checkIns: [], nextCheckIn: "" });
   assert.equal(customerOf({ ...old, status: "qualifiziert" }), null);
   // Stored by the first change, here a step ticked to record it; the steps count from that day, so the next one is
   // not months overdue.
@@ -279,15 +278,15 @@ test("on a live customer our contact keeps the check-in as the next step, but no
   assert.equal((await store.get("leads", id)).nextStep, "Angebot Website");
 });
 
-test("a live customer from before gets its first check-in 14 days after its first change", async () => {
+test("a customer from before set Live gets its first check-in 14 days on", async () => {
   const { store, uc } = setup();
   const id = await uc.addLead({ name: "Seeblick", status: "kunde" });
   const { customer: _c, ...without } = await store.get("leads", id);
-  await store.commit([{ type: "put", collection: "leads", id, data: { ...without, account: { services: [{ kind: "bookete", state: "live", goLive: "2026-06-20" }] } } }], "test");
+  await store.commit([{ type: "put", collection: "leads", id, data: without }], "test");
   today = "2026-10-20";
-  await uc.changeCustomer(id, { owner: "jo@bookete.com" });
+  await uc.changeCustomer(id, { phase: "live" });
   const l = await store.get("leads", id);
-  assert.deepEqual([l.customer.phase, l.customer.liveAt, l.customer.nextCheckIn, ...next(l)], ["live", "2026-06-20", "2026-11-03", "2026-11-03", "Check-in"]);
+  assert.deepEqual([l.customer.phase, l.customer.liveAt, l.customer.nextCheckIn, ...next(l)], ["live", "2026-10-20", "2026-11-03", "2026-11-03", "Check-in"]);
   assert.equal(COMMANDS.changeCustomer[0].safeParse({ id: "a", checkIn: "gut", next: "2026-11-01", note: "ok" }).success, true);
   assert.equal(COMMANDS.changeCustomer[0].safeParse({ id: "a", checkIn: "super" }).success, false);
 });

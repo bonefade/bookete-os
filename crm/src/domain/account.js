@@ -1,40 +1,24 @@
 import { ValidationError } from './errors.js';
-import { isDate } from './dates.js';
 import { str, isEmail } from './lead.js';
 
 /**
- * The Kundenakte: what we deliver to a business, the systems it runs and who looks after them.
+ * The Kundenakte: the systems a business runs, who looks after them, and the people to reach. What we deliver is the
+ * customer's package (customer.js).
  * It lives on the lead record, so the write guard, history, trash, erase and backup cover it.
  * No passwords: `systems.access` says where logins are kept, never the logins themselves.
  * Empty is "", never null: the store writes a patch as RFC 7396, which drops a null nested in an object.
  */
-export const SERVICE_KINDS = ["bookete", "Website", "bookete-Integration", "Google-Profil", "Weiteres"];
-export const SERVICE_STATES = [["geplant", "Geplant"], ["in-arbeit", "In Arbeit"], ["live", "Live"], ["beendet", "Beendet"]];
-export const OWNERS = [["wir", "Wir (bookete)"], ["Kunde", "Kunde"], ["Agentur", "Agentur"], ["unbekannt", "Unbekannt"]];
-/** Systems that someone runs: what it is, and the contact who looks after it. */
-export const SYSTEMS = [["domain", "Domain"], ["dns", "DNS"], ["hosting", "Hosting"], ["email", "E-Mail"], ["website", "Website / CMS"], ["pos", "Kassensystem"]];
+/** Systems that someone runs: what it is (for the domain also whose it is and where it is registered), and the contact who looks after it. */
+export const SYSTEMS = [["domain", "Domain"], ["dns", "DNS"], ["website", "Website / Hosting"], ["email", "E-Mail"]];
 export const ACCOUNT_LIMIT = 50;
 export const EMPTY_ACCOUNT = {
-  services: [],
-  systems: { ...Object.fromEntries(SYSTEMS.map(([k]) => [k, { what: "", by: "" }])), domainOwner: "unbekannt", registrar: "", googleProfile: "unbekannt", access: "" },
+  systems: { ...Object.fromEntries(SYSTEMS.map(([k]) => [k, { what: "", by: "" }])), access: "" },
   contacts: [],
 };
 
 /** Notes keep their line breaks; every other field is one line, so each writer stores what the form shows. */
 const NOTE_MAX = 2000;
 const line = (v, max) => str(String(v ?? "").replace(/\s*[\r\n]\s*/g, " "), max);
-/** A value from `allowed`, or `empty` when none is given. Anything else is refused, never replaced. */
-function oneOf(v, allowed, field, empty) {
-  if (v == null || v === "") return empty;
-  if (!allowed.includes(v)) throw new ValidationError(field, `Unbekannter Wert \u201E${line(v, 40)}\u201C`);
-  return v;
-}
-const keys = (pairs) => pairs.map(([k]) => k);
-function dateOrEmpty(v, field) {
-  const d = line(v, 20);
-  if (d && !isDate(d)) throw new ValidationError(field, `Datum \u201E${d}\u201C ung\xFCltig`);
-  return d;
-}
 
 function list(items, field, newId, entry) {
   const out = (Array.isArray(items) ? items : []).map((x) => ({ id: str(x?.id, 100) || newId(), ...entry(x || {}) }));
@@ -43,22 +27,13 @@ function list(items, field, newId, entry) {
   return out;
 }
 
+/**
+ * A Kundenakte in today's shape. What one stored before 1.27.0 holds besides (the services, hosting and the till as
+ * systems, the domain's owner and registrar, who runs the Google profile) is left out: that release moved it to the
+ * notes, and the history keeps it.
+ */
 export function normalizeAccount(input, newId) {
   const a = input || {};
-  const services = list(a.services, "services", newId, (s) => {
-    const service = {
-      kind: oneOf(s.kind, SERVICE_KINDS, "services", ""),
-      // A service without a state is planned.
-      state: oneOf(s.state, keys(SERVICE_STATES), "services", "geplant"),
-      since: dateOrEmpty(s.since, "services"),
-      goLive: dateOrEmpty(s.goLive, "services"),
-      contractEnd: dateOrEmpty(s.contractEnd, "services"),
-      price: line(s.price, 200),
-      note: str(s.note, NOTE_MAX),
-    };
-    if (!service.kind) throw new ValidationError("services", "Leistung ohne Art");
-    return service;
-  });
   const contacts = list(a.contacts, "contacts", newId, (c) => {
     const contact = { name: line(c.name, 200), company: line(c.company, 200), role: line(c.role, 200), handles: line(c.handles, 500), email: line(c.email, 200), phone: line(c.phone, 100), note: str(c.note, NOTE_MAX) };
     if (!contact.name) throw new ValidationError("contacts", "Kontakt ohne Namen");
@@ -69,24 +44,21 @@ export function normalizeAccount(input, newId) {
   const sys = a.systems || {};
   const systems = {
     ...Object.fromEntries(SYSTEMS.map(([k]) => [k, { what: line(sys[k]?.what, 200), by: known.has(sys[k]?.by) ? sys[k].by : "" }])),
-    domainOwner: oneOf(sys.domainOwner, keys(OWNERS), "systems", "unbekannt"),
-    registrar: line(sys.registrar, 200),
-    googleProfile: oneOf(sys.googleProfile, keys(OWNERS), "systems", "unbekannt"),
     access: line(sys.access, 500),
   };
-  return { services, systems, contacts };
+  return { systems, contacts };
 }
 
 /**
- * A lead's Kundenakte in today's shape, so one stored before a part was added compares and shows like a new one.
- * A lead that never had one has the empty one. Stored entries all have their id, so no new id is needed.
+ * A lead's Kundenakte in today's shape, so one stored before a part was added or dropped compares and shows like a new
+ * one. A lead that never had one has the empty one. Stored entries all have their id, so no new id is needed.
  */
 export const accountOf = (lead) => normalizeAccount(lead.account);
 /** Shown on the lead page once a deal is near (Qualifiziert, Kunde) or as soon as anything is in it. */
 export const showsAccount = (lead) => lead.status === "qualifiziert" || lead.status === "kunde" || JSON.stringify(accountOf(lead)) !== JSON.stringify(EMPTY_ACCOUNT);
 /**
- * The given parts over the stored Kundenakte: a list replaces the stored list; systems, and each system, change field
- * by field. A write that leaves out the contact who runs a system must give that system's `by` too, so a contact
+ * The given parts over the stored Kundenakte: the contacts replace the stored list; systems, and each system, change
+ * field by field. A write that leaves out the contact who runs a system must give that system's `by` too, so a contact
  * re-sent without its id never empties "betreut von" unnoticed.
  */
 export function mergeAccount(stored, parts) {
@@ -97,10 +69,19 @@ export function mergeAccount(stored, parts) {
     const by = stored.systems[k].by;
     if (by && parts.systems?.[k]?.by === undefined && !contacts.some((c) => c.id === by)) {
       const name = stored.contacts.find((c) => c.id === by).name;
-      throw new ValidationError("contacts", `${name} betreut ${label}, fehlt aber in den Kontakten: den Kontakt mit seiner id senden oder bei ${label} \u201Ebetreut von\u201C angeben`);
+      throw new ValidationError("contacts", `${name} betreut ${label}, fehlt aber in den Kontakten: den Kontakt mit seiner id senden oder bei ${label} „betreut von“ angeben`);
     }
   }
-  return { services: parts.services ?? stored.services, systems, contacts };
+  return { systems, contacts };
+}
+
+/**
+ * A Kundenakte as the patch that writes it over the stored one: what the stored one holds and today's shape has not
+ * (a part 1.27.0 dropped) is null, which the store's RFC 7396 patch removes.
+ */
+export function accountPatch(stored, account) {
+  const gone = (from, to) => Object.fromEntries(Object.keys(from || {}).filter((k) => !(k in to)).map((k) => [k, null]));
+  return { ...gone(stored, account), ...account, systems: { ...gone(stored?.systems, account.systems), ...account.systems } };
 }
 
 /** The systems a contact looks after, by label. */

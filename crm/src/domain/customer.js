@@ -86,16 +86,13 @@ export function normalizeCustomer(input) {
 }
 
 /**
- * A Kunde's care. One won before customers were stored has none: it is Live where the Kundenakte has a service live,
- * else in Onboarding with no step done, for a person to tick once. Its steps and check-ins have no day yet: they
- * count from the day its care is first stored (careFromToday), so a customer won months ago is not overdue at once.
- * Null for a lead that never was Kunde.
+ * A Kunde's care. One won before customers were stored has none: it is in Onboarding with no step done, for a person
+ * to tick once or set Live. Its steps and check-ins have no day yet: they count from the day its care is first stored
+ * (careFromToday), so a customer won months ago is not overdue at once. Null for a lead that never was Kunde.
  */
 export function customerOf(lead) {
   if (lead.customer) return normalizeCustomer(lead.customer);
-  if (lead.status !== "kunde") return null;
-  const live = (lead.account?.services || []).find((s) => s.state === "live");
-  return normalizeCustomer(live ? { phase: "live", liveAt: live.goLive || lead.wonAt || "" } : { phase: "onboarding" });
+  return lead.status === "kunde" ? normalizeCustomer({ phase: "onboarding" }) : null;
 }
 /**
  * A care with what it needs to plan: one from before starts today, and a live one without a check-in day (from before,
