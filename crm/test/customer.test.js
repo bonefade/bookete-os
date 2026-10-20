@@ -5,7 +5,7 @@ import { createStore } from "../src/server/store.js";
 import { createUseCases } from "../src/application/use-cases.js";
 import { COMMANDS } from "../src/server/commands.js";
 import { ValidationError } from "../src/domain/errors.js";
-import { customerOf, attentionOf, normalizeCustomer } from "../src/domain/customer.js";
+import { customerOf, attentionOf, normalizeCustomer, onboardingOf } from "../src/domain/customer.js";
 import { BACKUP_FORMAT } from "../src/domain/backup.js";
 import { describeChange } from "../src/web/format.js";
 
@@ -26,7 +26,7 @@ test("a lead that becomes Kunde starts its onboarding, owned by whoever won it, 
   const id = await uc.addLead({ name: "Linde", status: "qualifiziert", followUp: "2026-10-20", nextStep: "Termin" });
   await uc.changeStatus(id, "kunde");
   const l = await store.get("leads", id);
-  assert.deepEqual(l.customer, { phase: "onboarding", since: "2026-10-15", owner: "jo@bookete.com", steps: [], liveAt: "", cancelReason: "", checkIns: [], nextCheckIn: "" });
+  assert.deepEqual(l.customer, { phase: "onboarding", package: "bookete", since: "2026-10-15", owner: "jo@bookete.com", steps: [], liveAt: "", cancelReason: "", checkIns: [], nextCheckIn: "" });
   assert.deepEqual(next(l), ["2026-10-15", "Vertrag unterschrieben"]);
   // Once: back to Qualifiziert and Kunde again keeps the care as it was.
   await uc.changeCustomer(id, { step: "vertrag" });
@@ -93,7 +93,7 @@ test("a Kunde won before customers were stored is Live where a service is live, 
   const won = await store.get("leads", id);
   // As a Kunde from before: no care stored, a service live in the Kundenakte.
   const old = { ...won, customer: undefined, wonAt: "2026-06-01", account: { services: [{ kind: "bookete", state: "live", goLive: "2026-06-20" }] } };
-  assert.deepEqual(customerOf(old), { phase: "live", since: "", owner: "", steps: [], liveAt: "2026-06-20", cancelReason: "", checkIns: [], nextCheckIn: "" });
+  assert.deepEqual(customerOf(old), { phase: "live", package: "bookete", since: "", owner: "", steps: [], liveAt: "2026-06-20", cancelReason: "", checkIns: [], nextCheckIn: "" });
   assert.deepEqual(customerOf({ ...old, account: undefined }).phase, "onboarding");
   assert.equal(customerOf({ ...old, status: "qualifiziert" }), null);
   // Stored by the first change, here a step ticked to record it; the steps count from that day, so the next one is
@@ -126,12 +126,14 @@ test("the RPC takes one change at a time, by its own schema; a backup keeps the 
   assert.equal(ok({ step: "widget" }), true);
   assert.equal(ok({ step: "widget", done: false }), true);
   assert.equal(ok({ owner: "" }), true);
+  assert.equal(ok({ package: "beides" }), true);
+  assert.equal(ok({ package: "alles" }), false);
   assert.equal(ok({ phase: "gekuendigt", reason: "Preis" }), true);
   assert.equal(ok({ step: "kaffee" }), false);
   assert.equal(ok({ owner: "niemand" }), false);
   assert.equal(ok({ phase: "pausiert" }), false);
   assert.equal(ok({ step: "widget", owner: "jo@bookete.com" }), false);
-  const customer = { phase: "live", since: "2026-09-01", owner: "anna@bookete.com", steps: [{ id: "vertrag", at: "2026-09-01", by: "anna" }], liveAt: "2026-09-14", cancelReason: "", checkIns: [{ at: "2026-09-28", result: "gut", by: "anna", note: "" }], nextCheckIn: "2026-12-13" };
+  const customer = { phase: "live", package: "beides", since: "2026-09-01", owner: "anna@bookete.com", steps: [{ id: "vertrag", at: "2026-09-01", by: "anna" }], liveAt: "2026-09-14", cancelReason: "", checkIns: [{ at: "2026-09-28", result: "gut", by: "anna", note: "" }], nextCheckIn: "2026-12-13" };
   const lead = { id: "L9", name: "Krone", status: "kunde", wonAt: "2026-09-01", schemaVersion: 3, customer };
   assert.equal(await uc.importBackup({ format: BACKUP_FORMAT, data: { leads: [lead] } }), 1);
   assert.deepEqual((await store.get("leads", "L9")).customer, customer);
@@ -252,11 +254,11 @@ test("an unhappy check-in asks when to call again and puts the customer on Achtu
 });
 
 test("Achtung: an onboarding step 3 days late, a check-in a week late; never a cancelled customer", () => {
-  const onboarding = { phase: "onboarding", since: "2026-10-01", steps: [], checkIns: [], nextCheckIn: "" };
+  const onboarding = normalizeCustomer({ phase: "onboarding", since: "2026-10-01" });
   // "Vertrag unterschrieben" was due on the 1st.
   assert.equal(attentionOf(onboarding, "2026-10-03"), "");
   assert.equal(attentionOf(onboarding, "2026-10-04"), "Onboarding hängt");
-  const live = { phase: "live", since: "2026-06-01", steps: [], checkIns: [], nextCheckIn: "2026-10-10" };
+  const live = normalizeCustomer({ phase: "live", since: "2026-06-01", nextCheckIn: "2026-10-10" });
   assert.equal(attentionOf(live, "2026-10-16"), "");
   assert.equal(attentionOf(live, "2026-10-17"), "Check-in überfällig");
   assert.equal(attentionOf({ ...live, phase: "gekuendigt" }, "2026-12-01"), "");
@@ -337,4 +339,51 @@ test("a later step can be done or left out first: the first open step stays the 
   const l = await store.get("leads", id);
   assert.deepEqual(l.customer.steps.map((s) => s.id), ["abo", "google"]);
   assert.deepEqual(next(l), ["2026-10-15", "Vertrag unterschrieben"]);
+});
+
+test("the package decides the steps: a website takes its own, both take all; a new package moves the next step to its open one", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Linde", status: "kunde" });
+  await uc.changeCustomer(id, { step: "vertrag" });
+  await uc.changeCustomer(id, { step: "abo" });
+  await uc.changeCustomer(id, { step: "konto" });
+  // bookete: the Widget is due on day 4.
+  assert.deepEqual(next(await store.get("leads", id)), ["2026-10-19", "Widget auf der Website"]);
+  // A website alone: its first step, on day 3, and no bookete step to tick.
+  await uc.changeCustomer(id, { package: "website" });
+  let l = await store.get("leads", id);
+  assert.deepEqual([l.customer.package, ...next(l)], ["website", "2026-10-18", "Inhalte & Fotos erhalten"]);
+  assert.deepEqual(onboardingOf(l.customer).map((s) => s.id), ["vertrag", "abo", "inhalte", "domain", "entwurf", "online", "uebergabe", "live"]);
+  await rejects(uc.changeCustomer(id, { step: "widget" }), "step");
+  await rejects(uc.changeCustomer(id, { package: "alles" }), "package");
+  // Both: every step, in the order they are due; the Konto ticked before is done again.
+  await uc.changeCustomer(id, { package: "beides" });
+  l = await store.get("leads", id);
+  const steps = onboardingOf(l.customer);
+  assert.deepEqual(steps.map((s) => s.id), ["vertrag", "abo", "konto", "inhalte", "widget", "domain", "google", "entwurf", "team", "online", "uebergabe", "live"]);
+  assert.deepEqual(steps.filter((s) => s.at).map((s) => s.id), ["vertrag", "abo", "konto"]);
+  assert.deepEqual(next(l), ["2026-10-18", "Inhalte & Fotos erhalten"]);
+  // Back to bookete: the website's steps leave the list, the next step is bookete's again.
+  await uc.changeCustomer(id, { package: "bookete" });
+  assert.deepEqual(next(await store.get("leads", id)), ["2026-10-19", "Widget auf der Website"]);
+});
+
+test("a new package leaves a Termin a person planned, and a next step whose open step it does not change; a cancelled customer keeps its package", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ name: "Linde", status: "kunde", email: "info@linde.at" });
+  for (const step of ["vertrag", "abo", "konto"]) await uc.changeCustomer(id, { step });
+  // The website moves the open step from the Widget to the photos, yet the Termin stays the next step.
+  await uc.scheduleMeeting(id, { date: "2026-10-25", time: "10:00" });
+  await uc.changeCustomer(id, { package: "website" });
+  let l = await store.get("leads", id);
+  assert.deepEqual([l.customer.package, ...next(l)], ["website", "2026-10-25", "Termin um 10:00"]);
+  // The open step is Vertrag in every package: a follow-up a person moved stays.
+  const moved = await uc.addLead({ name: "Post", status: "kunde" });
+  await uc.setFollowUp(moved, "2026-10-22");
+  await uc.changeCustomer(moved, { package: "beides" });
+  assert.deepEqual(next(await store.get("leads", moved)), ["2026-10-22", "Vertrag unterschrieben"]);
+  await uc.changeCustomer(id, { phase: "gekuendigt", reason: "Preis" });
+  await rejects(uc.changeCustomer(id, { package: "bookete" }), "phase");
+  l = await store.get("leads", id);
+  assert.equal(l.customer.package, "website");
 });

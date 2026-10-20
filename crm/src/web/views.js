@@ -13,7 +13,7 @@ import { REGIONS, regionOf } from '../domain/region.js';
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
 import { todosOf } from '../domain/todos.js';
 import { notesOf } from '../domain/notes.js';
-import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, onboardingOf, attentionOf } from '../domain/customer.js';
+import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, PACKAGES, STEP_GROUPS, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, onboardingOf, attentionOf } from '../domain/customer.js';
 
 export const ICONS = {
   heute: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
@@ -123,8 +123,11 @@ export function todayView(state, today) {
 /** The Leads status filter: [value, label, test]. Offen is the pipeline. */
 /** A customer's phase as chips, one tap each; `progress` names how far its onboarding is on the chip of its phase. */
 const phaseChips = (c, progress = false) => PHASES.map(([k, label]) => `<button class="chip${k === "gekuendigt" ? " lostc" : ""}" data-phase="${k}" aria-pressed="${c.phase === k}">${esc(progress && c.phase === k ? phaseText(c) : label)}</button>`).join("");
-/** How far a customer's onboarding is: "Onboarding 3/7", or its phase. */
-const phaseText = (c) => c.phase === "onboarding" ? `${PHASE_LABEL.onboarding} ${c.steps.length}/${ONBOARDING.length}` : PHASE_LABEL[c.phase];
+/** How far a customer's onboarding is: "Onboarding 3/8", of the steps its package takes; or its phase. */
+const phaseText = (c) => {
+  const steps = onboardingOf(c);
+  return c.phase === "onboarding" ? `${PHASE_LABEL.onboarding} ${steps.filter((s) => s.at).length}/${steps.length}` : PHASE_LABEL[c.phase];
+};
 /**
  * The Kunden tab: every customer, by phase and by who looks after them; the next step due first, as Heute has it.
  * A row opens the customer's page.
@@ -492,14 +495,16 @@ function statusMenuHtml(l, acts, today) {
 }
 /**
  * The status as chips, one tap each: Disqualifiziert asks for the reason (and changes it on a lead closed already).
- * After an opt-out only Kunde and Disqualifiziert can be set, as the server holds. A Kunde has its phase beside it.
+ * After an opt-out only Kunde and Disqualifiziert can be set, as the server holds. A Kunde has its phase beside it and,
+ * unless cancelled, its package, which decides its onboarding steps.
  */
 function statusChipsHtml(l, customer, ui) {
   const lost = l.status === "disqualifiziert";
   const status = STAGES.map(([k, v]) => `<button class="chip${k === "disqualifiziert" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}"${l.optOutAt && isPipeline({ status: k }) ? " disabled" : ""}>${esc(v)}${k === "disqualifiziert" && lost ? " \xB7 " + esc(l.lostReason) : ""}</button>`).join("");
   const more = l.optOutAt ? "" : `<button class="link" data-act="statusMenu" aria-expanded="${!!ui.statusMenu}">Weitere ▾</button>`;
   const phases = customer ? `<div class="chips phchips"><span class="note">Phase</span>${phaseChips(customer, true)}</div>` : "";
-  return `<div class="chips stchips" role="group" aria-label="${esc(FIELD_LABEL.status)}">${status}${more}</div>${phases}`;
+  const pack = customer && customer.phase !== "gekuendigt" ? `<div class="chips phchips"><span class="note">Paket</span>${PACKAGES.map(([k, label]) => `<button class="chip" data-package="${k}" aria-pressed="${customer.package === k}">${esc(label)}</button>`).join("")}</div>` : "";
+  return `<div class="chips stchips" role="group" aria-label="${esc(FIELD_LABEL.status)}">${status}${more}</div>${phases}${pack}`;
 }
 /** The one next-step line: when and what, yellow when a lead in work has none, with the date and text to change. */
 function nextStepHtml(l, acts, ui, today) {
@@ -517,8 +522,9 @@ function nextStepHtml(l, acts, ui, today) {
     ${edit}`;
 }
 /**
- * A Kunde's care on its page: who looks after it and its phase (also in the header), the check-ins once live, and
- * the onboarding as a checklist. The first open step
+ * A Kunde's care on its page: who looks after it, its phase (also in the header), the check-ins once live, and the
+ * onboarding its package (picked in the header) takes as a checklist, in groups: every customer's steps, then bookete's and the
+ * website's. The first open step (by due day, in any group)
  * stands out with its buttons, and every other open step can be done or left out before it; a done one can be opened
  * again. Gekündigt shows the steps as they stood. A step without a day
  * belongs to a customer from before whose care is not stored yet.
@@ -530,7 +536,7 @@ function customerHtml(state, l, c, today) {
   const steps = onboardingOf(c);
   // Steps can be ticked in every phase but Gekündigt: a customer from before, live already, ticks its list once.
   const open = c.phase !== "gekuendigt" ? steps.find((s) => !s.at) : null;
-  const rows = steps.map((s) => {
+  const row = (s) => {
     if (s.at) return `<li class="ok"><b>${esc(s.title)}${s.skipped ? " \xB7 entf\xE4llt" : ""}</b><small>${esc(fmtDate(s.at))} \xB7 ${esc(actorName(s.by))}${s.skipped && s.skipped !== "entf\xE4llt" ? " \xB7 " + esc(s.skipped) : ""}</small>${c.phase === "gekuendigt" ? "" : `<button class="more" data-step-undo="${s.id}">Wieder offen</button>`}</li>`;
     // Due days belong to the onboarding; once live, a step still open is no longer late.
     const late = c.phase === "onboarding" && s.due && s.due < today;
@@ -539,10 +545,12 @@ function customerHtml(state, l, c, today) {
     // A later step can be done or left out before the first open one: the first open one stays the next step.
     const early = c.phase === "gekuendigt" ? "" : `<span class="early"><button class="more" data-step="${s.id}">Erledigt</button>${s.id === "live" ? "" : `<button class="more" data-skip="${s.id}">Entf\xE4llt \u2026</button>`}</span>`;
     return `<li class="todo"><b>${esc(s.title)}</b>${when}${early}</li>`;
-  }).join("");
+  };
+  const groups = STEP_GROUPS.map(([g, label]) => [label, steps.filter((s) => s.group === g)]).filter(([, of]) => of.length)
+    .map(([label, of]) => `<h4 class="steps-of">${esc(label)} <small>${of.filter((s) => s.at).length} von ${of.length}</small></h4><ol class="card checks">${of.map(row).join("")}</ol>`).join("");
   const where = c.phase === "gekuendigt" ? ` \xB7 ${esc(c.cancelReason)}` : c.phase === "live" && c.liveAt ? ` seit ${esc(fmtDate(c.liveAt))}` : ` \xB7 Tag ${c.since ? Math.max(0, daysBetween(c.since, today)) : 0} von ${ONBOARDING.at(-1)[2]}`;
   const att = attentionOf(c, today);
-  const onboarding = `<h3 style="margin-top:14px">Onboarding <small>${c.steps.length} von ${ONBOARDING.length}</small></h3><ol class="card checks">${rows}</ol>`;
+  const onboarding = `<h3 style="margin-top:14px">Onboarding <small>${steps.filter((s) => s.at).length} von ${steps.length}</small></h3>${groups}`;
   // Live: the check-ins first, the onboarding as it stood below them.
   return `<div class="sec cust"><h3>Kunde <small>${esc(PHASE_LABEL[c.phase])}${where}</small></h3>
     ${att ? `<p class="att-line">Achtung: ${esc(att)}</p>` : ""}

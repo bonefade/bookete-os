@@ -272,9 +272,12 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
       if (l.status !== "kunde" || !stored) throw new ValidationError("status", "Nur bei \u201EKunde\u201C");
       const before = careFromToday(stored, clock.today());
       const customer = customerAfter(before, change, { by: actor, today: clock.today() });
+      const carePlanned = !l.nextStep || l.nextStep === "Antworten" || isCareStep(l.nextStep);
       // A live customer's first check-in day, set by this change, is its next step too, unless a person planned one.
-      const startsCheckIns = customer.phase === "live" && !!customer.nextCheckIn && !stored.nextCheckIn && (!l.nextStep || l.nextStep === "Antworten" || isCareStep(l.nextStep));
-      const plan = carePlansNextStep(before, customer, change) || startsCheckIns ? customerPlan(customer) : {};
+      const startsCheckIns = customer.phase === "live" && !!customer.nextCheckIn && !stored.nextCheckIn && carePlanned;
+      // A new package moves only a next step the care planned: a Termin or a Rückruf a person planned stays.
+      const replans = carePlansNextStep(before, customer, change) && (!("package" in change) || carePlanned);
+      const plan = replans || startsCheckIns ? customerPlan(customer) : {};
       if (l.optOutAt) delete plan.followUp;
       const diff = { ...changed(l, normalizeLead(plan, l, clock.today())), ...(JSON.stringify(customer) !== JSON.stringify(l.customer && normalizeCustomer(l.customer)) && { customer }) };
       if (!Object.keys(diff).length) return false;

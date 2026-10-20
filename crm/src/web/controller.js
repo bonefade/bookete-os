@@ -10,7 +10,7 @@ import { createBackup } from '../domain/backup.js';
 import { fillTemplate, defaultTemplate, DEFAULT_SCRIPT } from '../domain/template.js';
 import { lastChannel } from '../domain/activity.js';
 import { relDate, actorName } from './format.js';
-import { PHASE_LABEL, customerOf } from '../domain/customer.js';
+import { PHASE_LABEL, PACKAGE_LABEL, customerOf } from '../domain/customer.js';
 import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, VISIT_NOTE } from './views.js';
 
 export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "noteEditCancel", "logMenu", "visitOpen", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
@@ -954,13 +954,14 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ hAll: d.hall === "1" });
       return render();
     }
-    // A Kunde's care: a step done, open again or skipped; the phase, Gekündigt with its reason.
+    // A Kunde's care: a step done, open again or skipped; the package; the phase, Gekündigt with its reason.
     if (d.step) return run(() => uc.changeCustomer(lead, { step: d.step }), "Erledigt");
     if (d.stepUndo) return run(() => uc.changeCustomer(lead, { step: d.stepUndo, done: false }), "Wieder offen");
     if (d.skip) {
       const why = prompt("Warum entf\xE4llt der Schritt? (optional)");
       return why === null ? undefined : run(() => uc.changeCustomer(lead, { step: d.skip, skip: why }), "Entf\xE4llt");
     }
+    if (d.package) return d.package === customerOf(lead)?.package ? undefined : run(() => uc.changeCustomer(lead, { package: d.package }), "Paket: " + PACKAGE_LABEL[d.package]);
     if (d.phase) {
       // The phase it has already changes nothing, as the status chip does.
       if (d.phase === customerOf(lead)?.phase) return;

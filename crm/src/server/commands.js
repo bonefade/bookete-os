@@ -3,7 +3,7 @@ import { LEAD_FIELDS } from "../domain/lead.js";
 import { IMPORT_CHUNK } from "../domain/backup.js";
 import { STAGES, LOST_REASONS, SPOKEN_REASONS, CALL_OUTCOMES } from "../domain/constants.js";
 import { SERVICE_KINDS, SERVICE_STATES, OWNERS, SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
-import { ONBOARDING, PHASES, CANCEL_REASONS, CHECK_IN_RESULTS } from "../domain/customer.js";
+import { ONBOARDING, PACKAGES, PHASES, CANCEL_REASONS, CHECK_IN_RESULTS } from "../domain/customer.js";
 import { NOTE_MAX } from "../domain/notes.js";
 
 const id = z.string().min(1).max(100);
@@ -33,9 +33,10 @@ const time = z.string().regex(/^\d{2}:\d{2}$/);
 const SpokenReason = z.enum(SPOKEN_REASONS);
 export const CallInput = z.object({ outcome: z.enum(CALL_OUTCOMES.map(([k]) => k)), day: date.optional(), date: date.optional(), time: time.optional(), reason: SpokenReason.optional(), note: z.string().max(2000).optional() }).strict();
 export const MeetingInput = z.object({ id, result: z.enum(["kunde", "kein-abschluss", "neuer-termin"]), reason: SpokenReason.optional(), date: date.optional(), time: time.optional() }).strict();
-// One change to a customer's care: a step done, open again or skipped; the owner ("" for none); the phase; or a check-in.
+// One change to a customer's care: a step done, open again or skipped; the package; the owner ("" for none); the phase; or a check-in.
 const CustomerChange = z.union([
   z.object({ id, step: z.enum(ONBOARDING.map(([k]) => k)), done: z.boolean().optional(), skip: z.string().max(200).optional() }).strict(),
+  z.object({ id, package: z.enum(PACKAGES.map(([k]) => k)) }).strict(),
   z.object({ id, owner: z.union([z.email().max(200), z.literal("")]) }).strict(),
   z.object({ id, phase: z.enum(PHASES.map(([k]) => k)), reason: z.enum(CANCEL_REASONS).optional() }).strict(),
   z.object({ id, checkIn: z.enum(CHECK_IN_RESULTS.map(([k]) => k)), note: z.string().max(500).optional(), next: date.optional() }).strict(),

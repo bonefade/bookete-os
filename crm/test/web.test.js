@@ -1842,8 +1842,22 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
   assert.match(page.split('class="sec cust"')[1], /data-phase="onboarding" aria-pressed="true">Onboarding</);
   assert.doesNotMatch(page, /Für das Gespräch|class="sec desk seq"/);
   assert.match(page, /<select id="kOwnerOf"><option value="">–<\/option><option value="jo@bookete.com" selected>jo \(ich\)<\/option><option value="anna@bookete.com">anna<\/option><\/select>/);
-  const steps = [...page.split('class="card checks">')[1].split("</ol>")[0].matchAll(/<li class="(\w+)"><b>([^<]*)<\/b>/g)].map(([, cls, b]) => cls + " " + b);
-  assert.deepEqual(steps, ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo bookete-Konto angelegt", "todo Widget auf der Website", "todo Google-Profil verknüpft", "todo Team eingeschult", "todo Account übergeben", "todo Live"]);
+  // The steps in groups, each with its count; a customer from before is bookete, so no website group.
+  const groups = (html) => [...html.matchAll(/<h4 class="steps-of">([^<]*)<small>([^<]*)<\/small><\/h4><ol class="card checks">([^]*?)<\/ol>/g)]
+    .map(([, name, count, list]) => [name.trim(), count, [...list.matchAll(/<li class="(\w+)"><b>([^<]*)<\/b>/g)].map(([, cls, b]) => cls + " " + b)]);
+  assert.deepEqual(groups(page), [
+    ["Allgemein", "1 von 4", ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo Account übergeben", "todo Live"]],
+    ["bookete", "0 von 4", ["todo bookete-Konto angelegt", "todo Widget auf der Website", "todo Google-Profil verknüpft", "todo Team eingeschult"]],
+  ]);
+  // The package in the header, below the phase; not on the customer card.
+  assert.match(page, /data-phase="gekuendigt" aria-pressed="false">Gekündigt<\/button><\/div><div class="chips phchips"><span class="note">Paket<\/span><button class="chip" data-package="bookete" aria-pressed="true">bookete<\/button><button class="chip" data-package="website" aria-pressed="false">Website<\/button><button class="chip" data-package="beides" aria-pressed="false">bookete \+ Website<\/button><\/div>/);
+  assert.doesNotMatch(page.split('class="sec cust"')[1], /data-package=/);
+  // bookete + Website: the website's group too, and the count of all twelve.
+  const both = stateWith(KUNDEN.map((l) => l.id === "K1" ? { ...l, customer: { ...l.customer, package: "beides" } } : l), { leadId: "K1" });
+  both.me = ME;
+  const bothPage = detailView(both, TODAY);
+  assert.deepEqual(groups(bothPage).map(([name, count]) => name + " " + count), ["Allgemein 1 von 4", "bookete 0 von 4", "Website 0 von 4"]);
+  assert.match(bothPage, /data-phase="onboarding" aria-pressed="true">Onboarding 1\/12</);
   assert.match(page, /data-step="abo">Erledigt<\/button><button data-skip="abo">/);
   // A later step can be done or left out before the first open one; "Live" is never left out.
   assert.match(page, /<li class="todo"><b>Widget auf der Website<\/b>[^]*?data-step="widget">Erledigt<\/button><button class="more" data-skip="widget">/);
@@ -1858,7 +1872,7 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
   state.ui.leadId = "K3";
   const gone = detailView(state, TODAY);
   assert.match(gone, /<h3>Kunde <small>Gekündigt · Preis<\/small>/);
-  assert.doesNotMatch(gone, /data-step=|data-step-undo=/);
+  assert.doesNotMatch(gone, /data-step=|data-step-undo=|data-package=/);
 });
 
 test("on a Kunde's page a tick, the owner and a cancellation with its reason go to the server as one change each", async () => {
@@ -1871,10 +1885,13 @@ test("on a Kunde's page a tick, the owner and a cancellation with its reason go 
     store.set((s) => ({ ...s, me: ME }));
     const { root, click, change } = fakeBrowser("#/betrieb/K1", store, { changeCustomer: async (l, c) => (sent.push([l.id, c]), true) });
     await click({ step: root.innerHTML.match(/data-step="(\w+)">Erledigt/)[1] });
+    // The package it has already sends nothing.
+    await click({ package: "bookete" });
+    await click({ package: "website" });
     await change({ id: "kOwnerOf", value: "anna@bookete.com" });
     await click({ phase: "gekuendigt" });
     await click({ cancel: root.innerHTML.match(/data-cancel="([^"]+)"/)[1] });
-    assert.deepEqual(sent, [["K1", { step: "abo" }], ["K1", { owner: "anna@bookete.com" }], ["K1", { phase: "gekuendigt", reason: "Preis" }]]);
+    assert.deepEqual(sent, [["K1", { step: "abo" }], ["K1", { package: "website" }], ["K1", { owner: "anna@bookete.com" }], ["K1", { phase: "gekuendigt", reason: "Preis" }]]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }

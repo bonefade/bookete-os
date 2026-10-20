@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.26.0 (2026-10-20)
+
+- **Each customer has a package:** bookete, Website, or bookete + Website. Pick it in the customer's header, next to the phase. A customer from before is bookete.
+- **The onboarding follows the package**, in three groups, each with its own count: "Allgemein" (Vertrag, Abo, Account übergeben, Live) for every customer, "bookete" (Konto, Widget, Google-Profil, Team) and "Website" (Inhalte & Fotos erhalten, Domain & DNS geklärt, Entwurf abgenommen, Website online). A new package moves the next step to its first open step, but leaves a Termin or Rückruf you planned. A step already ticked stays ticked if you switch back.
+
 ## 1.25.2 (2026-10-19)
 
 - **On a laptop or tablet** the top bar has the colour of the tabs on the left, with a line below it, so the two read as one frame instead of the tabs looking cut off at the top.
