@@ -11,6 +11,7 @@ import { lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
 import { SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
+import { HOSTING, dealOf } from '../domain/deal.js';
 import { todosOf } from '../domain/todos.js';
 import { notesOf } from '../domain/notes.js';
 import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, PACKAGES, STEP_GROUPS, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, onboardingOf, attentionOf } from '../domain/customer.js';
@@ -555,7 +556,18 @@ function customerHtml(state, l, c, today) {
   return `<div class="sec cust"><h3>Kunde <small>${esc(PHASE_LABEL[c.phase])}${where}</small></h3>
     ${att ? `<p class="att-line">Achtung: ${esc(att)}</p>` : ""}
     <div class="card">${owner}<div class="chips">${phaseChips(c)}</div></div>
+    ${dealHtml(l)}
     ${c.phase === "live" ? checkInsHtml(c, state.ui.checkIn, today) + onboarding : onboarding}</div>`;
+}
+/** What the customer agreed on beyond its package: each field saves when it is left (data-deal). */
+function dealHtml(l) {
+  const d = dealOf(l);
+  const field = (name, label, value, placeholder = "") => `<label>${label}<input data-deal="${name}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`;
+  return `<h3 style="margin-top:14px">Vereinbarung</h3><div class="card deal">
+    ${field("price", "Preis", d.price, "z. B. 300 \u20AC netto einmalig")}
+    <div class="two"><label>Hosting<select data-deal="hosting">${options([["", "offen"], ...HOSTING], d.hosting)}</select></label><label>Vertrag vom<input type="date" data-deal="signedAt" value="${esc(d.signedAt)}"></label></div>
+    ${field("note", "Sonstiges", d.note, "eine Zeile, z. B. Abo bucht das Restaurant selbst")}
+  </div>`;
 }
 /** A live customer's check-ins: when the next is due, the form to enter one, and the last three. */
 function checkInsHtml(c, form, today) {

@@ -1863,6 +1863,17 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
   assert.match(page, /<li class="todo"><b>Widget auf der Website<\/b>[^]*?data-step="widget">Erledigt<\/button><button class="more" data-skip="widget">/);
   assert.match(page, /<li class="todo"><b>Live<\/b>[^]*?data-step="live">Erledigt<\/button><\/span>/);
   assert.match(page, /data-step-undo="vertrag"/);
+  // What it agreed on: empty fields to fill, saved by field when left.
+  assert.match(page, /<h3[^>]*>Vereinbarung<\/h3><div class="card deal">\s*<label>Preis<input data-deal="price" value="" placeholder="z\. B\. 300 € netto einmalig"><\/label>/);
+  assert.match(page, /<select data-deal="hosting"><option value="" selected>offen<\/option><option value="care">Care \(wir hosten\)<\/option><option value="selbst">Selbst gehostet<\/option><\/select>/);
+  assert.match(page, /<input type="date" data-deal="signedAt" value="">/);
+  const agreed = stateWith(KUNDEN.map((l) => l.id === "K1" ? { ...l, deal: { price: "300 € \"netto\" <b>", hosting: "care", signedAt: "2026-10-12", note: "Abo selbst" } } : l), { leadId: "K1" });
+  agreed.me = ME;
+  const dealPage = detailView(agreed, TODAY);
+  assert.match(dealPage, /data-deal="price" value="300 € &quot;netto&quot; &lt;b&gt;"/);
+  assert.match(dealPage, /<option value="care" selected>Care \(wir hosten\)/);
+  assert.match(dealPage, /data-deal="signedAt" value="2026-10-12"/);
+  assert.match(dealPage, /data-deal="note" value="Abo selbst"/);
   // A customer live already, from before, ticks its list once: its first open step has the buttons too.
   state.ui.leadId = "K2";
   // Its steps are no longer due: no day, nothing late.
@@ -1883,15 +1894,17 @@ test("on a Kunde's page a tick, the owner and a cancellation with its reason go 
     store.data("leads", KUNDEN.map((l) => ({ ...LEAD_FIELDS, ...l })));
     for (const c of ["activities", "templates", "settings"]) store.data(c, []);
     store.set((s) => ({ ...s, me: ME }));
-    const { root, click, change } = fakeBrowser("#/betrieb/K1", store, { changeCustomer: async (l, c) => (sent.push([l.id, c]), true) });
+    const { root, click, change } = fakeBrowser("#/betrieb/K1", store, { changeCustomer: async (l, c) => (sent.push([l.id, c]), true), changeDeal: async (l, c) => (sent.push([l.id, c]), true) });
     await click({ step: root.innerHTML.match(/data-step="(\w+)">Erledigt/)[1] });
     // The package it has already sends nothing.
     await click({ package: "bookete" });
     await click({ package: "website" });
     await change({ id: "kOwnerOf", value: "anna@bookete.com" });
+    await change({ dataset: { deal: "price" }, value: "300 \u20AC netto" });
+    await change({ dataset: { deal: "hosting" }, value: "" });
     await click({ phase: "gekuendigt" });
     await click({ cancel: root.innerHTML.match(/data-cancel="([^"]+)"/)[1] });
-    assert.deepEqual(sent, [["K1", { step: "abo" }], ["K1", { package: "website" }], ["K1", { owner: "anna@bookete.com" }], ["K1", { phase: "gekuendigt", reason: "Preis" }]]);
+    assert.deepEqual(sent, [["K1", { step: "abo" }], ["K1", { package: "website" }], ["K1", { owner: "anna@bookete.com" }], ["K1", { price: "300 \u20AC netto" }], ["K1", { hosting: "" }], ["K1", { phase: "gekuendigt", reason: "Preis" }]]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }

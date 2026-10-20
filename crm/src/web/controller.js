@@ -1068,6 +1068,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (t.id === "ciNext" && st.ui.checkIn) return sheet("checkIn", { next: t.value });
     // A call entered later: its day, today unless picked; today itself is no day picked.
     if (t.id === "callDay" && st.ui.call) return sheet("call", { day: t.value && t.value !== clock.today() ? t.value : "" });
+    // What a Kunde agreed on: each field saves when it is left.
+    if (t.dataset?.deal) return run(() => uc.changeDeal(lead, { [t.dataset.deal]: t.value }), "Vereinbarung gespeichert");
     if (t.id === "kOwnerOf") return run(() => uc.changeCustomer(lead, { owner: t.value }), t.value ? "Betreut von " + actorName(t.value) : "Niemand betreut");
     if (t.dataset.filter) {
       ui({ [t.dataset.filter]: t.value });

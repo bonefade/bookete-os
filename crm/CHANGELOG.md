@@ -2,6 +2,10 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.28.0 (2026-10-20)
+
+- **Vereinbarung on a customer's page:** what they agreed on beyond the package, in four fields: Preis (free text, e.g. "300 € netto einmalig"), Hosting (Care or selbst), Vertrag vom (a day) and Sonstiges (one line). Each saves when you leave the field. Agents can read and write it too, so a deal noted in a conversation lands in one place instead of a note. Only customers take one; it stays if a customer is set back and shows again when won again.
+
 ## 1.27.0 (2026-10-20)
 
 - **A simpler Kundenakte:** four lines for the systems (Domain, DNS, Website / Hosting, E-Mail), each with who runs it, where the logins are kept, and the contacts. Write whose the domain is and where it is registered in the Domain line.

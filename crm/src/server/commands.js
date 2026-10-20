@@ -4,6 +4,7 @@ import { IMPORT_CHUNK } from "../domain/backup.js";
 import { STAGES, LOST_REASONS, SPOKEN_REASONS, CALL_OUTCOMES } from "../domain/constants.js";
 import { SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
 import { ONBOARDING, PACKAGES, PHASES, CANCEL_REASONS, CHECK_IN_RESULTS } from "../domain/customer.js";
+import { HOSTING } from "../domain/deal.js";
 import { NOTE_MAX } from "../domain/notes.js";
 
 const id = z.string().min(1).max(100);
@@ -21,6 +22,13 @@ const System = z.object({ what: str(200), by: str(100) }).strict();
 export const AccountInput = z.object({
   systems: z.object({ ...Object.fromEntries(SYSTEMS.map(([k]) => [k, System])), access: str(500) }).strict().partial(),
   contacts: z.array(z.object({ id: str(100), name: z.string().max(200), company: str(200), role: str(200), handles: str(500), email: str(200), phone: str(100), note: str(2000) }).strict()).max(ACCOUNT_LIMIT),
+}).partial().strict();
+// What a customer agreed on, field by field; normalizeDeal checks values. "" clears a field.
+export const DealInput = z.object({
+  price: str(200),
+  hosting: z.union([z.enum(HOSTING.map(([k]) => k)), z.literal("")]).nullish(),
+  signedAt: z.union([date, z.literal("")]).nullish(),
+  note: str(500),
 }).partial().strict();
 const ActivityInput = z.object({ direction: z.enum(["out", "in"]), channel: z.string().max(40), date: z.union([date, z.literal("")]).optional(), text, templateId: z.string().max(100).nullish() });
 // One call, or one appointment, and how it ended; callActivity and meetingPatch refuse a field the outcome does not take.
@@ -68,6 +76,7 @@ export const COMMANDS = {
   meetingOutcome: [MeetingInput, (uc, { id: leadId, ...meeting }) => uc.meetingOutcome(leadId, meeting)],
   changeTodo: [TodoChange, (uc, { id: leadId, ...change }) => uc.changeTodo(leadId, change)],
   changeCustomer: [CustomerChange, (uc, { id: leadId, ...change }) => uc.changeCustomer(leadId, change)],
+  changeDeal: [DealInput.extend({ id }), (uc, { id: leadId, ...change }) => uc.changeDeal(leadId, change)],
   scheduleMeeting: [z.object({ id, date, time: time.optional() }).strict(), (uc, { id: leadId, ...meeting }) => uc.scheduleMeeting(leadId, meeting)],
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],
   setFollowUp: [z.object({ id, date: z.union([date, z.literal("")]).nullable() }), (uc, a) => uc.setFollowUp(a.id, a.date)],

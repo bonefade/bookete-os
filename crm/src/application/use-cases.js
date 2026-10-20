@@ -6,6 +6,7 @@ import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustom
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount, accountPatch } from "../domain/account.js";
 import { normalizeTodos, todosOf, todosAfter } from "../domain/todos.js";
+import { normalizeDeal, dealOf, dealAfter } from "../domain/deal.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
 import { notesAfter, normalizeEntries } from "../domain/notes.js";
 
@@ -284,6 +285,16 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
       await commit([patchOp(l, diff)]);
       return true;
     }),
+    /** What a Kunde agreed on (dealAfter), field by field on the deal as it is when written. Says whether anything changed. */
+    changeDeal: (id, change) => retrying(async () => {
+      const l = await lead(id);
+      if (l.status !== "kunde") throw new ValidationError("status", "Nur bei \u201EKunde\u201C");
+      const before = dealOf(l);
+      const deal = dealAfter(before, change);
+      if (JSON.stringify(deal) === JSON.stringify(before)) return false;
+      await commit([patchOp(l, { deal })]);
+      return true;
+    }),
     /** One change to a business's todos (todosAfter), on the todos as they are when it is written. Says whether anything changed. */
     changeTodo: (id, change) => retrying(async () => {
       const l = await lead(id);
@@ -411,7 +422,7 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
           // The browser upgrades an old backup whole, with its activities (chunkBackup); one chunk alone could not.
           if (!(r.schemaVersion >= SCHEMA_VERSION)) throw new ValidationError("backup", "Format vor 1.4.0 \u2013 bitte die App neu laden und erneut importieren");
           // Normalized against its own status: a record brought back is no status change, so it keeps its wonAt.
-          return { ...normalizeLead({ ...r, currentTool: toolName(r.currentTool, tools) }, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), ...(r.noteEntries && { noteEntries: normalizeEntries(r.noteEntries) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
+          return { ...normalizeLead({ ...r, currentTool: toolName(r.currentTool, tools) }, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), ...(r.deal && { deal: normalizeDeal(r.deal) }), ...(r.noteEntries && { noteEntries: normalizeEntries(r.noteEntries) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
         },
         activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),

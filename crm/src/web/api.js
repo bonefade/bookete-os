@@ -66,6 +66,7 @@ export function createApi(onWrite) {
     meetingOutcome: (lead, meeting) => rpc("meetingOutcome", { id: lead.id, ...meeting }),
     changeTodo: (lead, change) => rpc("changeTodo", { id: lead.id, ...change }),
     changeCustomer: (lead, change) => rpc("changeCustomer", { id: lead.id, ...change }),
+    changeDeal: (lead, change) => rpc("changeDeal", { id: lead.id, ...change }),
     scheduleMeeting: (lead, meeting) => rpc("scheduleMeeting", { id: lead.id, ...meeting }),
     optOut: (lead, note) => rpc("optOut", { id: lead.id, note }),
     clearOptOut: (lead) => rpc("clearOptOut", { id: lead.id }),
