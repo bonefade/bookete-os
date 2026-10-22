@@ -2,6 +2,14 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.30.0 (2026-10-22)
+
+- **Aufträge instead of one Vereinbarung:** a customer can have several deals: bookete, Website, Hosting, Individuell or Sonstiges. Each has a net amount in euros, how often it is paid (einmalig, monatlich, jährlich), the contract's day, when it starts and how many months it runs, whether it renews by itself, the link to the contract (fynk) and one line. Above the list you see the totals, e.g. "einmalig 1 300 € · jährlich 99 €". "+ Auftrag → Hosting" fills in our hosting package: 99 € a year with a .com or normal local domain, 12 months, renewing.
+- **The Paket comes from the Aufträge:** no more picking it. A website always comes with bookete, so a Website Auftrag makes "bookete + Website" and adds the website's onboarding steps, due from that day at the earliest; without one it is bookete, as a restaurant that books the Abo itself needs no Auftrag. Steps you removed by hand stay gone. A Paket picked before still counts until the customer's first Auftrag.
+- **Who hosts** is written in the Kundenakte's "Website / Hosting" line; the Hosting Auftrag holds the price and runtime.
+- The Vereinbarungen you had show as one Auftrag each, their text in the note, until you change them.
+- **Reload an open CRM tab** after this update: a tab from before still offers the Paket buttons and the old Vereinbarung fields, which no longer save.
+
 ## 1.29.0 (2026-10-22)
 
 - **Each customer's own onboarding steps:** "Schritte bearbeiten" on a customer's page lets you add a step (with a day or none), rename one, change its day, move it up or down, or remove it. New steps go in before "Live", which stays last. The steps show as one list in the customer's order; the bookete and website steps carry a small tag. A new customer still starts with the standard steps of its package, and the customers you have keep their steps and ticks.

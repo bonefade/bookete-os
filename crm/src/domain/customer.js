@@ -13,8 +13,11 @@ export const PHASES = [["onboarding", "Onboarding"], ["live", "Live"], ["gekuend
 export const PHASE_LABEL = Object.fromEntries(PHASES);
 /** Why a customer cancelled; one is required, as a reason is for Disqualifiziert. */
 export const CANCEL_REASONS = ["Preis", "Zu wenig Nutzen", "Anderes Tool", "Betrieb geschlossen", "Sonstiges"];
-/** What a customer agreed on; it decides which standard steps its onboarding starts with. One from before is bookete. */
-export const PACKAGES = [["bookete", "bookete"], ["website", "Website"], ["beides", "bookete + Website"]];
+/**
+ * What a customer takes, from its Aufträge (packageOf, orders.js); it decides which standard steps its onboarding
+ * starts with and which come and go as the Aufträge change. Before 1.30.0 it was picked and stored on the care.
+ */
+const PACKAGES = [["bookete", "bookete"], ["website", "Website"], ["beides", "bookete + Website"]];
 export const PACKAGE_LABEL = Object.fromEntries(PACKAGES);
 /** The onboarding's groups: the steps every customer takes, then bookete's and the website's. */
 export const STEP_GROUPS = [["allgemein", "Allgemein"], ["bookete", "bookete"], ["website", "Website"]];
@@ -83,7 +86,7 @@ function stepsFrom(list, pkg, since) {
 }
 
 /**
- * A stored customer in today's shape. `package` is what it agreed on. `steps` is its own onboarding, in its order:
+ * A stored customer in today's shape. `steps` is its own onboarding, in its order:
  * each step with its title, the standard group it came from ("" for one a person added), the day it is due ("" for
  * none) and, once done or skipped, when and by whom (`skipped` says why it was not needed). `checkIns` lists the
  * check-ins, oldest first, the last 40; `nextCheckIn` is the day the next one is due, while live.
@@ -91,15 +94,14 @@ function stepsFrom(list, pkg, since) {
 export function normalizeCustomer(input) {
   const c = input || {};
   const phase = PHASE_LABEL[c.phase] ? c.phase : "onboarding";
-  const pkg = PACKAGE_LABEL[c.package] ? c.package : "bookete";
   const since = isDate(c.since) ? c.since : "";
-  const steps = stepsFrom(c.steps, pkg, since);
+  // A package stored before 1.30.0 still says which standard steps a care stored before 1.29.0 had.
+  const steps = stepsFrom(c.steps, PACKAGE_LABEL[c.package] ? c.package : "bookete", since);
   const checkIns = (Array.isArray(c.checkIns) ? c.checkIns : []).filter((x) => isDate(x?.at) && RESULT_LABEL[x.result])
     .map((x) => ({ at: x.at, result: x.result, by: line(x.by, 200), note: line(x.note, 500) }))
     .sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0).slice(-KEEP_CHECK_INS);
   return {
     phase,
-    package: pkg,
     since,
     owner: isEmail(line(c.owner, 200)) ? line(c.owner, 200) : "",
     steps,
@@ -144,7 +146,10 @@ export function customerPlan(c) {
 }
 /** The changes to the list of steps itself, beside a step done, opened again or skipped. */
 const STEP_EDITS = ["addStep", "removeStep", "moveStep", "editStep"];
-/** Whether a change rearranges the steps (a new package, a step added, removed, moved or edited) rather than ticking one. */
+/**
+ * Whether a change rearranges the steps (a new package, from the Aufträge; a step added, removed, moved or edited)
+ * rather than ticking one.
+ */
 export const rearrangesSteps = (change) => "package" in change || STEP_EDITS.some((k) => k in change);
 /**
  * Whether a change to the care sets the lead's next step (customerPlan); else the next step stays as a person or a
@@ -201,16 +206,28 @@ export function checkInAfter(c, today) {
 }
 
 /**
- * The steps for another package: the standard steps of a group it adds come in where their day puts them among the
- * standard steps there; the open standard steps of a group it drops go. A group both take is left as the person made
- * it, so a step removed by hand stays gone. Steps done or skipped, and those a person added, stay.
+ * The care once the package moves from `from` to `to`, as the Aufträge changed on `today`: the standard steps of a
+ * group it adds come in where their day puts them among the standard steps there, due as the standard spaces them but
+ * from today at the earliest, so a customer of months ago is not overdue at once; the open standard steps of a group
+ * it drops go.
+ * A group both take is left as the person made it, so a step removed by hand stays gone. Steps done or skipped, and
+ * those a person added, stay. A cancelled customer's steps stay as they stood.
  */
-function stepsForPackage(c, pkg) {
-  const groups = GROUPS_OF[pkg], had = GROUPS_OF[c.package];
+export function careForPackage(c, from, to, today) {
+  if (c.phase === "gekuendigt" || from === to) return c;
+  const steps = stepsForPackage(c, from, to, today);
+  if (steps.length > STEP_LIMIT) throw new ValidationError("step", `H\xF6chstens ${STEP_LIMIT} Schritte`);
+  return normalizeCustomer({ ...c, steps });
+}
+function stepsForPackage(c, from, to, today) {
+  const groups = GROUPS_OF[to], had = GROUPS_OF[from];
   const steps = c.steps.filter((s) => s.at || !s.group || groups.includes(s.group));
-  const added = groups.filter((g) => !had.includes(g));
-  for (const s of standardSteps(added, c.since).filter((s) => !steps.some((x) => x.id === s.id))) {
+  const added = standardSteps(groups.filter((g) => !had.includes(g)), c.since).filter((s) => !steps.some((x) => x.id === s.id));
+  const first = added.length ? STANDARD.get(added[0].id).day : 0;
+  for (const s of added) {
     const day = STANDARD.get(s.id).day;
+    const spaced = addDays(today, day - first);
+    if (!s.due || s.due < spaced) s.due = spaced;
     const after = steps.findLastIndex((x) => x.id !== "live" && STANDARD.has(x.id) && STANDARD.get(x.id).day <= day);
     steps.splice(after + 1, 0, s);
   }
@@ -236,7 +253,7 @@ const dueDay = (v) => {
 /**
  * One change to a customer, as a person makes it on its page: a step done or open again (`done: false`), skipped with
  * why (`skip`); a step added before Live (`addStep`, its title, and a `due` day or none), removed (`removeStep`), moved
- * one place `up` or down (`moveStep`), or given another title or day (`editStep`); the package, the owner, the phase
+ * one place `up` or down (`moveStep`), or given another title or day (`editStep`); the owner, the phase
  * (Gekündigt with a reason), or a check-in with how it went (`checkIn`, a `note`, and `next`, the day of the next one:
  * required after "unzufrieden", else by the rhythm). Ticking "Live" makes it live; opening it again goes back to
  * onboarding. Going live plans the first check-in. `by` and `today` stamp a step or check-in; `newId` names an added step.
@@ -267,10 +284,6 @@ export function customerAfter(c, change, { by, today, newId }) {
   } else if ("editStep" in change) {
     const step = stepOf(c, change.editStep, "title" in change && { notLive: "„Live“ beh\xE4lt seinen Namen" });
     next.steps = c.steps.map((s) => s === step ? { ...s, ...("title" in change && { title: stepTitle(change.title) }), ...("due" in change && { due: dueDay(change.due) }) } : s);
-  } else if ("package" in change) {
-    if (!PACKAGE_LABEL[change.package]) throw new ValidationError("package", "Unbekanntes Paket");
-    next.package = change.package;
-    next.steps = stepsForPackage(c, change.package);
   } else if ("owner" in change) {
     if (change.owner && !isEmail(change.owner)) throw new ValidationError("owner", "Unbekannte Person");
     next.owner = change.owner || "";

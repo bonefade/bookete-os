@@ -4,7 +4,7 @@ import { createStore, initialState } from "../src/web/store.js";
 import { TABS, tabBar, todayView, leadsView, kundenView, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, filterBar, unshownSheets, quickField } from "../src/web/views.js";
 import { LEAD_FIELDS } from "../src/domain/lead.js";
 import { formInput, saveLeadForm, pickLostReason, routeOf, parseRoute, enterRoute, draftsOf, backRoute, recordMissing, createNavigation, mountApp } from "../src/web/controller.js";
-import { describeChange, fmtDate } from "../src/web/format.js";
+import { describeChange, fmtDate, fmtEuro } from "../src/web/format.js";
 import { scoped, activitiesByLead, freshLeads, callList, toolCounts } from "../src/web/selectors.js";
 import { createApi, coalesced } from "../src/web/api.js";
 import { COLLECTIONS, FIELD_LABEL, TRASH_SHOWN } from "../src/domain/constants.js";
@@ -1849,9 +1849,9 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
     return [count, [...list.matchAll(/<li class="(\w+)"><b>(.*?)<\/b>/g)].map(([, cls, b]) => cls + " " + b.replace(/ <small class="tag">([^<]*)<\/small>/, " [$1]"))];
   };
   assert.deepEqual(steps(page), ["1 von 8", ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo bookete-Konto angelegt [bookete]", "todo Widget auf der Website [bookete]", "todo Google-Profil verknüpft [bookete]", "todo Team eingeschult [bookete]", "todo Account übergeben", "todo Live"]]);
-  // The package in the header, below the phase; not on the customer card.
-  assert.match(page, /data-phase="gekuendigt" aria-pressed="false">Gekündigt<\/button><\/div><div class="chips phchips"><span class="note">Paket<\/span><button class="chip" data-package="bookete" aria-pressed="true">bookete<\/button><button class="chip" data-package="website" aria-pressed="false">Website<\/button><button class="chip" data-package="beides" aria-pressed="false">bookete \+ Website<\/button><\/div>/);
-  assert.doesNotMatch(page.split('class="sec cust"')[1], /data-package=/);
+  // The package in the header, below the phase, as the Aufträge give it: none is bookete.
+  assert.match(page, /data-phase="gekuendigt" aria-pressed="false">Gekündigt<\/button><\/div><div class="chips phchips"><span class="note">Paket<\/span><span class="note"><b>bookete<\/b> · aus den Aufträgen<\/span><\/div>/);
+  assert.doesNotMatch(page, /data-package=/);
   // bookete + Website: the website's steps too, and the count of all twelve.
   const both = stateWith(KUNDEN.map((l) => l.id === "K1" ? { ...l, customer: { ...l.customer, package: "beides" } } : l), { leadId: "K1" });
   both.me = ME;
@@ -1864,17 +1864,28 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
   assert.match(page, /<li class="todo"><b>Widget auf der Website <small class="tag">bookete<\/small><\/b>[^]*?data-step="widget">Erledigt<\/button><button class="more" data-skip="widget">/);
   assert.match(page, /<li class="todo"><b>Live<\/b>[^]*?data-step="live">Erledigt<\/button><\/span>/);
   assert.match(page, /data-step-undo="vertrag"/);
-  // What it agreed on: empty fields to fill, saved by field when left.
-  assert.match(page, /<h3[^>]*>Vereinbarung<\/h3><div class="card deal">\s*<label>Preis<input data-deal="price" value="" placeholder="z\. B\. 300 € netto einmalig"><\/label>/);
-  assert.match(page, /<select data-deal="hosting"><option value="" selected>offen<\/option><option value="care">Care \(wir hosten\)<\/option><option value="selbst">Selbst gehostet<\/option><\/select>/);
-  assert.match(page, /<input type="date" data-deal="signedAt" value="">/);
+  // What it agreed on: nothing yet, and an Auftrag to add.
+  assert.match(page, /<h3[^>]*>Aufträge<\/h3><div class="card orders">\s*<p class="note">Noch nichts vereinbart\./);
+  assert.match(page, /<button class="more" data-act="orderNew">\+ Auftrag<\/button>/);
+  // A Vereinbarung of before shows as one Auftrag, its text in the note, escaped.
   const agreed = stateWith(KUNDEN.map((l) => l.id === "K1" ? { ...l, deal: { price: "300 € \"netto\" <b>", hosting: "care", signedAt: "2026-10-12", note: "Abo selbst" } } : l), { leadId: "K1" });
   agreed.me = ME;
-  const dealPage = detailView(agreed, TODAY);
-  assert.match(dealPage, /data-deal="price" value="300 € &quot;netto&quot; &lt;b&gt;"/);
-  assert.match(dealPage, /<option value="care" selected>Care \(wir hosten\)/);
-  assert.match(dealPage, /data-deal="signedAt" value="2026-10-12"/);
-  assert.match(dealPage, /data-deal="note" value="Abo selbst"/);
+  assert.match(detailView(agreed, TODAY), /<b>Sonstiges · Vereinbarung<\/b><small>Betrag offen · Vertrag vom 12\.10\.2026 · 300 € &quot;netto&quot; &lt;b&gt; · Hosting: Care · Abo selbst<\/small>/);
+  // Aufträge with amounts: the totals by rhythm, the runtime, the contract's link; the package from them.
+  const orders = [{ id: "o1", kind: "website", title: "Neue Website", amount: 1000, signedAt: "2026-10-12", contract: "https://app.fynk.com/c/1" }, { id: "o2", kind: "hosting", title: "Hosting Care inkl. Domain", amount: 99, rhythm: "jaehrlich", start: "2026-11-01", months: 12, renews: true }, { id: "o3", kind: "individuell", amount: 49.5, rhythm: "monatlich", start: "2026-11-01", months: 6 }];
+  const sold = stateWith(KUNDEN.map((l) => l.id === "K1" ? { ...l, orders } : l), { leadId: "K1" });
+  sold.me = ME;
+  const soldPage = detailView(sold, TODAY);
+  assert.ok(soldPage.includes(`<h3 style="margin-top:14px">Aufträge <small>einmalig ${fmtEuro(1000)} · monatlich ${fmtEuro(49.5)} · jährlich ${fmtEuro(99)}</small></h3>`));
+  assert.ok(soldPage.includes(`<b>Website · Neue Website</b><small>${fmtEuro(1000)} einmalig · Vertrag vom 12.10.2026</small></button><a class="more" href="https://app.fynk.com/c/1" target="_blank" rel="noopener">Vertrag ↗</a>`));
+  assert.ok(soldPage.includes(`<small>${fmtEuro(99)} pro Jahr · ab 01.11.2026, 12 Monate, verlängert sich</small>`));
+  assert.ok(soldPage.includes(`<small>${fmtEuro(49.5)} pro Monat · ab 01.11.2026, 6 Monate, bis 30.04.2027</small>`));
+  assert.match(soldPage, /<span class="note"><b>bookete \+ Website<\/b> · aus den Aufträgen/);
+  // A form kept for an Auftrag that is gone closes.
+  assert.deepEqual(unshownSheets(stateWith(KUNDEN.map((l) => l.id === "K1" ? { ...l, orders } : l), { leadId: "K1", orderEdit: { id: "weg" } }), TODAY), { orderEdit: null });
+  // Tapped, an Auftrag opens its form with what it holds.
+  sold.ui.orderEdit = { ...orders[1], amount: "99", months: "12", signedAt: "", contract: "", note: "" };
+  assert.match(detailView(sold, TODAY), /<input id="oAmount" value="99" type="number"[^>]*>[^]*<input type="checkbox" id="oRenews" checked>/);
   // A customer live already, from before, ticks its list once: its first open step has the buttons too.
   state.ui.leadId = "K2";
   // Its steps are no longer due: no day, nothing late.
@@ -1895,17 +1906,21 @@ test("on a Kunde's page a tick, the owner and a cancellation with its reason go 
     store.data("leads", KUNDEN.map((l) => ({ ...LEAD_FIELDS, ...l })));
     for (const c of ["activities", "templates", "settings"]) store.data(c, []);
     store.set((s) => ({ ...s, me: ME }));
-    const { root, click, change } = fakeBrowser("#/betrieb/K1", store, { changeCustomer: async (l, c) => (sent.push([l.id, c]), true), changeDeal: async (l, c) => (sent.push([l.id, c]), true) });
+    const { root, click, change, input } = fakeBrowser("#/betrieb/K1", store, { changeCustomer: async (l, c) => (sent.push([l.id, c]), true), changeOrder: async (l, c) => (sent.push([l.id, c]), true) });
     await click({ step: root.innerHTML.match(/data-step="(\w+)">Erledigt/)[1] });
-    // The package it has already sends nothing.
-    await click({ package: "bookete" });
-    await click({ package: "website" });
     await change({ id: "kOwnerOf", value: "anna@bookete.com" });
-    await change({ dataset: { deal: "price" }, value: "300 \u20AC netto" });
-    await change({ dataset: { deal: "hosting" }, value: "" });
+    // A new Auftrag: Hosting starts as the package we sell; the link typed, the amount sent as a number.
+    await click({ act: "orderNew" });
+    await change({ id: "oKind", value: "hosting" });
+    assert.match(root.innerHTML, /<input id="oTitle" value="Hosting Care inkl\. Domain"/);
+    await input("oContract", "https://app.fynk.com/c/2");
+    await change({ id: "oStart", value: "2026-11-01" });
+    await click({ act: "orderSave" });
     await click({ phase: "gekuendigt" });
     await click({ cancel: root.innerHTML.match(/data-cancel="([^"]+)"/)[1] });
-    assert.deepEqual(sent, [["K1", { step: "abo" }], ["K1", { package: "website" }], ["K1", { owner: "anna@bookete.com" }], ["K1", { price: "300 \u20AC netto" }], ["K1", { hosting: "" }], ["K1", { phase: "gekuendigt", reason: "Preis" }]]);
+    assert.deepEqual(sent, [["K1", { step: "abo" }], ["K1", { owner: "anna@bookete.com" }],
+      ["K1", { add: { kind: "hosting", title: "Hosting Care inkl. Domain", amount: 99, rhythm: "jaehrlich", signedAt: "", start: "2026-11-01", months: 12, renews: true, contract: "https://app.fynk.com/c/2", note: "" } }],
+      ["K1", { phase: "gekuendigt", reason: "Preis" }]]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }
@@ -1976,6 +1991,47 @@ test("rearranging steps sends one change each: up, down, removed after a confirm
       ["K1", { moveStep: "abo", up: true }], ["K1", { moveStep: "abo", up: false }], ["K1", { removeStep: "vertrag" }],
       ["K1", { editStep: "widget", title: "Widget eingebaut", due: "2026-10-21" }], ["K1", { addStep: "Speisekarte fotografieren", due: "2026-10-20" }],
     ]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("removing an Auftrag is a write: without the database it says so and asks nothing", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const store = createStore(initialState());
+    store.data("leads", KUNDEN.map((l) => ({ ...LEAD_FIELDS, ...l, ...(l.id === "K1" && { orders: [{ id: "o1", kind: "website" }] }) })));
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    let asked = 0;
+    globalThis.confirm = () => (asked++, true);
+    const { click, toastEl } = fakeBrowser("#/betrieb/K1", store, null);
+    await click({ orderRemove: "o1" });
+    assert.deepEqual([toastEl.textContent, asked], ["Keine Verbindung zur Datenbank", 0]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("an Auftrag tapped opens with what it holds and saves what changed; removing one asks first", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const sent = [];
+    const store = createStore(initialState());
+    store.data("leads", KUNDEN.map((l) => ({ ...LEAD_FIELDS, ...l, ...(l.id === "K1" && { orders: [{ id: "o1", kind: "website", title: "Neue Website", amount: 1000, rhythm: "einmalig", signedAt: "", start: "", months: "", renews: false, contract: "", note: "" }] }) })));
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    store.set((s) => ({ ...s, me: ME }));
+    const { root, click, input } = fakeBrowser("#/betrieb/K1", store, { changeOrder: async (l, c) => (sent.push([l.id, c]), true) });
+    await click({ orderEdit: "o1" });
+    assert.match(root.innerHTML, /<input id="oAmount" value="1000"/);
+    await input("oAmount", "1200,50");
+    await input("oMonths", "");
+    await click({ act: "orderSave" });
+    globalThis.confirm = () => false;
+    await click({ orderRemove: "o1" });
+    globalThis.confirm = () => true;
+    await click({ orderRemove: "o1" });
+    // Only what was changed goes, so a change someone else made meanwhile to another field stays.
+    assert.deepEqual(sent, [["K1", { order: "o1", amount: 1200.5 }], ["K1", { order: "o1", remove: true }]]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }

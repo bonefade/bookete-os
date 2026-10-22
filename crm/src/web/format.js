@@ -2,6 +2,8 @@ import { addDays, daysBetween } from '../domain/dates.js';
 import { STAGE_LABEL, FIELD_LABEL } from '../domain/constants.js';
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+/** An amount in euros as Austria writes it: 1 300 €, 99,50 €. */
+export const fmtEuro = (n) => `${n.toLocaleString("de-AT", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })} \u20AC`;
 export const fmtDate = (d) => d ? (new Date(d + "T12:00:00")).toLocaleDateString("de-AT", { weekday: "short", day: "numeric", month: "short" }) : "";
 export function relDate(d, today) {
   if (!d) return "";
@@ -34,7 +36,7 @@ export function describeChange(entry) {
   if (!entry.deleted && entry.wasDeleted) return ["Wiederhergestellt"];
   // The notes text and the notes list, changed together when a note of the text is changed, read as one line.
   return [...new Set(Object.keys(FIELD_LABEL).filter((k) => JSON.stringify(entry.before[k] ?? null) !== JSON.stringify(entry.after[k] ?? null))
-    .map((k) => k === "account" ? "Kundenakte ge\xE4ndert" : k === "customer" ? "Betreuung ge\xE4ndert" : k === "todos" ? "Todos ge\xE4ndert" : k === "deal" ? "Vereinbarung ge\xE4ndert" : k === "notes" || k === "noteEntries" ? "Notizen ge\xE4ndert" : `${FIELD_LABEL[k]}: ${shown(k, entry.before[k])} \u2192 ${shown(k, entry.after[k])}`))];
+    .map((k) => k === "account" ? "Kundenakte ge\xE4ndert" : k === "customer" ? "Betreuung ge\xE4ndert" : k === "todos" ? "Todos ge\xE4ndert" : k === "deal" ? "Vereinbarung ge\xE4ndert" : k === "orders" ? "Auftr\xE4ge ge\xE4ndert" : k === "notes" || k === "noteEntries" ? "Notizen ge\xE4ndert" : `${FIELD_LABEL[k]}: ${shown(k, entry.before[k])} \u2192 ${shown(k, entry.after[k])}`))];
 }
 /** The status move of a history entry, for the lead's feed: "Status Neu → Kontaktiert", "Angelegt", or "" for none. */
 export function statusMove(entry) {

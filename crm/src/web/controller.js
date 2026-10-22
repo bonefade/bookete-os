@@ -10,10 +10,11 @@ import { createBackup } from '../domain/backup.js';
 import { fillTemplate, defaultTemplate, DEFAULT_SCRIPT } from '../domain/template.js';
 import { lastChannel } from '../domain/activity.js';
 import { relDate, actorName } from './format.js';
-import { PHASE_LABEL, PACKAGE_LABEL, customerOf } from '../domain/customer.js';
+import { PHASE_LABEL, customerOf } from '../domain/customer.js';
+import { HOSTING_CARE, KIND_LABEL, ordersOf } from '../domain/orders.js';
 import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, stepsEditOpen, VISIT_NOTE } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "stepsEditToggle", "stepEditCancel", "noteEditCancel", "logMenu", "visitOpen", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "stepsEditToggle", "stepEditCancel", "orderNew", "orderCancel", "noteEditCancel", "logMenu", "visitOpen", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -53,14 +54,16 @@ const PHONE_LAYOUT = "(max-width:759px),(max-height:479px)";
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 /** A screen holding input not yet saved: search stays shut there, so that it cannot leave the screen by accident. */
 // The call sheet holds input once an outcome is picked: its fields show only then.
-const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.todoDraft?.text?.trim() || u.todoEdit || u.stepDraft?.text?.trim() || u.stepEdit || u.noteDraft?.trim() || u.noteEdit || u.meeting || u.contactPick || u.quick || u.icpEdit);
+const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.todoDraft?.text?.trim() || u.todoEdit || u.stepDraft?.text?.trim() || u.stepEdit || u.orderEdit || u.noteDraft?.trim() || u.noteEdit || u.meeting || u.contactPick || u.quick || u.icpEdit);
 /**
  * What a lead page holds open and not yet saved: the composer, the sheets, a todo, a quick edit with what is typed
  * in it. It belongs to its lead until saved or cancelled: leaving the page keeps it in `ui.drafts` under the lead's
  * id, coming back opens it again, and the device keeps all of them (draftsOf), through a reload or the phone
  * dropping the page.
  */
-const DRAFT_KEYS = ["compose", "call", "termin", "meeting", "checkIn", "contactPick", "todoDraft", "todoEdit", "stepDraft", "stepEdit", "noteDraft", "noteEdit", "editField", "editDraft"];
+/** The fields of the Auftrag form by input, kept as typed in `ui.orderEdit`. */
+const ORDER_INPUTS = { oTitle: "title", oAmount: "amount", oRhythm: "rhythm", oSigned: "signedAt", oStart: "start", oMonths: "months", oContract: "contract", oNote: "note" };
+const DRAFT_KEYS = ["compose", "call", "termin", "meeting", "checkIn", "contactPick", "todoDraft", "todoEdit", "stepDraft", "stepEdit", "orderEdit", "noteDraft", "noteEdit", "editField", "editDraft"];
 function draftOf(ui) {
   const open = DRAFT_KEYS.filter((k) => ui[k]);
   return open.length ? Object.fromEntries(open.map((k) => [k, ui[k]])) : null;
@@ -779,6 +782,30 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ stepEdit: null });
       render();
     },
+    orderNew: () => {
+      ui({ orderEdit: { id: "", kind: "bookete", title: "", amount: "", rhythm: "einmalig", signedAt: "", start: "", months: "", renews: false, contract: "", note: "" } });
+      render();
+    },
+    /**
+     * A new Auftrag or the one tapped, as typed: an amount and a runtime typed as text go as numbers, "" as none. Of the
+     * one tapped only the fields changed against it as opened go, so what someone else changed meanwhile stays.
+     */
+    async orderSave() {
+      const { id, from, ...e } = S().ui.orderEdit;
+      const number = (v) => String(v).trim() === "" ? "" : Number(String(v).replace(",", "."));
+      const typed = (o) => ({ ...o, title: o.title.trim(), amount: number(o.amount), months: number(o.months), contract: o.contract.trim(), note: o.note.trim() });
+      const fields = typed(e);
+      const changes = id ? Object.fromEntries(Object.entries(fields).filter(([k, v]) => k !== "id" && JSON.stringify(v) !== JSON.stringify(typed(from)[k]))) : null;
+      if (changes && !Object.keys(changes).length) return this.orderCancel();
+      if (await run(() => uc.changeOrder(currentLead(S()), id ? { order: id, ...changes } : { add: fields }), "Gespeichert") !== undefined) {
+        ui({ orderEdit: null });
+        render();
+      }
+    },
+    orderCancel: () => {
+      ui({ orderEdit: null });
+      render();
+    },
     checkInOpen: () => {
       ui({ checkIn: {} });
       render();
@@ -924,7 +951,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const a = st.data.activities.find((x) => x.id === d.copy);
       return toast(a && copyText(a.text) ? "Kopiert" : "Kopieren nicht m\xF6glich");
     }
-    const writes = d.status || d.lost || d.todoDone || d.todoUndo || d.todoRemove || d.noteRemove || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.step || d.stepUndo || d.skip || d.stepUp || d.stepDown || d.stepRemove || d.cancel || d.phase && d.phase !== "gekuendigt" || d.act && !UI_ONLY_ACTIONS.has(d.act);
+    const writes = d.status || d.lost || d.todoDone || d.todoUndo || d.todoRemove || d.noteRemove || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.step || d.stepUndo || d.skip || d.stepUp || d.stepDown || d.stepRemove || d.orderRemove || d.cancel || d.phase && d.phase !== "gekuendigt" || d.act && !UI_ONLY_ACTIONS.has(d.act);
     if (writes && !uc) return toast("Keine Verbindung zur Datenbank");
     if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash(st.ui.trashBefore);
     if (d.purge) {
@@ -978,7 +1005,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ hAll: d.hall === "1" });
       return render();
     }
-    // A Kunde's care: a step done, open again or skipped; the package; the phase, Gekündigt with its reason.
+    // A Kunde's care: a step done, open again or skipped; the phase, Gekündigt with its reason.
     if (d.step) return run(() => uc.changeCustomer(lead, { step: d.step }), "Erledigt");
     if (d.stepUndo) return run(() => uc.changeCustomer(lead, { step: d.stepUndo, done: false }), "Wieder offen");
     if (d.skip) {
@@ -996,7 +1023,18 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ stepEdit: step ? { id: step.id, title: step.title, due: step.due } : null });
       return render();
     }
-    if (d.package) return d.package === customerOf(lead)?.package ? undefined : run(() => uc.changeCustomer(lead, { package: d.package }), "Paket: " + PACKAGE_LABEL[d.package]);
+    if (d.orderEdit) {
+      const o = ordersOf(lead).find((x) => x.id === d.orderEdit);
+      // The Auftrag as opened goes along, so saving sends only what was changed against it.
+      const opened = o && { ...o, amount: String(o.amount), months: String(o.months) };
+      ui({ orderEdit: opened ? { ...opened, from: opened } : null });
+      return render();
+    }
+    if (d.orderRemove) {
+      const o = ordersOf(lead).find((x) => x.id === d.orderRemove);
+      if (o && !confirm(`Auftrag \u201E${[KIND_LABEL[o.kind], o.title].filter(Boolean).join(" \xB7 ")}\u201C l\xF6schen?`)) return;
+      return run(() => uc.changeOrder(lead, { order: d.orderRemove, remove: true }), "Auftrag gel\xF6scht");
+    }
     if (d.phase) {
       // The phase it has already changes nothing, as the status chip does.
       if (d.phase === customerOf(lead)?.phase) return;
@@ -1074,6 +1112,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       return lockForInput(S(), clock.today());
     }
     if (t.id === "seTitle" && S().ui.stepEdit) return ui({ stepEdit: { ...S().ui.stepEdit, title: t.value } });
+    if (ORDER_INPUTS[t.id] && S().ui.orderEdit) return ui({ orderEdit: { ...S().ui.orderEdit, [ORDER_INPUTS[t.id]]: t.value } });
     if (t.id === "cpText" && S().ui.contactPick) return ui({ contactPick: { ...S().ui.contactPick, text: t.value } });
     if (t.id === "ciNote" && S().ui.checkIn) return ui({ checkIn: { ...S().ui.checkIn, note: t.value } });
     if (t.id === "cSubj" && c) return ui({ compose: { ...c, subject: t.value } });
@@ -1109,12 +1148,20 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (t.id === "teDue" && st.ui.todoEdit) return ui({ todoEdit: { ...st.ui.todoEdit, due: t.value } });
     if (t.id === "tdDue") return ui({ todoDraft: { ...st.ui.todoDraft, due: t.value } });
     if (t.id === "seDue" && st.ui.stepEdit) return ui({ stepEdit: { ...st.ui.stepEdit, due: t.value } });
+    if (t.id === "oRenews" && st.ui.orderEdit) return ui({ orderEdit: { ...st.ui.orderEdit, renews: t.checked } });
+    // Hosting picked for an Auftrag with no amount yet starts as the package we sell.
+    if (t.id === "oKind" && st.ui.orderEdit) {
+      const e = st.ui.orderEdit;
+      const care = t.value === "hosting" && e.amount === "" ? { title: e.title || HOSTING_CARE.title, amount: String(HOSTING_CARE.amount), rhythm: HOSTING_CARE.rhythm, months: String(HOSTING_CARE.months), renews: HOSTING_CARE.renews } : {};
+      ui({ orderEdit: { ...e, kind: t.value, ...care } });
+      return render();
+    }
+    if (ORDER_INPUTS[t.id] && st.ui.orderEdit) return ui({ orderEdit: { ...st.ui.orderEdit, [ORDER_INPUTS[t.id]]: t.value } });
     if (t.id === "sdDue") return ui({ stepDraft: { ...st.ui.stepDraft, due: t.value } });
     if (t.id === "ciNext" && st.ui.checkIn) return sheet("checkIn", { next: t.value });
     // A call entered later: its day, today unless picked; today itself is no day picked.
     if (t.id === "callDay" && st.ui.call) return sheet("call", { day: t.value && t.value !== clock.today() ? t.value : "" });
     // What a Kunde agreed on: each field saves when it is left.
-    if (t.dataset?.deal) return run(() => uc.changeDeal(lead, { [t.dataset.deal]: t.value }), "Vereinbarung gespeichert");
     if (t.id === "kOwnerOf") return run(() => uc.changeCustomer(lead, { owner: t.value }), t.value ? "Betreut von " + actorName(t.value) : "Niemand betreut");
     if (t.dataset.filter) {
       ui({ [t.dataset.filter]: t.value });

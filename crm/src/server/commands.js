@@ -3,13 +3,15 @@ import { LEAD_FIELDS } from "../domain/lead.js";
 import { IMPORT_CHUNK } from "../domain/backup.js";
 import { STAGES, LOST_REASONS, SPOKEN_REASONS, CALL_OUTCOMES } from "../domain/constants.js";
 import { SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
-import { PACKAGES, PHASES, CANCEL_REASONS, CHECK_IN_RESULTS } from "../domain/customer.js";
-import { HOSTING } from "../domain/deal.js";
+import { PHASES, CANCEL_REASONS, CHECK_IN_RESULTS } from "../domain/customer.js";
+import { ORDER_KINDS, RHYTHMS, MAX_AMOUNT, MAX_MONTHS } from "../domain/orders.js";
 import { NOTE_MAX } from "../domain/notes.js";
 
 const id = z.string().min(1).max(100);
 const text = z.string().max(20000);
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+// A day, or "" for none.
+const dueDay = z.union([date, z.literal("")]);
 export const Status = z.enum(STAGES.map(([k]) => k));
 export const Reason = z.enum(LOST_REASONS);
 // lostReason takes "" from the form's empty option; normalizeLead then asks for a reason where one is needed.
@@ -23,13 +25,31 @@ export const AccountInput = z.object({
   systems: z.object({ ...Object.fromEntries(SYSTEMS.map(([k]) => [k, System])), access: str(500) }).strict().partial(),
   contacts: z.array(z.object({ id: str(100), name: z.string().max(200), company: str(200), role: str(200), handles: str(500), email: str(200), phone: str(100), note: str(2000) }).strict()).max(ACCOUNT_LIMIT),
 }).partial().strict();
-// What a customer agreed on, field by field; normalizeDeal checks values. "" clears a field.
-export const DealInput = z.object({
-  price: str(200),
-  hosting: z.union([z.enum(HOSTING.map(([k]) => k)), z.literal("")]).nullish(),
-  signedAt: z.union([date, z.literal("")]).nullish(),
-  note: str(500),
-}).partial().strict();
+// One Auftrag's fields; "" clears one, normalizeOrders checks the rest (two decimals, an https link).
+const OrderFields = z.object({
+  kind: z.enum(ORDER_KINDS.map(([k]) => k)),
+  title: z.string().max(200),
+  amount: z.union([z.number().min(0).max(MAX_AMOUNT), z.literal("")]),
+  rhythm: z.enum(RHYTHMS.map(([k]) => k)),
+  signedAt: dueDay,
+  start: dueDay,
+  months: z.union([z.number().int().min(1).max(MAX_MONTHS), z.literal("")]),
+  renews: z.boolean(),
+  contract: z.string().max(500),
+  note: z.string().max(500),
+}).strict();
+// One change to a Kunde's Aufträge: a new one (`add`), one changed (`order` and only the fields given) or one gone
+// (`order` and `remove`). One object, not a union, as an MCP tool's input is one object.
+export const OrderChange = z.object({
+  id,
+  add: OrderFields.partial().required({ kind: true }).optional(),
+  order: id.optional(),
+  remove: z.literal(true).optional(),
+  ...OrderFields.partial().shape,
+}).strict().refine((c) => {
+  const fields = Object.keys(c).filter((k) => !["id", "add", "order", "remove"].includes(k)).length;
+  return c.add ? !c.order && !c.remove && !fields : !!c.order && (c.remove ? !fields : fields > 0);
+}, "add, order mit Feldern, oder order mit remove");
 const ActivityInput = z.object({ direction: z.enum(["out", "in"]), channel: z.string().max(40), date: z.union([date, z.literal("")]).optional(), text, templateId: z.string().max(100).nullish() });
 // One call, or one appointment, and how it ended; callActivity and meetingPatch refuse a field the outcome does not take.
 const time = z.string().regex(/^\d{2}:\d{2}$/);
@@ -37,21 +57,18 @@ const SpokenReason = z.enum(SPOKEN_REASONS);
 export const CallInput = z.object({ outcome: z.enum(CALL_OUTCOMES.map(([k]) => k)), day: date.optional(), date: date.optional(), time: time.optional(), reason: SpokenReason.optional(), note: z.string().max(2000).optional() }).strict();
 export const MeetingInput = z.object({ id, result: z.enum(["kunde", "kein-abschluss", "neuer-termin"]), reason: SpokenReason.optional(), date: date.optional(), time: time.optional() }).strict();
 // One change to a customer's care: a step done, open again or skipped; a step added, removed, moved or edited; the
-// package; the owner ("" for none); the phase; or a check-in.
-const stepDue = z.union([date, z.literal("")]);
+// owner ("" for none); the phase; or a check-in. The package comes from the Aufträge.
 const CustomerChange = z.union([
   z.object({ id, step: id, done: z.boolean().optional(), skip: z.string().max(200).optional() }).strict(),
-  z.object({ id, addStep: z.string().min(1).max(200), due: stepDue.optional() }).strict(),
+  z.object({ id, addStep: z.string().min(1).max(200), due: dueDay.optional() }).strict(),
   z.object({ id, removeStep: id }).strict(),
   z.object({ id, moveStep: id, up: z.boolean() }).strict(),
-  z.object({ id, editStep: id, title: z.string().min(1).max(200).optional(), due: stepDue.optional() }).strict().refine((c) => "title" in c || "due" in c, "Titel oder Datum"),
-  z.object({ id, package: z.enum(PACKAGES.map(([k]) => k)) }).strict(),
+  z.object({ id, editStep: id, title: z.string().min(1).max(200).optional(), due: dueDay.optional() }).strict().refine((c) => "title" in c || "due" in c, "Titel oder Datum"),
   z.object({ id, owner: z.union([z.email().max(200), z.literal("")]) }).strict(),
   z.object({ id, phase: z.enum(PHASES.map(([k]) => k)), reason: z.enum(CANCEL_REASONS).optional() }).strict(),
   z.object({ id, checkIn: z.enum(CHECK_IN_RESULTS.map(([k]) => k)), note: z.string().max(500).optional(), next: date.optional() }).strict(),
 ]);
 // One change to a business's todos: a new one with an optional due day, one done or open again, its text or due day, or gone.
-const dueDay = z.union([date, z.literal("")]);
 const TodoChange = z.union([
   z.object({ id, add: z.string().min(1).max(300), due: dueDay.optional() }).strict(),
   z.object({ id, todo: id, done: z.boolean() }).strict(),
@@ -82,7 +99,7 @@ export const COMMANDS = {
   meetingOutcome: [MeetingInput, (uc, { id: leadId, ...meeting }) => uc.meetingOutcome(leadId, meeting)],
   changeTodo: [TodoChange, (uc, { id: leadId, ...change }) => uc.changeTodo(leadId, change)],
   changeCustomer: [CustomerChange, (uc, { id: leadId, ...change }) => uc.changeCustomer(leadId, change)],
-  changeDeal: [DealInput.extend({ id }), (uc, { id: leadId, ...change }) => uc.changeDeal(leadId, change)],
+  changeOrder: [OrderChange, (uc, { id: leadId, ...change }) => uc.changeOrder(leadId, change)],
   scheduleMeeting: [z.object({ id, date, time: time.optional() }).strict(), (uc, { id: leadId, ...meeting }) => uc.scheduleMeeting(leadId, meeting)],
   closeWithoutReply: [z.object({ id }), (uc, a) => uc.closeWithoutReply(a.id)],
   setFollowUp: [z.object({ id, date: z.union([date, z.literal("")]).nullable() }), (uc, a) => uc.setFollowUp(a.id, a.date)],

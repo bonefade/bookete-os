@@ -272,7 +272,7 @@ test("the systems open shut for a customer on bookete alone with none written do
   };
   const open = (html) => /<details[^>]*? open><summary><h[34]>Systeme/.test(html);
   assert.deepEqual([open(view(lead)), open(view(lead, "editAccount"))], [false, false]);
-  const website = { ...lead, customer: { ...lead.customer, package: "website" } };
+  const website = { ...lead, orders: [{ id: "o1", kind: "website" }] };
   assert.deepEqual([open(view(website)), open(view(website, "editAccount"))], [true, true]);
   const written = { ...lead, account: normalizeAccount({ systems: { email: { what: "office@krone.at bei A1" } } }, newId) };
   assert.deepEqual([open(view(written)), open(view(written, "editAccount"))], [true, true]);

@@ -2,11 +2,11 @@ import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, planMeeting, mailActivityId, byTimeline, sameMail, hasSpoken } from "../domain/activity.js";
 import { normalizeLead, toolName, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
-import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isCareStep, careFromToday, rearrangesSteps } from "../domain/customer.js";
+import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isCareStep, careFromToday, rearrangesSteps, careForPackage } from "../domain/customer.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount, accountPatch, ownContactIn } from "../domain/account.js";
 import { normalizeTodos, todosOf, todosAfter } from "../domain/todos.js";
-import { normalizeDeal, dealOf, dealAfter } from "../domain/deal.js";
+import { normalizeOrders, ordersOf, ordersAfter, orderFromDeal, packageOf, packageOfLead } from "../domain/orders.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
 import { notesAfter, normalizeEntries } from "../domain/notes.js";
 
@@ -97,6 +97,21 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
   /** A reservation system typed as one a lead has already, whatever the case, is written as that one is spelled. */
   const knownTool = async (patch) => typeof patch.currentTool === "string" ? { ...patch, currentTool: toolName(patch.currentTool, await store.toolNames()) } : patch;
   const noteContext = () => ({ today: clock.today(), now: clock.now(), by: email, newId: ids.newId });
+  /**
+   * What writing a changed care does to the lead: the care itself, if it changed, and, where the change plans it (carePlansNextStep), the next step. Rearranged steps move
+   * only a next step the care planned, so a Termin or a Rückruf a person planned stays; after an opt-out only its text
+   * moves, as a Kunde then has no follow-up. A live customer's first check-in day, set by this change, is its next step
+   * too, unless a person planned one.
+   */
+  const careDiff = (l, stored, before, customer, change) => {
+    const carePlanned = !l.nextStep || l.nextStep === "Antworten" || isCareStep(l.nextStep, before);
+    const startsCheckIns = customer.phase === "live" && !!customer.nextCheckIn && !stored.nextCheckIn && carePlanned;
+    const replans = carePlansNextStep(before, customer, change) && (!rearrangesSteps(change) || carePlanned);
+    const plan = replans || startsCheckIns ? customerPlan(customer) : {};
+    if (l.optOutAt) delete plan.followUp;
+    const careChanged = JSON.stringify(customer) !== JSON.stringify(l.customer && normalizeCustomer(l.customer));
+    return { ...changed(l, normalizeLead(plan, l, clock.today())), ...(careChanged && { customer }) };
+  };
   const changed = (l, next) => Object.fromEntries(Object.entries(next).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify(l[k] ?? null)));
   // `l` itself is the base: its version symbol is not copied by a spread.
   const patchOp = (l, diff) => ({ type: "patch", collection: "leads", id: l.id, base: l, data: touch(diff) });
@@ -265,9 +280,8 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
     }),
     logActivity,
     /**
-     * One change to a Kunde's care (customerAfter): a step ticked or rearranged, the package, the owner (one of the
-     * team), the phase or a check-in. Where the change plans the next step (carePlansNextStep), it is the open step;
-     * after an opt-out only its text, as a Kunde then has no follow-up. A care without a start day or, live, without a check-in day (a Kunde from before, or care stored
+     * One change to a Kunde's care (customerAfter): a step ticked or rearranged, the owner (one of the team), the phase
+     * or a check-in. A care without a start day or, live, without a check-in day (a Kunde from before, or care stored
      * by 1.20.0) gets them from the day of its first change (careFromToday).
      */
     changeCustomer: (id, change) => retrying(async () => {
@@ -276,27 +290,32 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
       const stored = customerOf(l);
       if (l.status !== "kunde" || !stored) throw new ValidationError("status", "Nur bei \u201EKunde\u201C");
       const before = careFromToday(stored, clock.today());
-      const customer = customerAfter(before, change, { by: actor, today: clock.today(), newId: ids.newId });
-      const carePlanned = !l.nextStep || l.nextStep === "Antworten" || isCareStep(l.nextStep, before);
-      // A live customer's first check-in day, set by this change, is its next step too, unless a person planned one.
-      const startsCheckIns = customer.phase === "live" && !!customer.nextCheckIn && !stored.nextCheckIn && carePlanned;
-      // Rearranged steps move only a next step the care planned: a Termin or a Rückruf a person planned stays.
-      const replans = carePlansNextStep(before, customer, change) && (!rearrangesSteps(change) || carePlanned);
-      const plan = replans || startsCheckIns ? customerPlan(customer) : {};
-      if (l.optOutAt) delete plan.followUp;
-      const diff = { ...changed(l, normalizeLead(plan, l, clock.today())), ...(JSON.stringify(customer) !== JSON.stringify(l.customer && normalizeCustomer(l.customer)) && { customer }) };
+      const diff = careDiff(l, stored, before, customerAfter(before, change, { by: actor, today: clock.today(), newId: ids.newId }), change);
       if (!Object.keys(diff).length) return false;
       await commit([patchOp(l, diff)]);
       return true;
     }),
-    /** What a Kunde agreed on (dealAfter), field by field on the deal as it is when written. Says whether anything changed. */
-    changeDeal: (id, change) => retrying(async () => {
+    /**
+     * One change to a Kunde's Aufträge (ordersAfter), on the Aufträge as they are when it is written. The first write
+     * stores them in place of the Vereinbarung of before, and from then on they give the package: a package picked
+     * before 1.30.0 counts until then (packageOfLead) and goes with it. Where the change moves the package, the same
+     * write gives the care the steps of the new package (careForPackage) and, as a care change does, the next step.
+     * Says whether anything changed.
+     */
+    changeOrder: (id, change) => retrying(async () => {
       const l = await lead(id);
       if (l.status !== "kunde") throw new ValidationError("status", "Nur bei \u201EKunde\u201C");
-      const before = dealOf(l);
-      const deal = dealAfter(before, change);
-      if (JSON.stringify(deal) === JSON.stringify(before)) return false;
-      await commit([patchOp(l, { deal })]);
+      const before = ordersOf(l);
+      const orders = ordersAfter(before, change, { newId: ids.newId });
+      if (JSON.stringify(orders) === JSON.stringify(before)) return false;
+      const from = packageOfLead(l), to = packageOf(orders);
+      const stored = customerOf(l);
+      const care = stored && from !== to ? careFromToday(stored, clock.today()) : null;
+      const diff = care ? careDiff(l, stored, care, careForPackage(care, from, to, clock.today()), { package: to }) : {};
+      // The package picked before goes: the care as written, or as stored, without it.
+      const picked = !!l.customer && "package" in l.customer;
+      const customer = diff.customer || (picked ? normalizeCustomer(l.customer) : null);
+      await commit([patchOp(l, { orders, ...(l.deal !== undefined && { deal: null }), ...diff, ...(customer && { customer: { ...customer, ...(picked && { package: null }) } }) })]);
       return true;
     }),
     /** One change to a business's todos (todosAfter), on the todos as they are when it is written. Says whether anything changed. */
@@ -426,7 +445,7 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
           // The browser upgrades an old backup whole, with its activities (chunkBackup); one chunk alone could not.
           if (!(r.schemaVersion >= SCHEMA_VERSION)) throw new ValidationError("backup", "Format vor 1.4.0 \u2013 bitte die App neu laden und erneut importieren");
           // Normalized against its own status: a record brought back is no status change, so it keeps its wonAt.
-          return { ...normalizeLead({ ...r, currentTool: toolName(r.currentTool, tools) }, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), ...(r.deal && { deal: normalizeDeal(r.deal) }), ...(r.noteEntries && { noteEntries: normalizeEntries(r.noteEntries) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
+          return { ...normalizeLead({ ...r, currentTool: toolName(r.currentTool, tools) }, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), ...((r.orders || r.deal) && { orders: r.orders ? normalizeOrders(r.orders, ids.newId) : [orderFromDeal(r.deal)] }), ...(r.noteEntries && { noteEntries: normalizeEntries(r.noteEntries) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
         },
         activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),

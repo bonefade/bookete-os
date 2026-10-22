@@ -3,7 +3,7 @@ import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, knownTools, dueB
 import { addDays, dayLabel, daysBetween, toDateString } from '../domain/dates.js';
 import { channelLink } from './platform.js';
 import { countTouches, hasSpoken, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting, byTimeline } from '../domain/activity.js';
-import { esc, fmtDate, relDate, options, describeChange, statusMove, actorName, fmtTime } from './format.js';
+import { esc, fmtDate, fmtEuro, relDate, options, describeChange, statusMove, actorName, fmtTime } from './format.js';
 import { fold, searchTokens, searchLeads } from '../domain/search.js';
 import { hitLabel, markRanges, markHtml, snippetHtml } from './search.js';
 import { isPipeline, takesFollowUp, takesDate, isDue, lacksNextStep, getsUnsubscribeLink, addressKey, optOutByAddress, mailClosedBy, addressOptOutText } from '../domain/lead.js';
@@ -11,10 +11,10 @@ import { lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
 import { SYSTEMS, BY_BUSINESS, accountOf, showsAccount, handledBy } from '../domain/account.js';
-import { HOSTING, dealOf } from '../domain/deal.js';
+import { ORDER_KINDS, KIND_LABEL, RHYTHMS, ordersOf, orderEnd, packageOfLead } from '../domain/orders.js';
 import { todosOf } from '../domain/todos.js';
 import { notesOf } from '../domain/notes.js';
-import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, PACKAGES, STEP_GROUPS, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, attentionOf } from '../domain/customer.js';
+import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, STEP_GROUPS, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, PACKAGE_LABEL, customerOf, attentionOf } from '../domain/customer.js';
 
 export const ICONS = {
   heute: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
@@ -333,7 +333,8 @@ const takesCall = (l, today) => isPipeline(l) && !l.optOutAt && !meetingDue(l, t
  * What the lead page holds open but can no longer draw, as the lead changed since (the other user, or a draft kept
  * from earlier): a call or Termin sheet once it takes no call, the meeting's outcome once none is due, a check-in once
  * not live, the "Kontaktiert" question once not Neu, a todo being changed once done or gone, a step being changed or
- * added once gone or the customer cancelled. Closed, so no input nobody sees keeps the tabs shut.
+ * added once gone or the customer cancelled, an Auftrag being changed once gone or the lead no Kunde. Closed, so no
+ * input nobody sees keeps the tabs shut.
  */
 export function unshownSheets(state, today) {
   const l = currentLead(state), u = state.ui;
@@ -349,6 +350,7 @@ export function unshownSheets(state, today) {
     ...(u.todoEdit && !todosOf(l).some((t) => t.id === u.todoEdit.id && !t.done) && { todoEdit: null }),
     ...(u.stepEdit && !stepsEditable(l)?.steps.some((s) => s.id === u.stepEdit.id) && { stepEdit: null }),
     ...(u.stepDraft && !stepsEditable(l) && { stepDraft: null }),
+    ...(u.orderEdit && (l.status !== "kunde" || u.orderEdit.id && !ordersOf(l).some((o) => o.id === u.orderEdit.id)) && { orderEdit: null }),
     // A note being changed that someone removed meanwhile: what was typed becomes a new note to save, not lost.
     ...(u.noteEdit && !notesOf(l).some((n) => n.id === u.noteEdit.id) && { noteEdit: null, noteDraft: u.noteDraft || u.noteEdit.text }),
     // Drafts kept by 1.24.0, when a note was the composer's "Notiz" or a quick edit of the notes text: a new note to save.
@@ -503,14 +505,14 @@ function statusMenuHtml(l, acts, today) {
 /**
  * The status as chips, one tap each: Disqualifiziert asks for the reason (and changes it on a lead closed already).
  * After an opt-out only Kunde and Disqualifiziert can be set, as the server holds. A Kunde has its phase beside it and,
- * unless cancelled, its package, which decides its onboarding steps.
+ * unless cancelled, its package as its Aufträge give it.
  */
 function statusChipsHtml(l, customer, ui) {
   const lost = l.status === "disqualifiziert";
   const status = STAGES.map(([k, v]) => `<button class="chip${k === "disqualifiziert" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}"${l.optOutAt && isPipeline({ status: k }) ? " disabled" : ""}>${esc(v)}${k === "disqualifiziert" && lost ? " \xB7 " + esc(l.lostReason) : ""}</button>`).join("");
   const more = l.optOutAt ? "" : `<button class="link" data-act="statusMenu" aria-expanded="${!!ui.statusMenu}">Weitere ▾</button>`;
   const phases = customer ? `<div class="chips phchips"><span class="note">Phase</span>${phaseChips(customer, true)}</div>` : "";
-  const pack = customer && customer.phase !== "gekuendigt" ? `<div class="chips phchips"><span class="note">Paket</span>${PACKAGES.map(([k, label]) => `<button class="chip" data-package="${k}" aria-pressed="${customer.package === k}">${esc(label)}</button>`).join("")}</div>` : "";
+  const pack = customer && customer.phase !== "gekuendigt" ? `<div class="chips phchips"><span class="note">Paket</span><span class="note"><b>${esc(PACKAGE_LABEL[packageOfLead(l)])}</b> \xB7 aus den Auftr\xE4gen</span></div>` : "";
   return `<div class="chips stchips" role="group" aria-label="${esc(FIELD_LABEL.status)}">${status}${more}</div>${phases}${pack}`;
 }
 /** The one next-step line: when and what, yellow when a lead in work has none, with the date and text to change. */
@@ -565,7 +567,7 @@ function customerHtml(state, l, c, today) {
   return `<div class="sec cust"><h3>Kunde <small>${esc(PHASE_LABEL[c.phase])}${where}</small></h3>
     ${att ? `<p class="att-line">Achtung: ${esc(att)}</p>` : ""}
     <div class="card">${owner}<div class="chips">${phaseChips(c)}</div></div>
-    ${dealHtml(l)}
+    ${ordersHtml(l, state.ui)}
     ${c.phase === "live" ? checkInsHtml(c, state.ui.checkIn, today) + onboarding : onboarding}</div>`;
 }
 /** A standard step of bookete or the website says so; the general ones and those a person added need no tag. */
@@ -588,14 +590,39 @@ function stepsHtml(c, ui) {
     <div class="tadd"><input id="sdText" placeholder="Neuer Schritt \u2026" value="${esc(draft.text || "")}" aria-label="Neuer Schritt"><input type="date" id="sdDue" value="${esc(draft.due || "")}" aria-label="F\xE4llig am"><button class="primary" data-act="stepAdd"${(draft.text || "").trim() ? "" : " disabled"}>+</button></div>
     <p class="hint">Neue Schritte kommen vor \u201ELive\u201C. Antippen \xE4ndert Name und Datum.</p></div>`;
 }
-/** What the customer agreed on beyond its package: each field saves when it is left (data-deal). */
-function dealHtml(l) {
-  const d = dealOf(l);
-  const field = (name, label, value, placeholder = "") => `<label>${label}<input data-deal="${name}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`;
-  return `<h3 style="margin-top:14px">Vereinbarung</h3><div class="card deal">
-    ${field("price", "Preis", d.price, "z. B. 300 \u20AC netto einmalig")}
-    <div class="two"><label>Hosting<select data-deal="hosting">${options([["", "offen"], ...HOSTING], d.hosting)}</select></label><label>Vertrag vom<input type="date" data-deal="signedAt" value="${esc(d.signedAt)}"></label></div>
-    ${field("note", "Sonstiges", d.note, "eine Zeile, z. B. Abo bucht das Restaurant selbst")}
+const PER = { einmalig: "einmalig", monatlich: "pro Monat", jaehrlich: "pro Jahr" };
+/** An Auftrag in one line: its amount and rhythm, its runtime, the contract's day and its note. */
+function orderLine(o) {
+  const end = orderEnd(o);
+  const runtime = o.start ? `ab ${dayLabel(o.start)}${o.months ? `, ${o.months} Monate${o.renews ? ", verl\xE4ngert sich" : `, bis ${dayLabel(end)}`}` : ""}` : o.months ? `${o.months} Monate${o.renews ? ", verl\xE4ngert sich" : ""}` : "";
+  return [o.amount === "" ? "Betrag offen" : `${fmtEuro(o.amount)} ${PER[o.rhythm]}`, runtime, o.signedAt && `Vertrag vom ${dayLabel(o.signedAt)}`, o.note].filter(Boolean).join(" \xB7 ");
+}
+/** The form for one Auftrag, new or tapped: what is typed stays in `ui.orderEdit` until saved or cancelled. */
+function orderForm(e) {
+  const input = (id, label, value, attrs = "") => `<label>${label}<input id="${id}" value="${esc(value)}"${attrs}></label>`;
+  return `<div class="oform">
+    <div class="two"><label>Art<select id="oKind">${options(ORDER_KINDS, e.kind)}</select></label>${input("oTitle", "Titel", e.title, ' placeholder="optional"')}</div>
+    <div class="two">${input("oAmount", "Betrag (netto \u20AC)", e.amount, ' type="number" min="0" step="0.01" inputmode="decimal" placeholder="offen"')}<label>Rhythmus<select id="oRhythm">${options(RHYTHMS, e.rhythm)}</select></label></div>
+    <div class="two">${input("oSigned", "Vertrag vom", e.signedAt, ' type="date"')}${input("oStart", "Beginn", e.start, ' type="date"')}</div>
+    <div class="two">${input("oMonths", "Laufzeit (Monate)", e.months, ' type="number" min="1" max="120" step="1" inputmode="numeric" placeholder="unbefristet"')}<label class="inline"><input type="checkbox" id="oRenews"${e.renews ? " checked" : ""}> verl\xE4ngert sich</label></div>
+    ${input("oContract", "Vertragslink", e.contract, ' type="url" placeholder="https://\u2026"')}
+    ${input("oNote", "Notiz", e.note, ' placeholder="eine Zeile"')}
+    <div class="two"><button data-act="orderCancel">Abbrechen</button><button class="primary" data-act="orderSave">Speichern</button></div></div>`;
+}
+/**
+ * What the customer agreed on, as Aufträge: the totals by rhythm, a row each (tap to change it), and "+ Auftrag".
+ * A Vereinbarung of before shows as one, its text in the note, until it is changed.
+ */
+function ordersHtml(l, ui) {
+  const orders = ordersOf(l);
+  const edit = ui.orderEdit;
+  const sums = RHYTHMS.map(([r, label]) => [label, orders.filter((o) => o.rhythm === r && o.amount !== "").reduce((sum, o) => sum + Math.round(o.amount * 100), 0) / 100])
+    .filter(([, sum]) => sum).map(([label, sum]) => `${label} ${fmtEuro(sum)}`).join(" \xB7 ");
+  const row = (o) => edit?.id === o.id ? `<li class="edit">${orderForm(edit)}</li>`
+    : `<li><button class="ttext" data-order-edit="${esc(o.id)}"><b>${esc(KIND_LABEL[o.kind])}${o.title ? " \xB7 " + esc(o.title) : ""}</b><small>${esc(orderLine(o))}</small></button>${o.contract ? `<a class="more" href="${esc(o.contract)}" target="_blank" rel="noopener">Vertrag \u2197</a>` : "<span></span>"}<button class="bin" data-order-remove="${esc(o.id)}" aria-label="Auftrag l\xF6schen">\xD7</button></li>`;
+  return `<h3 style="margin-top:14px">Auftr\xE4ge${sums ? ` <small>${esc(sums)}</small>` : ""}</h3><div class="card orders">
+    ${orders.length ? `<ul class="tlist">${orders.map(row).join("")}</ul>` : `<p class="note">Noch nichts vereinbart. Ein Betrieb, der das Abo selbst bucht, braucht keinen Auftrag.</p>`}
+    ${edit && !edit.id ? orderForm(edit) : edit ? "" : `<button class="more" data-act="orderNew">+ Auftrag</button>`}
   </div>`;
 }
 /** A live customer's check-ins: when the next is due, the form to enter one, and the last three. */
@@ -843,7 +870,7 @@ const fact = (label, html) => html ? `<div class="fact"><dt>${esc(label)}</dt><d
  * Whether the Kundenakte opens with its systems: shut for a customer who takes bookete alone and has none written
  * down, as bookete needs no domain or hosting of theirs.
  */
-const showsSystems = (l, a) => customerOf(l)?.package !== "bookete" || [...SYSTEMS.flatMap(([k]) => [a.systems[k].what, a.systems[k].by]), a.systems.access].some(Boolean);
+const showsSystems = (l, a) => !customerOf(l) || packageOfLead(l) !== "bookete" || [...SYSTEMS.flatMap(([k]) => [a.systems[k].what, a.systems[k].by]), a.systems.access].some(Boolean);
 /** The Kundenakte on the lead page: their systems and who runs them, the people to reach besides the lead's own contact. */
 function accountHtml(l, offersMailto) {
   const a = accountOf(l);

@@ -15,3 +15,11 @@ export const isDate = (s) => typeof s === "string" && DATE_RE.test(s);
 export const dayLabel = (s) => s.split("-").reverse().join(".");
 /** The Monday of the week a day is in. */
 export const weekStart = (s) => addDays(s, -((parse(s).getDay() + 6) % 7));
+/** The same day `n` months on; past the end of a shorter month, its last day (31.01. + 1 month is 28.02. or 29.02.). */
+export function addMonths(date, n) {
+  const [y, m, d] = date.split("-").map(Number);
+  const first = new Date(y, m - 1 + n, 1, 12);
+  const last = new Date(first.getFullYear(), first.getMonth() + 1, 0, 12).getDate();
+  first.setDate(Math.min(d, last));
+  return toDateString(first);
+}

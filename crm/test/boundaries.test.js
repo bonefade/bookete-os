@@ -38,7 +38,7 @@ test("MCP exposes exactly these tools: no delete, no send", async () => {
   const { result } = await call(mcpContext(), "tools/list");
   assert.deepEqual(result.tools.map((t) => t.name).sort(), [
     "change_status", "create_gmail_draft", "create_lead", "get_lead", "list_templates",
-    "log_activity", "log_call", "meeting_outcome", "render_template", "search_leads", "set_follow_up", "update_account", "update_deal", "update_lead",
+    "log_activity", "log_call", "meeting_outcome", "render_template", "search_leads", "set_follow_up", "update_account", "update_lead", "update_order",
   ]);
 });
 
