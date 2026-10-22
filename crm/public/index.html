@@ -322,10 +322,9 @@ label.inline input{width:auto;margin:0}
 .checks .more{grid-column:2;justify-self:start;padding:0;min-height:0;margin-top:2px}
 .checks .early{grid-column:2;display:flex;gap:16px}
 .checks .early .more{grid-column:auto}
-/* a customer's care: who looks after it and its phase, above the onboarding in its groups */
+/* a customer's care: who looks after it and its phase, above its onboarding */
 .cust .owner{display:flex;align-items:center;gap:10px;margin:0 0 10px}
 .cust .owner select{flex:1;width:auto}
-.cust .steps-of{margin:12px 0 4px;font-size:.95rem;color:var(--muted);font-weight:600}
 .q-why.due{color:var(--due);font-weight:600}
 /* a business's todos: a tick, the text with its day, a bin; a line to add one */
 .tlist{list-style:none;margin:0 0 10px;padding:0}
@@ -338,6 +337,10 @@ label.inline input{width:auto;margin:0}
 .tlist .ttext{display:block;min-height:0;padding:0;border:none;background:transparent;text-align:left;font:inherit;color:inherit;cursor:text}
 .tlist li.edit{display:block}
 .tlist .bin{min-width:0;min-height:0;padding:0 8px;border:none;background:transparent;color:var(--muted);font-size:1.1rem}
+.checks small.tag,.tlist small.tag{display:inline;margin-left:4px;font-size:.75rem;font-weight:500;color:var(--muted)}
+.steps-edit .tlist li{grid-template-columns:minmax(0,1fr) 34px 34px 36px}
+.steps-edit .tlist li.done .ttext{color:var(--muted)}
+.steps-edit .tlist .more{min-width:0;min-height:0;padding:0;font-size:1rem}
 .tadd{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .tadd #tdText{flex:1 1 160px;width:auto}
 .tadd #tdDue{flex:0 1 150px;width:auto}

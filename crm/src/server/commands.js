@@ -3,7 +3,7 @@ import { LEAD_FIELDS } from "../domain/lead.js";
 import { IMPORT_CHUNK } from "../domain/backup.js";
 import { STAGES, LOST_REASONS, SPOKEN_REASONS, CALL_OUTCOMES } from "../domain/constants.js";
 import { SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
-import { ONBOARDING, PACKAGES, PHASES, CANCEL_REASONS, CHECK_IN_RESULTS } from "../domain/customer.js";
+import { PACKAGES, PHASES, CANCEL_REASONS, CHECK_IN_RESULTS } from "../domain/customer.js";
 import { HOSTING } from "../domain/deal.js";
 import { NOTE_MAX } from "../domain/notes.js";
 
@@ -36,9 +36,15 @@ const time = z.string().regex(/^\d{2}:\d{2}$/);
 const SpokenReason = z.enum(SPOKEN_REASONS);
 export const CallInput = z.object({ outcome: z.enum(CALL_OUTCOMES.map(([k]) => k)), day: date.optional(), date: date.optional(), time: time.optional(), reason: SpokenReason.optional(), note: z.string().max(2000).optional() }).strict();
 export const MeetingInput = z.object({ id, result: z.enum(["kunde", "kein-abschluss", "neuer-termin"]), reason: SpokenReason.optional(), date: date.optional(), time: time.optional() }).strict();
-// One change to a customer's care: a step done, open again or skipped; the package; the owner ("" for none); the phase; or a check-in.
+// One change to a customer's care: a step done, open again or skipped; a step added, removed, moved or edited; the
+// package; the owner ("" for none); the phase; or a check-in.
+const stepDue = z.union([date, z.literal("")]);
 const CustomerChange = z.union([
-  z.object({ id, step: z.enum(ONBOARDING.map(([k]) => k)), done: z.boolean().optional(), skip: z.string().max(200).optional() }).strict(),
+  z.object({ id, step: id, done: z.boolean().optional(), skip: z.string().max(200).optional() }).strict(),
+  z.object({ id, addStep: z.string().min(1).max(200), due: stepDue.optional() }).strict(),
+  z.object({ id, removeStep: id }).strict(),
+  z.object({ id, moveStep: id, up: z.boolean() }).strict(),
+  z.object({ id, editStep: id, title: z.string().min(1).max(200).optional(), due: stepDue.optional() }).strict().refine((c) => "title" in c || "due" in c, "Titel oder Datum"),
   z.object({ id, package: z.enum(PACKAGES.map(([k]) => k)) }).strict(),
   z.object({ id, owner: z.union([z.email().max(200), z.literal("")]) }).strict(),
   z.object({ id, phase: z.enum(PHASES.map(([k]) => k)), reason: z.enum(CANCEL_REASONS).optional() }).strict(),

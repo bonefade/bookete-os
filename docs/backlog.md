@@ -43,6 +43,7 @@ or overwriting data by mistake, not about outside access.
 - Rule gap: a public read contract (an MCP tool's output) changes in two steps, as stored data does; 1.25.0 changed `get_lead`'s `lead.notes` from text to a list in place (unenforced; found in the 1.25.0 review).
 - CRM: an open page does not notice a new release: nothing reloads it after a deploy, so a page of the release before keeps running against the new Worker (found in the 1.25.0 review).
 - Rule gap: drafts the web app keeps on the device (`crm.drafts`) are a stored format; each release reads those of the release before, or turns them into its own (unenforced; found in the 1.25.0 review).
+- Rule gap: a stored shape converted when read (`customerOf`, `accountOf`) is returned converted by every read path, MCP `get_lead` included; 1.29.0 first returned `lead.customer` as stored (unenforced; found in the 1.29.0 review, fixed there with a test).
 - CRM: a todo being changed that someone removed meanwhile loses what was typed (notes keep it since 1.25.0).
 - Rule gap: only `normalizeLead` decides a lead's invariants; a use case may tighten one but never loosen it. 1.24.0 first let a patch clearing `contactedAt` skip the back-to-Neu check (unenforced; found in the 1.24.0 review).
 - CRM: "Termine" in Diese Woche counts only appointments agreed on a call (`weekNumbers`, `crm/src/domain/stats.js`). One entered with "Termin eintragen" (1.18.2) logs no activity, so it is not counted; before 1.18.2 it was counted, but as a call.

@@ -251,7 +251,7 @@ test("the lead page shows the Kundenakte for Qualifiziert and Kunde, or once it 
   assert.match(form, /keine Passw\xF6rter/);
   assert.match(form, /name="contacts\.0\.name" type="text" value="Max Muster"/);
   // The domain has its "betreut von" like every system.
-  assert.match(form, /<select name="systems\.domain\.by"><option value="">\u2013<\/option><option value="c1" selected>Max Muster<\/option>/);
+  assert.match(form, /<select name="systems\.domain\.by"><option value="">\u2013<\/option><option value="betrieb">Betrieb selbst<\/option><option value="c1" selected>Max Muster<\/option>/);
   assert.deepEqual([...form.matchAll(/name="systems\.(\w+)\.what"/g)].map(([, k]) => k), ["domain", "dns", "website", "email"]);
   assert.ok(!/services\.|domainOwner|registrar|googleProfile/.test(form));
   assert.ok(!form.includes("<b>Anna"));
@@ -296,4 +296,25 @@ test("the Kundenakte form has its own address and reads back as the account it s
   // The untouched empty row and the row marked to remove are left out.
   assert.deepEqual(input.contacts, [{ id: "c1", name: "Max" }]);
   assert.deepEqual(input.systems, { domain: { what: "krone.at" }, access: "1Password", dns: { what: "Cloudflare", by: "" } });
+});
+
+test("\"betreut von\" can be the business itself: kept without a contact, shown as Betrieb selbst", async () => {
+  const s = setup();
+  const { store, uc } = s;
+  const id = await uc.addLead({ name: "Krone", status: "kunde" });
+  assert.equal(await saveFresh(s, id, { systems: { domain: { what: "krone.at, bei World4You", by: "betrieb" } } }), true);
+  // A contact list sent without it leaves the business running its domain.
+  assert.equal(await saveFresh(s, id, { contacts: [agency] }), true);
+  const l = await store.get("leads", id);
+  assert.equal(l.account.systems.domain.by, "betrieb");
+  const state = initialState();
+  state.data = { leads: [l], activities: [], templates: [], settings: [] };
+  state.status = { ...state.status, leads: true, activities: true };
+  state.ui = { ...state.ui, view: "detail", leadId: id };
+  assert.ok(detailView(state, "2026-10-15").includes("krone.at, bei World4You \xB7 betreut von Betrieb selbst"));
+});
+
+test("no contact takes the id \"betrieb\", which names the business itself", () => {
+  const a = normalizeAccount({ systems: { domain: { by: "betrieb" } }, contacts: [{ id: "betrieb", name: "Agentur" }] }, () => "c9");
+  assert.deepEqual([a.contacts[0].id, a.systems.domain.by], ["c9", "betrieb"]);
 });

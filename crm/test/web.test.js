@@ -1842,25 +1842,26 @@ test("a Kunde's page shows its care in place of the sales work: owner, phase and
   assert.match(page.split('class="sec cust"')[1], /data-phase="onboarding" aria-pressed="true">Onboarding</);
   assert.doesNotMatch(page, /Für das Gespräch|class="sec desk seq"/);
   assert.match(page, /<select id="kOwnerOf"><option value="">–<\/option><option value="jo@bookete.com" selected>jo \(ich\)<\/option><option value="anna@bookete.com">anna<\/option><\/select>/);
-  // The steps in groups, each with its count; a customer from before is bookete, so no website group.
-  const groups = (html) => [...html.matchAll(/<h4 class="steps-of">([^<]*)<small>([^<]*)<\/small><\/h4><ol class="card checks">([^]*?)<\/ol>/g)]
-    .map(([, name, count, list]) => [name.trim(), count, [...list.matchAll(/<li class="(\w+)"><b>([^<]*)<\/b>/g)].map(([, cls, b]) => cls + " " + b)]);
-  assert.deepEqual(groups(page), [
-    ["Allgemein", "1 von 4", ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo Account übergeben", "todo Live"]],
-    ["bookete", "0 von 4", ["todo bookete-Konto angelegt", "todo Widget auf der Website", "todo Google-Profil verknüpft", "todo Team eingeschult"]],
-  ]);
+  // The steps in the customer's order, one list with its count; a standard step of bookete says so. A customer from
+  // before is bookete, so no website steps.
+  const steps = (html) => {
+    const [, count, list] = html.match(/>Onboarding <small>([^<]*)<\/small> <button class="link" data-act="stepsEditToggle">Schritte bearbeiten<\/button><\/h3><ol class="card checks">([^]*?)<\/ol>/);
+    return [count, [...list.matchAll(/<li class="(\w+)"><b>(.*?)<\/b>/g)].map(([, cls, b]) => cls + " " + b.replace(/ <small class="tag">([^<]*)<\/small>/, " [$1]"))];
+  };
+  assert.deepEqual(steps(page), ["1 von 8", ["ok Vertrag unterschrieben", "now Abo abgeschlossen", "todo bookete-Konto angelegt [bookete]", "todo Widget auf der Website [bookete]", "todo Google-Profil verknüpft [bookete]", "todo Team eingeschult [bookete]", "todo Account übergeben", "todo Live"]]);
   // The package in the header, below the phase; not on the customer card.
   assert.match(page, /data-phase="gekuendigt" aria-pressed="false">Gekündigt<\/button><\/div><div class="chips phchips"><span class="note">Paket<\/span><button class="chip" data-package="bookete" aria-pressed="true">bookete<\/button><button class="chip" data-package="website" aria-pressed="false">Website<\/button><button class="chip" data-package="beides" aria-pressed="false">bookete \+ Website<\/button><\/div>/);
   assert.doesNotMatch(page.split('class="sec cust"')[1], /data-package=/);
-  // bookete + Website: the website's group too, and the count of all twelve.
+  // bookete + Website: the website's steps too, and the count of all twelve.
   const both = stateWith(KUNDEN.map((l) => l.id === "K1" ? { ...l, customer: { ...l.customer, package: "beides" } } : l), { leadId: "K1" });
   both.me = ME;
   const bothPage = detailView(both, TODAY);
-  assert.deepEqual(groups(bothPage).map(([name, count]) => name + " " + count), ["Allgemein 1 von 4", "bookete 0 von 4", "Website 0 von 4"]);
+  assert.equal(steps(bothPage)[0], "1 von 12");
+  assert.equal(steps(bothPage)[1].filter((s) => s.endsWith("[Website]")).length, 4);
   assert.match(bothPage, /data-phase="onboarding" aria-pressed="true">Onboarding 1\/12</);
   assert.match(page, /data-step="abo">Erledigt<\/button><button data-skip="abo">/);
   // A later step can be done or left out before the first open one; "Live" is never left out.
-  assert.match(page, /<li class="todo"><b>Widget auf der Website<\/b>[^]*?data-step="widget">Erledigt<\/button><button class="more" data-skip="widget">/);
+  assert.match(page, /<li class="todo"><b>Widget auf der Website <small class="tag">bookete<\/small><\/b>[^]*?data-step="widget">Erledigt<\/button><button class="more" data-skip="widget">/);
   assert.match(page, /<li class="todo"><b>Live<\/b>[^]*?data-step="live">Erledigt<\/button><\/span>/);
   assert.match(page, /data-step-undo="vertrag"/);
   // What it agreed on: empty fields to fill, saved by field when left.
@@ -1905,6 +1906,76 @@ test("on a Kunde's page a tick, the owner and a cancellation with its reason go 
     await click({ phase: "gekuendigt" });
     await click({ cancel: root.innerHTML.match(/data-cancel="([^"]+)"/)[1] });
     assert.deepEqual(sent, [["K1", { step: "abo" }], ["K1", { package: "website" }], ["K1", { owner: "anna@bookete.com" }], ["K1", { price: "300 \u20AC netto" }], ["K1", { hosting: "" }], ["K1", { phase: "gekuendigt", reason: "Preis" }]]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
+test("\"Schritte bearbeiten\" lists the steps to rename, move and remove, Live fixed last, and a new one to add", async () => {
+  const state = stateWith(KUNDEN, { leadId: "K1", stepsEdit: true });
+  state.me = ME;
+  const page = detailView(state, TODAY);
+  assert.match(page, /<button class="link" data-act="stepsEditToggle">Fertig<\/button>/);
+  assert.doesNotMatch(page, /<ol class="card checks">/);
+  // The first can't move up, the last before Live can't move down; Live has no buttons.
+  assert.match(page, /data-step-up="vertrag" aria-label="Nach oben" disabled>/);
+  assert.match(page, /data-step-down="uebergabe" aria-label="Nach unten" disabled>/);
+  assert.match(page, /<button class="ttext" data-step-edit="live">Live<small>Do\., 29\. Okt\.<\/small><\/button><\/li>/);
+  assert.match(page, /<input id="sdText" placeholder="Neuer Schritt …" value="" aria-label="Neuer Schritt">/);
+  // Tapping one opens its title and day; Live only its day.
+  state.ui.stepEdit = { id: "widget", title: "Widget auf der Website", due: "2026-10-19" };
+  assert.match(detailView(state, TODAY), /<input id="seTitle" value="Widget auf der Website" aria-label="Schritt"><input type="date" id="seDue" value="2026-10-19"/);
+  state.ui.stepEdit = { id: "live", title: "Live", due: "2026-10-29" };
+  assert.match(detailView(state, TODAY), /<span>Live<\/span><input type="date" id="seDue" value="2026-10-29"/);
+  // A step's id is escaped wherever it is drawn: one from an imported backup can be anything.
+  const odd = stateWith(KUNDEN.map((l) => l.id === "K1" ? { ...l, customer: { ...l.customer, steps: [{ id: '"><b>x</b>', title: "Seltsam", group: "", due: "", at: "2026-10-15", by: "jo" }, { id: '"><i>y</i>', title: "Offen", group: "", due: "", at: "", by: "" }, { id: "live", title: "Live", group: "allgemein", due: "", at: "", by: "" }] } } : l), { leadId: "K1" });
+  odd.me = ME;
+  for (const ui of [{}, { stepsEdit: true }]) {
+    Object.assign(odd.ui, ui);
+    assert.ok(!/<b>x<\/b>|<i>y<\/i>/.test(detailView(odd, TODAY)));
+  }
+  // A cancelled customer offers no editing.
+  state.ui.leadId = "K3";
+  assert.doesNotMatch(detailView(state, TODAY), /stepsEditToggle|data-step-up/);
+  // A step being changed, kept from earlier, opens the editing by itself; one of a step gone is dropped.
+  const kept = stateWith(KUNDEN, { leadId: "K1", stepEdit: { id: "widget", title: "Widget", due: "" } });
+  assert.match(detailView(kept, TODAY), /<input id="seTitle" value="Widget"/);
+  assert.deepEqual(unshownSheets(stateWith(KUNDEN, { leadId: "K1", stepEdit: { id: "weg", title: "x", due: "" } }), TODAY), { stepEdit: null });
+  assert.deepEqual(unshownSheets(stateWith(KUNDEN, { leadId: "K3", stepDraft: { text: "x" } }), TODAY), { stepDraft: null });
+});
+
+test("rearranging steps sends one change each: up, down, removed after a confirm when done, edited, added", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const sent = [];
+    const store = createStore(initialState());
+    store.data("leads", KUNDEN.map((l) => ({ ...LEAD_FIELDS, ...l })));
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    store.set((s) => ({ ...s, me: ME }));
+    const { root, click, change, input } = fakeBrowser("#/betrieb/K1", store, { changeCustomer: async (l, c) => (sent.push([l.id, c]), true) });
+    await click({ act: "stepsEditToggle" });
+    assert.match(root.innerHTML, /data-step-up="abo"/);
+    await click({ stepUp: "abo" });
+    await click({ stepDown: "abo" });
+    // Vertrag is done: removing it asks first; no, then yes.
+    globalThis.confirm = () => false;
+    await click({ stepRemove: "vertrag" });
+    globalThis.confirm = () => true;
+    await click({ stepRemove: "vertrag" });
+    await click({ stepEdit: "widget" });
+    await input("seTitle", "Widget eingebaut");
+    await change({ id: "seDue", value: "2026-10-21" });
+    await click({ act: "stepSave" });
+    await input("sdText", "Speisekarte fotografieren");
+    await change({ id: "sdDue", value: "2026-10-20" });
+    await click({ act: "stepAdd" });
+    // "Fertig" closes the editing.
+    await click({ act: "stepsEditToggle" });
+    assert.doesNotMatch(root.innerHTML, /data-step-up=/);
+    assert.deepEqual(sent, [
+      ["K1", { moveStep: "abo", up: true }], ["K1", { moveStep: "abo", up: false }], ["K1", { removeStep: "vertrag" }],
+      ["K1", { editStep: "widget", title: "Widget eingebaut", due: "2026-10-21" }], ["K1", { addStep: "Speisekarte fotografieren", due: "2026-10-20" }],
+    ]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }

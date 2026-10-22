@@ -11,9 +11,9 @@ import { fillTemplate, defaultTemplate, DEFAULT_SCRIPT } from '../domain/templat
 import { lastChannel } from '../domain/activity.js';
 import { relDate, actorName } from './format.js';
 import { PHASE_LABEL, PACKAGE_LABEL, customerOf } from '../domain/customer.js';
-import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, VISIT_NOTE } from './views.js';
+import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, stepsEditOpen, VISIT_NOTE } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "noteEditCancel", "logMenu", "visitOpen", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "stepsEditToggle", "stepEditCancel", "noteEditCancel", "logMenu", "visitOpen", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -53,14 +53,14 @@ const PHONE_LAYOUT = "(max-width:759px),(max-height:479px)";
 const FORM_VIEWS = new Set(["editLead", "editTemplate", "editAccount"]);
 /** A screen holding input not yet saved: search stays shut there, so that it cannot leave the screen by accident. */
 // The call sheet holds input once an outcome is picked: its fields show only then.
-const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.todoDraft?.text?.trim() || u.todoEdit || u.noteDraft?.trim() || u.noteEdit || u.meeting || u.contactPick || u.quick || u.icpEdit);
+const holdsInput = (u) => FORM_VIEWS.has(u.view) || !!(u.compose || u.editField || u.call?.outcome || u.termin || u.checkIn || u.todoDraft?.text?.trim() || u.todoEdit || u.stepDraft?.text?.trim() || u.stepEdit || u.noteDraft?.trim() || u.noteEdit || u.meeting || u.contactPick || u.quick || u.icpEdit);
 /**
  * What a lead page holds open and not yet saved: the composer, the sheets, a todo, a quick edit with what is typed
  * in it. It belongs to its lead until saved or cancelled: leaving the page keeps it in `ui.drafts` under the lead's
  * id, coming back opens it again, and the device keeps all of them (draftsOf), through a reload or the phone
  * dropping the page.
  */
-const DRAFT_KEYS = ["compose", "call", "termin", "meeting", "checkIn", "contactPick", "todoDraft", "todoEdit", "noteDraft", "noteEdit", "editField", "editDraft"];
+const DRAFT_KEYS = ["compose", "call", "termin", "meeting", "checkIn", "contactPick", "todoDraft", "todoEdit", "stepDraft", "stepEdit", "noteDraft", "noteEdit", "editField", "editDraft"];
 function draftOf(ui) {
   const open = DRAFT_KEYS.filter((k) => ui[k]);
   return open.length ? Object.fromEntries(open.map((k) => [k, ui[k]])) : null;
@@ -88,7 +88,7 @@ export function enterRoute(ui, route) {
     if (LEAD_VIEWS.has(ui.view) && ui.leadId) drafts[ui.leadId] = draftOf(ui);
     const opened = LEAD_VIEWS.has(route.view) && drafts[route.leadId];
     if (opened) delete drafts[route.leadId];
-    page = { ...Object.fromEntries(DRAFT_KEYS.map((k) => [k, null])), ...opened, drafts: Object.fromEntries(Object.entries(drafts).filter(([, d]) => d)), lostPick: false, cancelPick: false, todosDone: false, changes: null, expanded: new Set(), statusMenu: false, logMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false };
+    page = { ...Object.fromEntries(DRAFT_KEYS.map((k) => [k, null])), ...opened, drafts: Object.fromEntries(Object.entries(drafts).filter(([, d]) => d)), lostPick: false, cancelPick: false, todosDone: false, stepsEdit: false, changes: null, expanded: new Set(), statusMenu: false, logMenu: false, nextEdit: false, infoOpen: false, feed: "alle", changesOpen: false, later: false };
   }
   const next = { ...ui, ...route, quick: false, icpEdit: false, searchOpen: false, ...page };
   if (route.view) return next;
@@ -755,6 +755,30 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ todosDone: !S().ui.todosDone });
       render();
     },
+    /** "Fertig" closes the editing with what it holds unsaved; "Schritte bearbeiten" opens it. */
+    stepsEditToggle: () => {
+      ui(stepsEditOpen(S().ui) ? { stepsEdit: false, stepEdit: null, stepDraft: null } : { stepsEdit: true });
+      render();
+    },
+    async stepAdd() {
+      const { text = "", due = "" } = S().ui.stepDraft || {};
+      if (await run(() => uc.changeCustomer(currentLead(S()), { addStep: text, ...(due && { due }) }), "Schritt angelegt") !== undefined) {
+        ui({ stepDraft: null });
+        render();
+      }
+    },
+    async stepSave() {
+      const { id, title, due } = S().ui.stepEdit;
+      // Live keeps its name: only its day goes.
+      if (await run(() => uc.changeCustomer(currentLead(S()), { editStep: id, ...(id !== "live" && { title }), due }), "Gespeichert") !== undefined) {
+        ui({ stepEdit: null });
+        render();
+      }
+    },
+    stepEditCancel: () => {
+      ui({ stepEdit: null });
+      render();
+    },
     checkInOpen: () => {
       ui({ checkIn: {} });
       render();
@@ -900,7 +924,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const a = st.data.activities.find((x) => x.id === d.copy);
       return toast(a && copyText(a.text) ? "Kopiert" : "Kopieren nicht m\xF6glich");
     }
-    const writes = d.status || d.lost || d.todoDone || d.todoUndo || d.todoRemove || d.noteRemove || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.step || d.stepUndo || d.skip || d.cancel || d.phase && d.phase !== "gekuendigt" || d.act && !UI_ONLY_ACTIONS.has(d.act);
+    const writes = d.status || d.lost || d.todoDone || d.todoUndo || d.todoRemove || d.noteRemove || d.fu || d.later || d.undo || d.meeting || d.restore || d.purge || d.step || d.stepUndo || d.skip || d.stepUp || d.stepDown || d.stepRemove || d.cancel || d.phase && d.phase !== "gekuendigt" || d.act && !UI_ONLY_ACTIONS.has(d.act);
     if (writes && !uc) return toast("Keine Verbindung zur Datenbank");
     if (d.restore) return await run(() => uc.restoreLead(d.restore).then(() => true), "Wiederhergestellt") && loadTrash(st.ui.trashBefore);
     if (d.purge) {
@@ -960,6 +984,17 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (d.skip) {
       const why = prompt("Warum entf\xE4llt der Schritt? (optional)");
       return why === null ? undefined : run(() => uc.changeCustomer(lead, { step: d.skip, skip: why }), "Entf\xE4llt");
+    }
+    if (d.stepUp || d.stepDown) return run(() => uc.changeCustomer(lead, { moveStep: d.stepUp || d.stepDown, up: !!d.stepUp }), "Verschoben");
+    if (d.stepRemove) {
+      const step = customerOf(lead)?.steps.find((s) => s.id === d.stepRemove);
+      if (step?.at && !confirm(`\u201E${step.title}\u201C ist erledigt. Trotzdem l\xF6schen?`)) return;
+      return run(() => uc.changeCustomer(lead, { removeStep: d.stepRemove }), "Schritt gel\xF6scht");
+    }
+    if (d.stepEdit) {
+      const step = customerOf(lead)?.steps.find((s) => s.id === d.stepEdit);
+      ui({ stepEdit: step ? { id: step.id, title: step.title, due: step.due } : null });
+      return render();
     }
     if (d.package) return d.package === customerOf(lead)?.package ? undefined : run(() => uc.changeCustomer(lead, { package: d.package }), "Paket: " + PACKAGE_LABEL[d.package]);
     if (d.phase) {
@@ -1031,6 +1066,14 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     }
     if (t.id === "neText" && S().ui.noteEdit) return ui({ noteEdit: { ...S().ui.noteEdit, text: t.value } });
     if (t.id === "teText" && S().ui.todoEdit) return ui({ todoEdit: { ...S().ui.todoEdit, text: t.value } });
+    // A new step's title as typed; only its button follows it, so the field keeps its focus.
+    if (t.id === "sdText") {
+      ui({ stepDraft: { ...S().ui.stepDraft, text: t.value } });
+      const add = root.querySelector('[data-act="stepAdd"]');
+      if (add) add.disabled = !t.value.trim();
+      return lockForInput(S(), clock.today());
+    }
+    if (t.id === "seTitle" && S().ui.stepEdit) return ui({ stepEdit: { ...S().ui.stepEdit, title: t.value } });
     if (t.id === "cpText" && S().ui.contactPick) return ui({ contactPick: { ...S().ui.contactPick, text: t.value } });
     if (t.id === "ciNote" && S().ui.checkIn) return ui({ checkIn: { ...S().ui.checkIn, note: t.value } });
     if (t.id === "cSubj" && c) return ui({ compose: { ...c, subject: t.value } });
@@ -1065,6 +1108,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (t.id === "qe" && t.tagName === "SELECT") return saveQuickEdit();
     if (t.id === "teDue" && st.ui.todoEdit) return ui({ todoEdit: { ...st.ui.todoEdit, due: t.value } });
     if (t.id === "tdDue") return ui({ todoDraft: { ...st.ui.todoDraft, due: t.value } });
+    if (t.id === "seDue" && st.ui.stepEdit) return ui({ stepEdit: { ...st.ui.stepEdit, due: t.value } });
+    if (t.id === "sdDue") return ui({ stepDraft: { ...st.ui.stepDraft, due: t.value } });
     if (t.id === "ciNext" && st.ui.checkIn) return sheet("checkIn", { next: t.value });
     // A call entered later: its day, today unless picked; today itself is no day picked.
     if (t.id === "callDay" && st.ui.call) return sheet("call", { day: t.value && t.value !== clock.today() ? t.value : "" });

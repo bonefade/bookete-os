@@ -11,6 +11,8 @@ import { str, isEmail, addressKey } from './lead.js';
 /** Systems that someone runs: what it is (for the domain also whose it is and where it is registered), and the contact who looks after it. */
 export const SYSTEMS = [["domain", "Domain"], ["dns", "DNS"], ["website", "Website / Hosting"], ["email", "E-Mail"]];
 export const ACCOUNT_LIMIT = 50;
+/** "betreut von" the business itself, whose own contact is the lead's (person, email, phone), not one of the Kundenakte. */
+export const BY_BUSINESS = "betrieb";
 export const EMPTY_ACCOUNT = {
   systems: { ...Object.fromEntries(SYSTEMS.map(([k]) => [k, { what: "", by: "" }])), access: "" },
   contacts: [],
@@ -34,7 +36,8 @@ function list(items, field, newId, entry) {
  */
 export function normalizeAccount(input, newId) {
   const a = input || {};
-  const contacts = list(a.contacts, "contacts", newId, (c) => {
+  // "betrieb" names the business itself in "betreut von", so no contact takes it.
+  const contacts = list((Array.isArray(a.contacts) ? a.contacts : []).map((c) => c?.id === BY_BUSINESS ? { ...c, id: "" } : c), "contacts", newId, (c) => {
     const contact = { name: line(c.name, 200), company: line(c.company, 200), role: line(c.role, 200), handles: line(c.handles, 500), email: line(c.email, 200), phone: line(c.phone, 100), note: str(c.note, NOTE_MAX) };
     if (!contact.name) throw new ValidationError("contacts", "Kontakt ohne Namen");
     if (contact.email && !isEmail(contact.email)) throw new ValidationError("contacts", `E-Mail von ${contact.name} ung\xFCltig`);
@@ -43,7 +46,7 @@ export function normalizeAccount(input, newId) {
   const known = new Set(contacts.map((c) => c.id));
   const sys = a.systems || {};
   const systems = {
-    ...Object.fromEntries(SYSTEMS.map(([k]) => [k, { what: line(sys[k]?.what, 200), by: known.has(sys[k]?.by) ? sys[k].by : "" }])),
+    ...Object.fromEntries(SYSTEMS.map(([k]) => [k, { what: line(sys[k]?.what, 200), by: known.has(sys[k]?.by) || sys[k]?.by === BY_BUSINESS ? sys[k].by : "" }])),
     access: line(sys.access, 500),
   };
   return { systems, contacts };
@@ -67,7 +70,7 @@ export function mergeAccount(stored, parts) {
   const contacts = parts.contacts ?? stored.contacts;
   for (const [k, label] of SYSTEMS) {
     const by = stored.systems[k].by;
-    if (by && parts.systems?.[k]?.by === undefined && !contacts.some((c) => c.id === by)) {
+    if (by && by !== BY_BUSINESS && parts.systems?.[k]?.by === undefined && !contacts.some((c) => c.id === by)) {
       const name = stored.contacts.find((c) => c.id === by).name;
       throw new ValidationError("contacts", `${name} betreut ${label}, fehlt aber in den Kontakten: den Kontakt mit seiner id senden oder bei ${label} „betreut von“ angeben`);
     }

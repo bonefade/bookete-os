@@ -2,7 +2,7 @@ import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, planMeeting, mailActivityId, byTimeline, sameMail, hasSpoken } from "../domain/activity.js";
 import { normalizeLead, toolName, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
-import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isCareStep, careFromToday } from "../domain/customer.js";
+import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isCareStep, careFromToday, rearrangesSteps } from "../domain/customer.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount, accountPatch, ownContactIn } from "../domain/account.js";
 import { normalizeTodos, todosOf, todosAfter } from "../domain/todos.js";
@@ -86,8 +86,9 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
     if (customer && !next.optOutAt && !patch.followUp && !patch.nextStep) next = normalizeLead({ ...next, ...customerPlan(customer) }, l, today);
     // Kunde set back before any step was done was set by mistake: the care goes, so a real win later starts it anew,
     // and the step it planned goes too, so the lead shows it has no next step until a person plans one.
-    const dropped = l.status === "kunde" && next.status !== "kunde" && !!l.customer && !normalizeCustomer(l.customer).steps.length;
-    if (dropped && isCareStep(next.nextStep) && !("nextStep" in patch)) next = normalizeLead({ ...next, followUp: null, nextStep: "" }, l, today);
+    const care = l.customer && normalizeCustomer(l.customer);
+    const dropped = l.status === "kunde" && next.status !== "kunde" && !!care && !care.steps.some((s) => s.at);
+    if (dropped && isCareStep(next.nextStep, care) && !("nextStep" in patch)) next = normalizeLead({ ...next, followUp: null, nextStep: "" }, l, today);
     const activityOps = activity ? [{ type: "put", collection: "activities", id: activity.id, data: activity, trashed }] : [];
     if (isNew) return [...activityOps, { type: "put", collection: "leads", id: l.id, data: { ...l, ...next, ...(customer && { customer }), ...(noteEntries && { noteEntries }) } }];
     const diff = { ...changed(l, next), ...(customer && { customer }), ...(dropped && { customer: null }), ...(noteEntries && { noteEntries }) };
@@ -264,9 +265,9 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
     }),
     logActivity,
     /**
-     * One change to a Kunde's care (customerAfter): a step, the owner (one of the team), the phase or a check-in. Where the change
-     * plans the next step (carePlansNextStep), it is the open step; after an opt-out only its text, as a Kunde then has
-     * no follow-up. A care without a start day or, live, without a check-in day (a Kunde from before, or care stored
+     * One change to a Kunde's care (customerAfter): a step ticked or rearranged, the package, the owner (one of the
+     * team), the phase or a check-in. Where the change plans the next step (carePlansNextStep), it is the open step;
+     * after an opt-out only its text, as a Kunde then has no follow-up. A care without a start day or, live, without a check-in day (a Kunde from before, or care stored
      * by 1.20.0) gets them from the day of its first change (careFromToday).
      */
     changeCustomer: (id, change) => retrying(async () => {
@@ -275,12 +276,12 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
       const stored = customerOf(l);
       if (l.status !== "kunde" || !stored) throw new ValidationError("status", "Nur bei \u201EKunde\u201C");
       const before = careFromToday(stored, clock.today());
-      const customer = customerAfter(before, change, { by: actor, today: clock.today() });
-      const carePlanned = !l.nextStep || l.nextStep === "Antworten" || isCareStep(l.nextStep);
+      const customer = customerAfter(before, change, { by: actor, today: clock.today(), newId: ids.newId });
+      const carePlanned = !l.nextStep || l.nextStep === "Antworten" || isCareStep(l.nextStep, before);
       // A live customer's first check-in day, set by this change, is its next step too, unless a person planned one.
       const startsCheckIns = customer.phase === "live" && !!customer.nextCheckIn && !stored.nextCheckIn && carePlanned;
-      // A new package moves only a next step the care planned: a Termin or a Rückruf a person planned stays.
-      const replans = carePlansNextStep(before, customer, change) && (!("package" in change) || carePlanned);
+      // Rearranged steps move only a next step the care planned: a Termin or a Rückruf a person planned stays.
+      const replans = carePlansNextStep(before, customer, change) && (!rearrangesSteps(change) || carePlanned);
       const plan = replans || startsCheckIns ? customerPlan(customer) : {};
       if (l.optOutAt) delete plan.followUp;
       const diff = { ...changed(l, normalizeLead(plan, l, clock.today())), ...(JSON.stringify(customer) !== JSON.stringify(l.customer && normalizeCustomer(l.customer)) && { customer }) };

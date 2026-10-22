@@ -10,11 +10,11 @@ import { isPipeline, takesFollowUp, takesDate, isDue, lacksNextStep, getsUnsubsc
 import { lostBreakdown, templateUsage, weekNumbers } from '../domain/stats.js';
 import { callScript } from '../domain/template.js';
 import { REGIONS, regionOf } from '../domain/region.js';
-import { SYSTEMS, accountOf, showsAccount, handledBy } from '../domain/account.js';
+import { SYSTEMS, BY_BUSINESS, accountOf, showsAccount, handledBy } from '../domain/account.js';
 import { HOSTING, dealOf } from '../domain/deal.js';
 import { todosOf } from '../domain/todos.js';
 import { notesOf } from '../domain/notes.js';
-import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, PACKAGES, STEP_GROUPS, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, onboardingOf, attentionOf } from '../domain/customer.js';
+import { PHASES, PHASE_LABEL, CANCEL_REASONS, ONBOARDING, PACKAGES, STEP_GROUPS, CHECK_IN, CHECK_IN_RESULTS, RESULT_LABEL, customerOf, attentionOf } from '../domain/customer.js';
 
 export const ICONS = {
   heute: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
@@ -124,11 +124,8 @@ export function todayView(state, today) {
 /** The Leads status filter: [value, label, test]. Offen is the pipeline. */
 /** A customer's phase as chips, one tap each; `progress` names how far its onboarding is on the chip of its phase. */
 const phaseChips = (c, progress = false) => PHASES.map(([k, label]) => `<button class="chip${k === "gekuendigt" ? " lostc" : ""}" data-phase="${k}" aria-pressed="${c.phase === k}">${esc(progress && c.phase === k ? phaseText(c) : label)}</button>`).join("");
-/** How far a customer's onboarding is: "Onboarding 3/8", of the steps its package takes; or its phase. */
-const phaseText = (c) => {
-  const steps = onboardingOf(c);
-  return c.phase === "onboarding" ? `${PHASE_LABEL.onboarding} ${steps.filter((s) => s.at).length}/${steps.length}` : PHASE_LABEL[c.phase];
-};
+/** How far a customer's onboarding is: "Onboarding 3/8", of its own steps; or its phase. */
+const phaseText = (c) => c.phase === "onboarding" ? `${PHASE_LABEL.onboarding} ${c.steps.filter((s) => s.at).length}/${c.steps.length}` : PHASE_LABEL[c.phase];
 /**
  * The Kunden tab: every customer, by phase and by who looks after them; the next step due first, as Heute has it.
  * A row opens the customer's page.
@@ -323,13 +320,20 @@ export function quickField(l, f, editing, draft = null) {
 const toolList = (state) => `<datalist id="tools">${knownTools(state).map((t) => `<option value="${esc(t)}">`).join("")}</datalist>`;
 /** A quick edit's typed value is over what the field held then: if someone changed the field since, saving replaces that. */
 const changedMeanwhile = (l, key, draft) => draft && String(l[key] ?? "") !== draft.from ? `<p class="hint">Inzwischen ge\xE4ndert. Speichern ersetzt den neuen Stand.</p>` : "";
+/** Whether the steps show for editing: opened, or a step being changed or added is kept from earlier. */
+export const stepsEditOpen = (u) => u.stepsEdit || !!u.stepEdit || !!u.stepDraft?.text?.trim();
+/** The care whose steps a person can rearrange: a Kunde's, not cancelled. */
+const stepsEditable = (l) => {
+  const c = l.status === "kunde" ? customerOf(l) : null;
+  return c && c.phase !== "gekuendigt" ? c : null;
+};
 /** A lead the page offers a call for, with the call sheet: one in the pipeline, open to contact, not at its appointment. */
 const takesCall = (l, today) => isPipeline(l) && !l.optOutAt && !meetingDue(l, today);
 /**
  * What the lead page holds open but can no longer draw, as the lead changed since (the other user, or a draft kept
  * from earlier): a call or Termin sheet once it takes no call, the meeting's outcome once none is due, a check-in once
- * not live, the "Kontaktiert" question once not Neu, a todo being changed once done or gone. Closed, so no input
- * nobody sees keeps the tabs shut.
+ * not live, the "Kontaktiert" question once not Neu, a todo being changed once done or gone, a step being changed or
+ * added once gone or the customer cancelled. Closed, so no input nobody sees keeps the tabs shut.
  */
 export function unshownSheets(state, today) {
   const l = currentLead(state), u = state.ui;
@@ -343,6 +347,8 @@ export function unshownSheets(state, today) {
     // with a message picked: only a visit is logged here now.
     ...(u.contactPick && (l.optOutAt || (u.contactPick.channel ? u.contactPick.channel !== "Vor Ort" : l.status !== "neu")) && { contactPick: null }),
     ...(u.todoEdit && !todosOf(l).some((t) => t.id === u.todoEdit.id && !t.done) && { todoEdit: null }),
+    ...(u.stepEdit && !stepsEditable(l)?.steps.some((s) => s.id === u.stepEdit.id) && { stepEdit: null }),
+    ...(u.stepDraft && !stepsEditable(l) && { stepDraft: null }),
     // A note being changed that someone removed meanwhile: what was typed becomes a new note to save, not lost.
     ...(u.noteEdit && !notesOf(l).some((n) => n.id === u.noteEdit.id) && { noteEdit: null, noteDraft: u.noteDraft || u.noteEdit.text }),
     // Drafts kept by 1.24.0, when a note was the composer's "Notiz" or a quick edit of the notes text: a new note to save.
@@ -523,41 +529,64 @@ function nextStepHtml(l, acts, ui, today) {
     ${edit}`;
 }
 /**
- * A Kunde's care on its page: who looks after it, its phase (also in the header), the check-ins once live, and the
- * onboarding its package (picked in the header) takes as a checklist, in groups: every customer's steps, then bookete's and the
- * website's. The first open step (by due day, in any group)
+ * A Kunde's care on its page: who looks after it, its phase (also in the header), the check-ins once live, and its own
+ * onboarding as a checklist in its order, a standard step of bookete or the website tagged so. The first open step
  * stands out with its buttons, and every other open step can be done or left out before it; a done one can be opened
- * again. Gekündigt shows the steps as they stood. A step without a day
- * belongs to a customer from before whose care is not stored yet.
+ * again. "Schritte bearbeiten" lets a person add, rename, date, move and remove steps (stepsHtml). Gekündigt shows
+ * the steps as they stood. A step without a day was added without one, or belongs to a customer from before whose
+ * care is not stored yet.
  */
 function customerHtml(state, l, c, today) {
   const me = state.me?.email;
   const team = [...new Set([...(state.me?.team || []), c.owner].filter(Boolean))];
   const owner = `<label class="owner">Betreut von<select id="kOwnerOf">${options([["", "\u2013"], ...team.map((e) => [e, actorName(e) + (e === me ? " (ich)" : "")])], c.owner)}</select></label>`;
-  const steps = onboardingOf(c);
+  const steps = c.steps;
   // Steps can be ticked in every phase but Gekündigt: a customer from before, live already, ticks its list once.
   const open = c.phase !== "gekuendigt" ? steps.find((s) => !s.at) : null;
   const row = (s) => {
-    if (s.at) return `<li class="ok"><b>${esc(s.title)}${s.skipped ? " \xB7 entf\xE4llt" : ""}</b><small>${esc(fmtDate(s.at))} \xB7 ${esc(actorName(s.by))}${s.skipped && s.skipped !== "entf\xE4llt" ? " \xB7 " + esc(s.skipped) : ""}</small>${c.phase === "gekuendigt" ? "" : `<button class="more" data-step-undo="${s.id}">Wieder offen</button>`}</li>`;
+    if (s.at) return `<li class="ok"><b>${esc(s.title)}${s.skipped ? " \xB7 entf\xE4llt" : ""}${groupTag(s)}</b><small>${esc(fmtDate(s.at))} \xB7 ${esc(actorName(s.by))}${s.skipped && s.skipped !== "entf\xE4llt" ? " \xB7 " + esc(s.skipped) : ""}</small>${c.phase === "gekuendigt" ? "" : `<button class="more" data-step-undo="${esc(s.id)}">Wieder offen</button>`}</li>`;
     // Due days belong to the onboarding; once live, a step still open is no longer late.
     const late = c.phase === "onboarding" && s.due && s.due < today;
     const when = c.phase === "onboarding" && s.due ? `<small${late ? ' class="late"' : ""}>${late ? "f\xE4llig war " : ""}${esc(fmtDate(s.due))}</small>` : "";
-    if (s === open) return `<li class="now"><b>${esc(s.title)}</b>${when}<div class="two"><button class="primary" data-step="${s.id}">Erledigt</button>${s.id === "live" ? "" : `<button data-skip="${s.id}">Entf\xE4llt \u2026</button>`}</div></li>`;
+    if (s === open) return `<li class="now"><b>${esc(s.title)}${groupTag(s)}</b>${when}<div class="two"><button class="primary" data-step="${esc(s.id)}">Erledigt</button>${s.id === "live" ? "" : `<button data-skip="${esc(s.id)}">Entf\xE4llt \u2026</button>`}</div></li>`;
     // A later step can be done or left out before the first open one: the first open one stays the next step.
-    const early = c.phase === "gekuendigt" ? "" : `<span class="early"><button class="more" data-step="${s.id}">Erledigt</button>${s.id === "live" ? "" : `<button class="more" data-skip="${s.id}">Entf\xE4llt \u2026</button>`}</span>`;
-    return `<li class="todo"><b>${esc(s.title)}</b>${when}${early}</li>`;
+    const early = c.phase === "gekuendigt" ? "" : `<span class="early"><button class="more" data-step="${esc(s.id)}">Erledigt</button>${s.id === "live" ? "" : `<button class="more" data-skip="${esc(s.id)}">Entf\xE4llt \u2026</button>`}</span>`;
+    return `<li class="todo"><b>${esc(s.title)}${groupTag(s)}</b>${when}${early}</li>`;
   };
-  const groups = STEP_GROUPS.map(([g, label]) => [label, steps.filter((s) => s.group === g)]).filter(([, of]) => of.length)
-    .map(([label, of]) => `<h4 class="steps-of">${esc(label)} <small>${of.filter((s) => s.at).length} von ${of.length}</small></h4><ol class="card checks">${of.map(row).join("")}</ol>`).join("");
-  const where = c.phase === "gekuendigt" ? ` \xB7 ${esc(c.cancelReason)}` : c.phase === "live" && c.liveAt ? ` seit ${esc(fmtDate(c.liveAt))}` : ` \xB7 Tag ${c.since ? Math.max(0, daysBetween(c.since, today)) : 0} von ${ONBOARDING.at(-1)[2]}`;
+  // The onboarding runs to the day Live is due; the standard length for a customer whose steps have no days yet.
+  const live = steps.at(-1);
+  const days = c.since && live.due ? Math.max(0, daysBetween(c.since, live.due)) : ONBOARDING.at(-1)[2];
+  const where = c.phase === "gekuendigt" ? ` \xB7 ${esc(c.cancelReason)}` : c.phase === "live" && c.liveAt ? ` seit ${esc(fmtDate(c.liveAt))}` : ` \xB7 Tag ${c.since ? Math.max(0, daysBetween(c.since, today)) : 0} von ${days}`;
   const att = attentionOf(c, today);
-  const onboarding = `<h3 style="margin-top:14px">Onboarding <small>${steps.filter((s) => s.at).length} von ${steps.length}</small></h3>${groups}`;
+  const editing = stepsEditOpen(state.ui) && c.phase !== "gekuendigt";
+  const edit = c.phase === "gekuendigt" ? "" : `<button class="link" data-act="stepsEditToggle">${editing ? "Fertig" : "Schritte bearbeiten"}</button>`;
+  const onboarding = `<h3 style="margin-top:14px">Onboarding <small>${steps.filter((s) => s.at).length} von ${steps.length}</small> ${edit}</h3>${editing ? stepsHtml(c, state.ui) : `<ol class="card checks">${steps.map(row).join("")}</ol>`}`;
   // Live: the check-ins first, the onboarding as it stood below them.
   return `<div class="sec cust"><h3>Kunde <small>${esc(PHASE_LABEL[c.phase])}${where}</small></h3>
     ${att ? `<p class="att-line">Achtung: ${esc(att)}</p>` : ""}
     <div class="card">${owner}<div class="chips">${phaseChips(c)}</div></div>
     ${dealHtml(l)}
     ${c.phase === "live" ? checkInsHtml(c, state.ui.checkIn, today) + onboarding : onboarding}</div>`;
+}
+/** A standard step of bookete or the website says so; the general ones and those a person added need no tag. */
+const groupTag = (s) => s.group && s.group !== "allgemein" ? ` <small class="tag">${esc(STEP_GROUPS.find(([g]) => g === s.group)[1])}</small>` : "";
+/**
+ * The steps to rearrange: each can be renamed or given another day (tap it), moved up or down, or removed; a new one
+ * goes in before Live. Live stays last, keeps its name and is never removed, but its day can change.
+ */
+function stepsHtml(c, ui) {
+  const draft = ui.stepDraft || {};
+  const editing = ui.stepEdit && c.steps.find((s) => s.id === ui.stepEdit.id) ? ui.stepEdit : null;
+  const last = c.steps.length - 2;
+  const row = (s, i) => {
+    const live = s.id === "live";
+    if (editing?.id === s.id) return `<li class="edit"><div class="tadd">${live ? `<span>${esc(s.title)}</span>` : `<input id="seTitle" value="${esc(editing.title)}" aria-label="Schritt">`}<input type="date" id="seDue" value="${esc(editing.due)}" aria-label="F\xE4llig am"></div><div class="two" style="margin-top:6px"><button data-act="stepEditCancel">Abbrechen</button><button class="primary" data-act="stepSave">Speichern</button></div></li>`;
+    const moves = live ? "" : `<button class="more" data-step-up="${esc(s.id)}" aria-label="Nach oben"${i === 0 ? " disabled" : ""}>\u2191</button><button class="more" data-step-down="${esc(s.id)}" aria-label="Nach unten"${i === last ? " disabled" : ""}>\u2193</button><button class="bin" data-step-remove="${esc(s.id)}" aria-label="Schritt l\xF6schen">\xD7</button>`;
+    return `<li${s.at ? ' class="done"' : ""}><button class="ttext" data-step-edit="${esc(s.id)}">${esc(s.title)}${groupTag(s)}${s.due ? `<small>${esc(fmtDate(s.due))}</small>` : ""}</button>${moves}</li>`;
+  };
+  return `<div class="card steps-edit"><ul class="tlist">${c.steps.map(row).join("")}</ul>
+    <div class="tadd"><input id="sdText" placeholder="Neuer Schritt \u2026" value="${esc(draft.text || "")}" aria-label="Neuer Schritt"><input type="date" id="sdDue" value="${esc(draft.due || "")}" aria-label="F\xE4llig am"><button class="primary" data-act="stepAdd"${(draft.text || "").trim() ? "" : " disabled"}>+</button></div>
+    <p class="hint">Neue Schritte kommen vor \u201ELive\u201C. Antippen \xE4ndert Name und Datum.</p></div>`;
 }
 /** What the customer agreed on beyond its package: each field saves when it is left (data-deal). */
 function dealHtml(l) {
@@ -818,7 +847,7 @@ const showsSystems = (l, a) => customerOf(l)?.package !== "bookete" || [...SYSTE
 /** The Kundenakte on the lead page: their systems and who runs them, the people to reach besides the lead's own contact. */
 function accountHtml(l, offersMailto) {
   const a = accountOf(l);
-  const who = Object.fromEntries(a.contacts.map((c) => [c.id, c.name]));
+  const who = { [BY_BUSINESS]: "Betrieb selbst", ...Object.fromEntries(a.contacts.map((c) => [c.id, c.name])) };
   const sys = a.systems;
   const systems = [
     ...SYSTEMS.map(([k, label]) => {
@@ -847,13 +876,13 @@ export function accountEditView(state) {
   const a = accountOf(l);
   const note = (name, v) => `<label>Notiz<textarea name="${name}" rows="3">${esc(v || "")}</textarea></label>`;
   const drop = (name, id) => id ? `<label class="drop"><input type="checkbox" name="${name}.drop" value="1"> Entfernen</label>` : "";
-  const people = [["", "\u2013"], ...a.contacts.map((c) => [c.id, c.name])];
+  const people = [["", "\u2013"], [BY_BUSINESS, "Betrieb selbst"], ...a.contacts.map((c) => [c.id, c.name])];
   const sys = a.systems;
   const hint = { domain: "z. B. krone.at, geh\xF6rt dem Kunden, bei World4You", website: "z. B. WordPress bei der Agentur" };
   const systems = `<div class="card">
     ${SYSTEMS.map(([k, label]) => `<div class="two">${textField(`systems.${k}.what`, sys[k].what, label, "text", hint[k] || "")}<label>betreut von<select name="systems.${k}.by">${options(people, sys[k].by || "")}</select></label></div>`).join("")}
     ${textField("systems.access", sys.access, "Wo liegen die Zug\xE4nge? (keine Passw\xF6rter)", "text", "z. B. 1Password, Tresor Kunden")}
-    <p class="hint">\u201Ebetreut von\u201C w\xE4hlt aus den gespeicherten Kontakten. Einen neuen Kontakt erst sichern.</p></div>`;
+    <p class="hint">\u201Ebetreut von\u201C w\xE4hlt den Betrieb selbst oder einen gespeicherten Kontakt. Einen neuen Kontakt erst sichern.</p></div>`;
   const contacts = [...a.contacts, {}].map((c, i) => `<div class="card"><input type="hidden" name="contacts.${i}.id" value="${esc(c.id || "")}">
     <div class="two">${textField(`contacts.${i}.name`, c.name, "Name")}${textField(`contacts.${i}.company`, c.company, "Firma", "text", "z. B. Webagentur")}</div>
     <div class="two">${textField(`contacts.${i}.role`, c.role, "Rolle", "text", "Agentur, IT, Fotograf")}${textField(`contacts.${i}.handles`, c.handles, "K\xFCmmert sich um", "text", "Domain, Website")}</div>

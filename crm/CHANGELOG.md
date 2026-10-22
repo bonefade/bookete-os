@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.29.0 (2026-10-22)
+
+- **Each customer's own onboarding steps:** "Schritte bearbeiten" on a customer's page lets you add a step (with a day or none), rename one, change its day, move it up or down, or remove it. New steps go in before "Live", which stays last. The steps show as one list in the customer's order; the bookete and website steps carry a small tag. A new customer still starts with the standard steps of its package, and the customers you have keep their steps and ticks.
+- **"Betrieb selbst" in "betreut von":** when the restaurant runs its domain, DNS, website or e-mail itself, pick "Betrieb selbst" in the Kundenakte.
+
 ## 1.28.1 (2026-10-21)
 
 - **Each person once:** the Kundenakte lists "Weitere Kontakte", the agency, IT and the like. The business's own contact stays in the Kontakt box beside it, where calls and mail take it from, and the Kundenakte no longer takes a contact with the business's own email or phone. The customers that had their owner in both now have them once.
