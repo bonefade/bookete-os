@@ -98,6 +98,21 @@ test("the Kundenakte is saved on the lead: guarded, in its history, and only the
   assert.deepEqual(describeChange(last), ["Kundenakte ge\xE4ndert"]);
 });
 
+test("the business's own contact stays in the lead's fields: a Kundenakte contact with its address or number is refused", async () => {
+  const s = setup();
+  const { store, uc } = s;
+  const id = await uc.addLead({ name: "Luderbauer", status: "kunde", person: "Familie Schwarz", email: "gasthaus@luderbauer.at", phone: "+43 316 253410" });
+  for (const own of [{ name: "Familie Schwarz", email: "Gasthaus@Luderbauer.at" }, { name: "Familie Schwarz", phone: "+43 316 25 34 10" }, { name: "Familie Schwarz", phone: "0316 253410" }]) {
+    await assert.rejects(saveFresh(s, id, { contacts: [agency, own] }), (e) => e instanceof ValidationError && e.field === "contacts" && /Familie Schwarz/.test(e.message));
+  }
+  assert.equal((await store.get("leads", id)).account, undefined);
+  assert.equal(await saveFresh(s, id, { contacts: [agency] }), true);
+  // A contact already stored never blocks the save: the lead's phone may come to match it later, or it is from before.
+  const [stored] = (await store.get("leads", id)).account.contacts;
+  await uc.updateLead(id, { email: "max@x.at" });
+  assert.equal(await saveFresh(s, id, { systems: { domain: { what: "luderbauer.at", by: stored.id } } }), true);
+});
+
 test("a form saved over a Kundenakte someone changed since it opened is refused, not merged", async () => {
   const s = setup();
   const { store, uc } = s;

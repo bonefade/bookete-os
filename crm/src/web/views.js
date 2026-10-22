@@ -815,7 +815,7 @@ const fact = (label, html) => html ? `<div class="fact"><dt>${esc(label)}</dt><d
  * down, as bookete needs no domain or hosting of theirs.
  */
 const showsSystems = (l, a) => customerOf(l)?.package !== "bookete" || [...SYSTEMS.flatMap(([k]) => [a.systems[k].what, a.systems[k].by]), a.systems.access].some(Boolean);
-/** The Kundenakte on the lead page: their systems and who runs them, the people to reach. */
+/** The Kundenakte on the lead page: their systems and who runs them, the people to reach besides the lead's own contact. */
 function accountHtml(l, offersMailto) {
   const a = accountOf(l);
   const who = Object.fromEntries(a.contacts.map((c) => [c.id, c.name]));
@@ -835,7 +835,7 @@ function accountHtml(l, offersMailto) {
   const body = (html, empty) => html ? `<dl class="facts" style="padding:0">${html}</dl>` : `<p class="note">${empty}</p>`;
   return `<div class="sec"><h3>Kundenakte <button class="link" data-act="accountEdit">Bearbeiten</button></h3><div class="card account">
     <details${showsSystems(l, a) ? " open" : ""}><summary><h4>Systeme</h4></summary>${body(systems, "Noch nichts zu Domain, Website oder E-Mail.")}</details>
-    <h4>Kontakte</h4>${body(contacts, "Noch keine Kontakte, etwa die Agentur.")}
+    <h4>Weitere Kontakte</h4>${body(contacts, "Noch keine, etwa die Agentur. Die Ansprechperson des Betriebs steht unter Kontakt.")}
   </div></div>`;
 }
 /** A labelled one-line field of a form. */
@@ -856,14 +856,14 @@ export function accountEditView(state) {
     <p class="hint">\u201Ebetreut von\u201C w\xE4hlt aus den gespeicherten Kontakten. Einen neuen Kontakt erst sichern.</p></div>`;
   const contacts = [...a.contacts, {}].map((c, i) => `<div class="card"><input type="hidden" name="contacts.${i}.id" value="${esc(c.id || "")}">
     <div class="two">${textField(`contacts.${i}.name`, c.name, "Name")}${textField(`contacts.${i}.company`, c.company, "Firma", "text", "z. B. Webagentur")}</div>
-    <div class="two">${textField(`contacts.${i}.role`, c.role, "Rolle", "text", "Inhaberin, Agentur, IT")}${textField(`contacts.${i}.handles`, c.handles, "K\xFCmmert sich um", "text", "Domain, Website")}</div>
+    <div class="two">${textField(`contacts.${i}.role`, c.role, "Rolle", "text", "Agentur, IT, Fotograf")}${textField(`contacts.${i}.handles`, c.handles, "K\xFCmmert sich um", "text", "Domain, Website")}</div>
     <div class="two">${textField(`contacts.${i}.email`, c.email, "E-Mail", "email")}${textField(`contacts.${i}.phone`, c.phone, "Telefon", "tel")}</div>
     ${note(`contacts.${i}.note`, c.note)}${drop(`contacts.${i}`, c.id)}</div>`).join("");
   return `<div class="bar"><button class="link" data-act="back">Abbrechen</button><h2>Kundenakte</h2><button class="link" data-act="accountSave">Sichern</button></div>
 <form class="wrap" id="aform"><input type="hidden" name="before" value="${esc(JSON.stringify(a))}">
   <p class="note">${esc(l.name)}</p>
   <details class="sec"${showsSystems(l, a) ? " open" : ""}><summary><h3>Systeme</h3></summary>${systems}</details>
-  <div class="sec"><h3>Kontakte</h3>${contacts}</div>
+  <div class="sec"><h3>Weitere Kontakte</h3><p class="note">Agentur, IT und andere. Die Ansprechperson des Betriebs steht unter Kontakt, nicht hier.</p>${contacts}</div>
 </form>`;
 }
 export function leadEditView(state) {

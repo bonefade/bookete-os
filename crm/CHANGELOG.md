@@ -2,6 +2,10 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.28.1 (2026-10-21)
+
+- **Each person once:** the Kundenakte lists "Weitere Kontakte", the agency, IT and the like. The business's own contact stays in the Kontakt box beside it, where calls and mail take it from, and the Kundenakte no longer takes a contact with the business's own email or phone. The customers that had their owner in both now have them once.
+
 ## 1.28.0 (2026-10-20)
 
 - **Vereinbarung on a customer's page:** what they agreed on beyond the package, in four fields: Preis (free text, e.g. "300 € netto einmalig"), Hosting (Care or selbst), Vertrag vom (a day) and Sonstiges (one line). Each saves when you leave the field. Agents can read and write it too, so a deal noted in a conversation lands in one place instead of a note. Only customers take one; it stays if a customer is set back and shows again when won again.

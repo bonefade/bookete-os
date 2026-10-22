@@ -62,7 +62,7 @@ test("a Kundenakte contact's address opens no mail where an opt-out closes it, a
   state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
   state.caps = { db: true, gmail: false };
   state.ui = { ...state.ui, leadId: "L1" };
-  const contacts = () => detailView(state, today).split("<h4>Kontakte</h4>")[1].split('<div class="l-feed">')[0];
+  const contacts = () => detailView(state, today).split("<h4>Weitere Kontakte</h4>")[1].split('<div class="l-feed">')[0];
   const mailsTo = (address) => contacts().includes(`href="mailto:${address}"`);
   assert.deepEqual(["Info@Krone.at", "office@blau.at", "max@gruen.at"].map(mailsTo), [true, true, false]);
   assert.match(contacts(), /<b>Max Grün<\/b><br>max@gruen\.at/);
@@ -158,7 +158,7 @@ test("with Gmail connected, a Kundenakte contact at the lead's own address opens
   state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
   state.caps = { db: true, gmail: true };
   state.ui = { ...state.ui, leadId: "L1" };
-  const contacts = () => detailView(state, today).split("<h4>Kontakte</h4>")[1].split('<div class="l-feed">')[0];
+  const contacts = () => detailView(state, today).split("<h4>Weitere Kontakte</h4>")[1].split('<div class="l-feed">')[0];
   const mailsTo = (address) => contacts().includes(`href="mailto:${address}"`);
   assert.deepEqual(["K@Example.at", "office@blau.at"].map(mailsTo), [false, true]);
   assert.match(contacts(), /<b>Anna Wirt<\/b><br>K@Example\.at/);

@@ -1,5 +1,5 @@
 import { ValidationError } from './errors.js';
-import { str, isEmail } from './lead.js';
+import { str, isEmail, addressKey } from './lead.js';
 
 /**
  * The Kundenakte: the systems a business runs, who looks after them, and the people to reach. What we deliver is the
@@ -82,6 +82,18 @@ export function mergeAccount(stored, parts) {
 export function accountPatch(stored, account) {
   const gone = (from, to) => Object.fromEntries(Object.keys(from || {}).filter((k) => !(k in to)).map((k) => [k, null]));
   return { ...gone(stored, account), ...account, systems: { ...gone(stored?.systems, account.systems), ...account.systems } };
+}
+
+/**
+ * A contact this write adds or changes that holds the business's own email or phone, if one does: that is the
+ * business's own contact, which lives in the lead's fields (person, email, phone), so the Kundenakte keeps only the
+ * people besides it. A contact stored as it is never counts, so one from before, or one the lead's own fields came to
+ * match later, never blocks an unrelated save.
+ */
+const national = (phone) => String(phone || "").replace(/\D/g, "").replace(/^(00)?43/, "").replace(/^0/, "");
+export function ownContactIn(account, stored, lead) {
+  const kept = new Set(stored.contacts.map((c) => JSON.stringify(c)));
+  return account.contacts.find((c) => !kept.has(JSON.stringify(c)) && ((c.email && addressKey(c.email) === addressKey(lead.email)) || (national(c.phone) && national(c.phone) === national(lead.phone))));
 }
 
 /** The systems a contact looks after, by label. */

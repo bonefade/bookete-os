@@ -4,7 +4,7 @@ import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity,
 import { normalizeLead, toolName, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
 import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isCareStep, careFromToday } from "../domain/customer.js";
 import { normalizeTemplate } from "../domain/template.js";
-import { normalizeAccount, accountOf, mergeAccount, accountPatch } from "../domain/account.js";
+import { normalizeAccount, accountOf, mergeAccount, accountPatch, ownContactIn } from "../domain/account.js";
 import { normalizeTodos, todosOf, todosAfter } from "../domain/todos.js";
 import { normalizeDeal, dealOf, dealAfter } from "../domain/deal.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
@@ -246,7 +246,8 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
     /**
      * Changes the given parts of a lead's Kundenakte. `before` is the Kundenakte as a form or an agent read it ({} for
      * none): if it changed since, nothing is saved, so a writer can never undo someone else's entry. Both sides are
-     * compared in today's shape, so a Kundenakte stored before a part was added still saves. Says whether anything changed.
+     * compared in today's shape, so a Kundenakte stored before a part was added still saves. A contact added or changed
+     * with the business's own email or phone is refused: that one is the lead's. Says whether anything changed.
      */
     saveAccount: (id, parts, before) => retrying(async () => {
       const l = await lead(id);
@@ -256,6 +257,8 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
       }
       const account = normalizeAccount(mergeAccount(stored, parts), ids.newId);
       if (JSON.stringify(account) === JSON.stringify(stored)) return false;
+      const own = ownContactIn(account, stored, l);
+      if (own) throw new ValidationError("contacts", `${own.name} hat die E-Mail oder Telefonnummer des Betriebs: die steht unter Kontakt, nicht in der Kundenakte`);
       await commit([patchOp(l, { account: accountPatch(l.account, account) })]);
       return true;
     }),
