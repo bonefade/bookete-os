@@ -1926,6 +1926,22 @@ test("on a Kunde's page a tick, the owner and a cancellation with its reason go 
   }
 });
 
+test("on a Kontakt's page the owner picked is one field written", async () => {
+  const saved = ["history", "location", "window", "document", "confirm"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  try {
+    const sent = [];
+    const store = createStore(initialState());
+    store.data("leads", [{ ...LEAD_FIELDS, id: "K9", kind: "kontakt", name: "Blue Bomb", status: null, owner: "jo@bookete.com" }]);
+    for (const c of ["activities", "templates", "settings"]) store.data(c, []);
+    store.set((s) => ({ ...s, me: ME }));
+    const { change } = fakeBrowser("#/kontakt/K9", store, { updateField: async (l, key, value) => (sent.push([l.id, key, value]), true) });
+    await change({ id: "cOwnerOf", value: "anna@bookete.com" });
+    assert.deepEqual(sent, [["K9", "owner", "anna@bookete.com"]]);
+  } finally {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  }
+});
+
 test("\"Schritte bearbeiten\" lists the steps to rename, move and remove, Live fixed last, and a new one to add", async () => {
   const state = stateWith(KUNDEN, { leadId: "K1", stepsEdit: true });
   state.me = ME;

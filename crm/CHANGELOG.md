@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.32.0 (2026-10-23)
+
+- **Kontakte as a table:** every row has the same columns, each starting at the left: Name, Art, Thema · Firma, Telefon, E-Mail and Betreut von, with headings on a laptop. On a phone the name, Art and owner come first, the rest below.
+- **Betreut von on a Kontakt:** a Kontakt is looked after by whoever makes it; pick someone else or nobody on its page. In Kontakte, the people at a customer show the customer's "Betreut von".
+
 ## 1.31.0 (2026-10-23)
 
 - **Kontakte:** a new tab for the people and partners beside the restaurants: Blue Bomb for the partner programme, Martin Satke for Skal, anyone around bookete or Tischrunde. "+ Neu" makes a Kontakt with a name and a Thema (e.g. "Partnerprogramm", "Skal Steiermark"). It has notes, todos, a next step with a day that shows in Heute, and the people working there under "Personen". It has no status, no opt-out and no sales sequence, and it stays out of Leads, the call list and the week's numbers.

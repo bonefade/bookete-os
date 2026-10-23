@@ -167,7 +167,9 @@ export function kontakteView(state, today) {
   const list = all.filter((r) => ofKind(r) && ofTopic(r) && typed(r));
   const kinds = [["alle", "Alle"], ["kontakt", "Kontakte"], ["betrieb", "Bei Betrieben"]].map(([k, label]) => [k, label, all.filter((r) => ofTopic(r) && ofKind(r, k)).length]);
   const topics = [["alle", "Alle Themen"], ...knownTopics(state).map((t) => [t, t])].map(([k, label]) => [k, label, all.filter((r) => ofKind(r) && ofTopic(r, k)).length]);
-  const row = (r) => `<li><button class="qrow" data-open="${esc(r.lead.id)}"><span class="q-name">${esc(r.name)}</span><span class="q-ch">${esc(isContact(r.lead) ? "Kontakt" : "Betrieb")}</span><span class="q-why">${esc(r.line)}</span><span class="q-go">${esc([r.phone, r.email].filter(Boolean).join(" \xB7 "))} ›</span></button></li>`;
+  // A table: the same columns in every row, each cell starting where its heading does.
+  const head = `<li class="khead" aria-hidden="true"><span>${FIELD_LABEL.name}</span><span>Art</span><span>${FIELD_LABEL.topic} \xB7 Firma</span><span>${FIELD_LABEL.phone}</span><span>${FIELD_LABEL.email}</span><span>${FIELD_LABEL.owner}</span></li>`;
+  const row = (r) => `<li><button class="krow" data-open="${esc(r.lead.id)}"><span class="k-name">${esc(r.name)}</span><span class="k-kind">${esc(isContact(r.lead) ? "Kontakt" : "Betrieb")}</span><span class="k-line">${esc(r.line)}</span><span class="k-phone">${esc(r.phone)}</span><span class="k-mail">${esc(r.email)}</span><span class="k-owner">${esc(r.owner ? actorName(r.owner) : "\u2013")}</span></button></li>`;
   const quickForm = quick ? `<div class="card" style="margin-bottom:12px">
     <label>${FIELD_LABEL.name} * <small>Organisation oder Person</small><input id="qaName" autocomplete="off" value="${esc(quick.name)}"></label>
     <label>${FIELD_LABEL.topic}<input id="qaTopic" list="topics" maxlength="${TOPIC_MAX}" autocomplete="off" placeholder="z. B. Partnerprogramm" value="${esc(quick.topic)}"></label>${topicList(state)}
@@ -176,7 +178,7 @@ export function kontakteView(state, today) {
   <div class="head"><div><h1>Kontakte</h1><p>${state.data.leads.filter(isContact).length} Kontakte \xB7 ${all.length} Eintr\xE4ge</p></div><button class="primary" data-act="quick"${state.caps.db ? "" : " disabled"}>+ Neu</button></div>
   ${quickForm}
   <div class="toolbar">${filterSelect("cKind", "Art", kinds, cKind)}${filterSelect("cTopic", FIELD_LABEL.topic, topics, cTopic)}<input type="search" id="cq" placeholder="Liste filtern \u2026" value="${esc(cq)}" aria-label="Liste filtern"></div>
-  ${loadingOr(state, list.length ? `<ul class="ltable">${list.map(row).join("")}</ul>` : `<div class="empty">${all.length ? "Niemand in dieser Ansicht." : "Noch keine Kontakte. Partner, Verb\xE4nde und Leute rund um bookete legen Sie mit \u201E+ Neu\u201C an."}</div>`)}
+  ${loadingOr(state, list.length ? `<ul class="ltable">${head}${list.map(row).join("")}</ul>` : `<div class="empty">${all.length ? "Niemand in dieser Ansicht." : "Noch keine Kontakte. Partner, Verb\xE4nde und Leute rund um bookete legen Sie mit \u201E+ Neu\u201C an."}</div>`)}
 </div>`;
 }
 /** The Themen a typed one is suggested from (knownTopics), for the inputs that name `list="topics"`. */
@@ -555,9 +557,9 @@ function statusMenuHtml(l, acts, today) {
  * After an opt-out only Kunde and Disqualifiziert can be set, as the server holds. A Kunde has its phase beside it and,
  * unless cancelled, its package as its Aufträge give it.
  */
-function statusChipsHtml(l, customer, ui) {
-  // A Kontakt has no status: it says what it is, and its Thema.
-  if (isContact(l)) return `<div class="chips stchips"><span class="note"><b>Kontakt</b>${l.topic ? " \xB7 " + esc(l.topic) : ""}</span></div>`;
+function statusChipsHtml(state, l, customer, ui) {
+  // A Kontakt has no status: it says what it is, its Thema, and who looks after it.
+  if (isContact(l)) return `<div class="chips stchips"><span class="note"><b>Kontakt</b>${l.topic ? " \xB7 " + esc(l.topic) : ""}</span></div>${ownerPick(state, "cOwnerOf", l.owner)}`;
   const lost = l.status === "disqualifiziert";
   const status = STAGES.map(([k, v]) => `<button class="chip${k === "disqualifiziert" ? " lostc" : ""}" data-status="${k}" aria-pressed="${l.status === k}"${l.optOutAt && isPipeline({ status: k }) ? " disabled" : ""}>${esc(v)}${k === "disqualifiziert" && lost ? " \xB7 " + esc(l.lostReason) : ""}</button>`).join("");
   const more = l.optOutAt ? "" : `<button class="link" data-act="statusMenu" aria-expanded="${!!ui.statusMenu}">Weitere ▾</button>`;
@@ -580,6 +582,12 @@ function nextStepHtml(l, acts, ui, today) {
   return `<div class="next${lacksNextStep(l) ? " lacks" : due ? " due" : ""}"><span>${line}</span>${ui.nextEdit ? "" : `<button class="more" data-act="nextEdit">\xC4ndern</button>`}</div>
     ${edit}`;
 }
+/** "Betreut von": who of the team looks after a Kunde or a Kontakt, picked in the select `id`. */
+function ownerPick(state, id, owner) {
+  const me = state.me?.email;
+  const team = [...new Set([...(state.me?.team || []), owner].filter(Boolean))];
+  return `<label class="owner">${FIELD_LABEL.owner}<select id="${id}">${options([["", "\u2013"], ...team.map((e) => [e, actorName(e) + (e === me ? " (ich)" : "")])], owner)}</select></label>`;
+}
 /**
  * A Kunde's care on its page: who looks after it, its phase (also in the header), the check-ins once live, and its own
  * onboarding as a checklist in its order, a standard step of bookete or the website tagged so. The first open step
@@ -589,9 +597,7 @@ function nextStepHtml(l, acts, ui, today) {
  * care is not stored yet.
  */
 function customerHtml(state, l, c, today) {
-  const me = state.me?.email;
-  const team = [...new Set([...(state.me?.team || []), c.owner].filter(Boolean))];
-  const owner = `<label class="owner">Betreut von<select id="kOwnerOf">${options([["", "\u2013"], ...team.map((e) => [e, actorName(e) + (e === me ? " (ich)" : "")])], c.owner)}</select></label>`;
+  const owner = ownerPick(state, "kOwnerOf", c.owner);
   const steps = c.steps;
   // Steps can be ticked in every phase but Gekündigt: a customer from before, live already, ticks its list once.
   const open = c.phase !== "gekuendigt" ? steps.find((s) => !s.at) : null;
@@ -848,7 +854,7 @@ export function detailView(state, today) {
   <div class="card hero">
     <div class="h-top">
     <h1 class="desk">${esc(l.name)}</h1>
-    ${statusChipsHtml(l, customer, ui)}${l.website ? `<a class="note" href="${esc(l.website)}" target="_blank" rel="noopener">Website ↗</a>` : ""}
+    ${statusChipsHtml(state, l, customer, ui)}${l.website ? `<a class="note" href="${esc(l.website)}" target="_blank" rel="noopener">Website ↗</a>` : ""}
     <p class="note" style="margin:8px 0 0">${sub}</p>
     </div>
     ${actions}

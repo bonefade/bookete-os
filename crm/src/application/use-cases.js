@@ -46,8 +46,8 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
     }
   }
   const touch = (patch) => ({ ...patch, updatedAt: clock.now() });
-  // Only someone of the team looks after a customer; an owner from elsewhere (an old backup) is nobody.
-  const teamOwned = (c) => team.includes(c.owner) ? c : { ...c, owner: "" };
+  // Only someone of the team looks after a customer or a Kontakt; an owner from elsewhere (an old backup) is nobody.
+  const teamOwned = (c) => !c.owner || team.includes(c.owner) ? c : { ...c, owner: "" };
   const commit = (ops, unchanged) => store.commit(ops, actor, unchanged);
   /**
    * Every change to a lead's fields goes through here, and every lead addLead creates; only importBackup writes a
@@ -75,6 +75,7 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
       if (typeof text === "string" && text.trim()) ({ noteEntries } = notesAfter(l, { add: text }, noteContext()));
     }
     let next = normalizeLead(patch, l, today);
+    if (next.owner && next.owner !== l.owner && !team.includes(next.owner)) throw new ValidationError("owner", "Nur jemand aus dem Team kann einen Kontakt betreuen");
     if (next.optOutAt && !l.optOutAt) {
       activity ||= newActivityRecord({ leadId: l.id, direction: "in", channel: "Sonstiges", date: today, text: optOutText }, { id: ids.newId(), now: clock.now(), today });
       next = normalizeLead({ ...patch, ...optOutPatch(next.optOutAt, next), contactedAt: firstContactOf([activity], next.contactedAt) }, l, today);
@@ -211,9 +212,12 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
   return {
     async addLead(input) {
       const now = clock.now();
-      // A Kontakt is one from the start (normalizeLead keeps the kind a record has).
-      const empty = { id: ids.newId(), schemaVersion: SCHEMA_VERSION, ...LEAD_FIELDS, ...(input.kind === "kontakt" && { kind: "kontakt" }), createdAt: now, updatedAt: now };
-      await commit(leadOps(empty, await knownTool(input), { isNew: true }));
+      // A Kontakt is one from the start (normalizeLead keeps the kind a record has), looked after by whoever makes it
+      // unless the input names someone.
+      const contact = input.kind === "kontakt";
+      const empty = { id: ids.newId(), schemaVersion: SCHEMA_VERSION, ...LEAD_FIELDS, ...(contact && { kind: "kontakt" }), createdAt: now, updatedAt: now };
+      const owner = contact && !("owner" in input) && team.includes(email) ? { owner: email } : {};
+      await commit(leadOps(empty, await knownTool({ ...owner, ...input }), { isNew: true }));
       return empty.id;
     },
     /** Inline quick edit of a single field; same validation as the full form. */
@@ -452,7 +456,7 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
           if (!(r.schemaVersion >= SCHEMA_VERSION)) throw new ValidationError("backup", "Format vor 1.4.0 \u2013 bitte die App neu laden und erneut importieren");
           // Normalized against its own status and kind: a record brought back is no status change, so it keeps its wonAt.
           const kind = r.kind === "kontakt" ? { kind: "kontakt" } : {};
-          return { ...normalizeLead({ ...r, ...(!kind.kind && { currentTool: toolName(r.currentTool, tools) }) }, { ...LEAD_FIELDS, status: r.status, ...kind }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), ...((r.orders || r.deal) && { orders: r.orders ? normalizeOrders(r.orders, ids.newId) : [orderFromDeal(r.deal)] }), ...(r.noteEntries && { noteEntries: normalizeEntries(r.noteEntries) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
+          return { ...teamOwned(normalizeLead({ ...r, ...(!kind.kind && { currentTool: toolName(r.currentTool, tools) }) }, { ...LEAD_FIELDS, status: r.status, ...kind }, clock.today())), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), ...((r.orders || r.deal) && { orders: r.orders ? normalizeOrders(r.orders, ids.newId) : [orderFromDeal(r.deal)] }), ...(r.noteEntries && { noteEntries: normalizeEntries(r.noteEntries) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
         },
         activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),

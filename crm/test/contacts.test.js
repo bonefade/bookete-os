@@ -14,6 +14,7 @@ import { initialState } from "../src/web/store.js";
 import { kontakteView, leadsView, filterBar, detailView, leadEditView, accountEditView, searchResultsHtml, TABS } from "../src/web/views.js";
 import { peopleList, callList, todayQueue, toolCounts } from "../src/web/selectors.js";
 import { routeOf, parseRoute, backRoute } from "../src/web/controller.js";
+import { describeChange } from "../src/web/format.js";
 
 const TODAY = "2026-10-23";
 // Each write a moment later, so the newest entry is the one logged last.
@@ -71,6 +72,43 @@ test("a Kontakt is made through the one write path and keeps notes, todos, peopl
   await rejects(uc.changeOrder(id, { add: { kind: "website" } }), "status");
   await rejects(uc.updateLead(id, { kind: "betrieb" }), "kind");
   assert.equal((await store.activitiesOf(id)).length, 0);
+});
+
+test("a Kontakt is looked after by whoever makes it, by someone of the team or nobody; a Betrieb has no owner of its own", async () => {
+  const { store, uc } = setup();
+  const id = await uc.addLead({ kind: "kontakt", name: "Blue Bomb" });
+  assert.equal((await store.get("leads", id)).owner, "jo@bookete.com");
+  assert.equal(await uc.addLead({ kind: "kontakt", name: "Skal", owner: "" }).then((k) => store.get("leads", k)).then((k) => k.owner), "");
+  await rejects(uc.updateField(id, "owner", "fremd@example.com"), "owner");
+  await uc.updateField(id, "owner", "");
+  assert.equal((await store.get("leads", id)).owner, "");
+  // A Betrieb's owner is a Kunde's care (customer.owner): none on the record, none given to it.
+  const betrieb = await uc.addLead({ name: "Krone" });
+  assert.equal("owner" in await store.get("leads", betrieb), false);
+  await rejects(uc.updateLead(betrieb, { owner: "jo@bookete.com" }), "owner");
+  // A backup's owner from outside the team is nobody.
+  await uc.importBackup({ format: BACKUP_FORMAT, data: { leads: [
+    { id: "K8", kind: "kontakt", name: "A", owner: "fremd@example.com", status: null, fit: null, type: "", currentTool: "", hook: "", schemaVersion: 3 },
+    { id: "K9", kind: "kontakt", name: "B", owner: "jo@bookete.com", status: null, fit: null, type: "", currentTool: "", hook: "", schemaVersion: 3 }] } });
+  assert.deepEqual([(await store.get("leads", "K8")).owner, (await store.get("leads", "K9")).owner], ["", "jo@bookete.com"]);
+  // An agent's create_lead makes the signed-in user the owner unless it names one, and search_leads tells it.
+  const context = { store, clock, uc };
+  await mcp(context, "create_lead", { name: "Tischrunde", kind: "kontakt" });
+  await mcp(context, "create_lead", { name: "Skal Salzburg", kind: "kontakt", owner: "" });
+  const found = JSON.parse((await mcp(context, "search_leads", { kind: "kontakt" })).content[0].text);
+  assert.deepEqual(found.leads.filter((l) => ["Tischrunde", "Skal Salzburg"].includes(l.name)).map((l) => [l.name, l.owner]), [["Skal Salzburg", ""], ["Tischrunde", "jo@bookete.com"]]);
+});
+
+test("a Kontakt's owner reads by name in its Änderungen, and a Kontakt from before the owner gets no empty change", () => {
+  const before = { name: "Blue Bomb", nextStep: "" };
+  assert.deepEqual(describeChange({ before, after: { ...before, owner: "", nextStep: "Anrufen" } }), ["N\xE4chster Schritt: \u2013 \u2192 Anrufen"]);
+  assert.deepEqual(describeChange({ before: { ...before, owner: "" }, after: { ...before, owner: "jo@bookete.com" } }), ["Betreut von: \u2013 \u2192 jo"]);
+});
+
+test("a Kontakt's page picks who looks after it from the team", () => {
+  const state = stateWith(LEADS(), { view: "detail", leadId: "K1" });
+  state.me = { email: "jo@bookete.com", team: ["jo@bookete.com", "mo@bookete.com"] };
+  assert.match(detailView(state, TODAY), /<label class="owner">Betreut von<select id="cOwnerOf"><option value="">\u2013<\/option><option value="jo@bookete.com" selected>jo \(ich\)<\/option><option value="mo@bookete.com">mo<\/option><\/select><\/label>/);
 });
 
 test("a talk or a mail logged on a Kontakt changes nothing on it: its plan stays, and a message from them shows in Heute until ours", async () => {
@@ -166,22 +204,25 @@ function stateWith(leads, ui = {}) {
   return state;
 }
 const LEADS = () => {
-  const blue = { ...kontakt({ name: "Blue Bomb", topic: "Partnerprogramm", person: "Philipp", phone: "0664 1", account: { contacts: [{ id: "c1", name: "Florian", role: "Partner" }] } }), id: "K1" };
+  const blue = { ...kontakt({ name: "Blue Bomb", topic: "Partnerprogramm", person: "Philipp", phone: "0664 1", owner: "jo@bookete.com", account: { contacts: [{ id: "c1", name: "Florian", role: "Partner" }] } }), id: "K1" };
   const skal = { ...kontakt({ name: "Martin Satke", topic: "Skal Steiermark", followUp: TODAY, nextStep: "Anrufen" }), id: "K2" };
   return [blue, skal,
-    { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kunde", person: "Anna Wirt", phone: "0316 1", account: { contacts: [{ id: "c2", name: "Pixel", company: "Webagentur", role: "Agentur" }] } },
+    { ...LEAD_FIELDS, id: "L1", name: "Krone", status: "kunde", person: "Anna Wirt", phone: "0316 1", customer: { phase: "live", owner: "mo@bookete.com" }, account: { contacts: [{ id: "c2", name: "Pixel", company: "Webagentur", role: "Agentur" }] } },
     { ...LEAD_FIELDS, id: "L2", name: "Linde", status: "neu", phone: "0316 2", email: "office@linde.at" }];
 };
 
-test("Kontakte lists everyone where they live: the Kontakte and their people, a Betrieb's person and its other contacts", () => {
-  const rows = (state) => [...kontakteView(state, TODAY).matchAll(/data-open="(\w+)"><span class="q-name">([^<]*)<\/span><span class="q-ch">(\w+)<\/span><span class="q-why">([^<]*)</g)].map(([, id, name, kind, line]) => [id, name, kind, line]);
+test("Kontakte lists everyone where they live, in one table: the Kontakte and their people, a Betrieb's person and its other contacts, each with who looks after the record", () => {
+  const cells = /data-open="(\w+)"><span class="k-name">([^<]*)<\/span><span class="k-kind">(\w+)<\/span><span class="k-line">([^<]*)<\/span><span class="k-phone">([^<]*)<\/span><span class="k-mail">([^<]*)<\/span><span class="k-owner">([^<]*)</g;
+  const rows = (state) => [...kontakteView(state, TODAY).matchAll(cells)].map(([, ...row]) => row);
+  // A Kontakt's owner is its own, a Kunde's people show the Kunde's "Betreut von", anyone else's nobody.
   assert.deepEqual(rows(stateWith(LEADS())), [
-    ["L1", "Anna Wirt", "Betrieb", "Krone \xB7 Kunde"],
-    ["K1", "Blue Bomb", "Kontakt", "Partnerprogramm \xB7 Philipp"],
-    ["K1", "Florian", "Kontakt", "Partner \xB7 Blue Bomb"],
-    ["K2", "Martin Satke", "Kontakt", "Skal Steiermark"],
-    ["L1", "Pixel", "Betrieb", "Agentur \xB7 Webagentur \xB7 bei Krone"],
+    ["L1", "Anna Wirt", "Betrieb", "Krone \xB7 Kunde", "0316 1", "", "mo"],
+    ["K1", "Blue Bomb", "Kontakt", "Partnerprogramm \xB7 Philipp", "0664 1", "", "jo"],
+    ["K1", "Florian", "Kontakt", "Partner \xB7 Blue Bomb", "", "", "jo"],
+    ["K2", "Martin Satke", "Kontakt", "Skal Steiermark", "", "", "\u2013"],
+    ["L1", "Pixel", "Betrieb", "Agentur \xB7 Webagentur \xB7 bei Krone", "", "", "mo"],
   ]);
+  assert.match(kontakteView(stateWith(LEADS()), TODAY), /<li class="khead" aria-hidden="true"><span>Name<\/span><span>Art<\/span><span>Thema \xB7 Firma<\/span><span>Telefon<\/span><span>E-Mail<\/span><span>Betreut von<\/span><\/li>/);
   assert.deepEqual(rows(stateWith(LEADS(), { cKind: "kontakt", cTopic: "Partnerprogramm" })).map((r) => r[1]), ["Blue Bomb", "Florian"]);
   assert.deepEqual(rows(stateWith(LEADS(), { cq: "agentur" })).map((r) => r[1]), ["Pixel"]);
   // A Betrieb with an address but no person named lists nobody.

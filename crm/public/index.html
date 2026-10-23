@@ -254,6 +254,23 @@ html:has(#sbox:not([hidden])){scroll-padding-top:0;overflow:hidden}
 .q-why{grid-area:why;font-size:.85rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .q-go{grid-area:go;font-size:.88rem;color:var(--pine);font-weight:600;white-space:nowrap}
 @media (min-width:760px){.qrow{grid-template-columns:minmax(120px,1.3fr) auto minmax(0,3fr) auto;grid-template-areas:"name ch why go"}}
+/* Kontakte as a table: fixed columns, every cell left; on a phone name, Art and owner, then the line, the phone and the mail each on its own line */
+.krow,.khead{display:grid;width:100%;text-align:left;column-gap:10px;row-gap:2px;align-items:center}
+.krow{border:none;border-radius:0;background:transparent;padding:9px 14px 9px 12px;min-height:52px;
+  grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"name kind owner" "line line line" "phone phone phone" "mail mail mail"}
+.krow:hover{background:var(--pine-soft)}
+.krow>span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.k-name{grid-area:name;font-weight:600}
+.k-kind{grid-area:kind;justify-self:start;font-size:.78rem;color:var(--pine);background:var(--pine-soft);border-radius:999px;padding:1px 8px}
+.k-line{grid-area:line;font-size:.85rem;color:var(--muted)}
+.k-phone{grid-area:phone;font-size:.85rem}
+.k-mail{grid-area:mail;font-size:.85rem}
+.k-owner{grid-area:owner;font-size:.85rem;color:var(--pine);font-weight:600}
+.khead{display:none}
+@media (min-width:760px){
+  .krow,.khead{grid-template-columns:minmax(140px,1.5fr) 76px minmax(0,2fr) 130px minmax(0,1.6fr) 110px;grid-template-areas:"name kind line phone mail owner"}
+  .khead{display:grid;padding:8px 14px 8px 12px;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:var(--bg)}
+}
 .days{list-style:none;margin:0;padding:2px 14px}
 .days li{padding:8px 0;border-bottom:1px solid var(--line)}
 .days li:last-child{border-bottom:none}
@@ -325,8 +342,8 @@ label.inline input{width:auto;margin:0}
 .checks .early{grid-column:2;display:flex;gap:16px}
 .checks .early .more{grid-column:auto}
 /* a customer's care: who looks after it and its phase, above its onboarding */
-.cust .owner{display:flex;align-items:center;gap:10px;margin:0 0 10px}
-.cust .owner select{flex:1;width:auto}
+.owner{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+.owner select{flex:1;width:auto}
 .q-why.due{color:var(--due);font-weight:600}
 /* a business's todos: a tick, the text with its day, a bin; a line to add one */
 .tlist{list-style:none;margin:0 0 10px;padding:0}

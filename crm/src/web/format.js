@@ -26,6 +26,7 @@ const shown = (key, v) => {
   if (v == null || v === "") return "\u2013";
   if (key === "status") return STATUS_LABEL[v] || v;
   if (key === "followUp" || key === "optOutAt" || key === "contactedAt") return fmtDate(v);
+  if (key === "owner") return actorName(v);
   const t = String(v).replace(/\s+/g, " ");
   return t.length > 60 ? t.slice(0, 59) + "\u2026" : t;
 };
@@ -34,8 +35,10 @@ export function describeChange(entry) {
   if (!entry.before) return ["Angelegt"];
   if (entry.deleted && !entry.wasDeleted) return ["In den Papierkorb gelegt"];
   if (!entry.deleted && entry.wasDeleted) return ["Wiederhergestellt"];
-  // The notes text and the notes list, changed together when a note of the text is changed, read as one line.
-  return [...new Set(Object.keys(FIELD_LABEL).filter((k) => JSON.stringify(entry.before[k] ?? null) !== JSON.stringify(entry.after[k] ?? null))
+  // The notes text and the notes list, changed together when a note of the text is changed, read as one line. A field
+  // missing, null or "" is the same nothing: a record from before a field was added gets it as "" on its next write.
+  const value = (v) => JSON.stringify(v === "" ? null : v ?? null);
+  return [...new Set(Object.keys(FIELD_LABEL).filter((k) => value(entry.before[k]) !== value(entry.after[k]))
     .map((k) => k === "account" ? "Kundenakte ge\xE4ndert" : k === "customer" ? "Betreuung ge\xE4ndert" : k === "todos" ? "Todos ge\xE4ndert" : k === "deal" ? "Vereinbarung ge\xE4ndert" : k === "orders" ? "Auftr\xE4ge ge\xE4ndert" : k === "notes" || k === "noteEntries" ? "Notizen ge\xE4ndert" : `${FIELD_LABEL[k]}: ${shown(k, entry.before[k])} \u2192 ${shown(k, entry.after[k])}`))];
 }
 /** The status move of a history entry, for the lead's feed: "Status Neu → Kontaktiert", "Angelegt", or "" for none. */

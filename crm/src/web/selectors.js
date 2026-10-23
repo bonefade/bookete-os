@@ -122,16 +122,17 @@ export const roundList = (state, today, list) => list === "calls" ? callList(sta
 /**
  * Everyone the CRM knows, each listed where they live, never copied: a Kontakt and the people at it, a Betrieb's
  * Ansprechperson, the other people in a Betrieb's Kundenakte (agency, IT). A row names the record it opens; `topic`
- * is its Kontakt's Thema. A Betrieb with an address but no person named holds nobody to list.
+ * is its Kontakt's Thema, `owner` who of the team looks after the record (a Kontakt's, or a Kunde's care). A Betrieb with an address but no person named holds nobody to list.
  */
 export function peopleList(state) {
   const rows = [];
   for (const l of state.data.leads) {
     const contact = isContact(l);
     const topic = contact ? l.topic : "";
-    if (contact) rows.push({ lead: l, name: l.name, line: [l.topic, l.person].filter(Boolean).join(" \xB7 "), topic, email: l.email, phone: l.phone });
-    else if (l.person) rows.push({ lead: l, name: l.person, line: `${l.name} \xB7 ${STAGE_LABEL[l.status] || ""}`, topic, email: l.email, phone: l.phone });
-    for (const c of accountOf(l).contacts) rows.push({ lead: l, name: c.name, line: [c.role, c.company, contact ? l.name : `bei ${l.name}`].filter(Boolean).join(" \xB7 "), topic, email: c.email, phone: c.phone });
+    const owner = contact ? l.owner : l.status === "kunde" ? customerOf(l)?.owner : "";
+    if (contact) rows.push({ lead: l, name: l.name, line: [l.topic, l.person].filter(Boolean).join(" \xB7 "), topic, owner, email: l.email, phone: l.phone });
+    else if (l.person) rows.push({ lead: l, name: l.person, line: `${l.name} \xB7 ${STAGE_LABEL[l.status] || ""}`, topic, owner, email: l.email, phone: l.phone });
+    for (const c of accountOf(l).contacts) rows.push({ lead: l, name: c.name, line: [c.role, c.company, contact ? l.name : `bei ${l.name}`].filter(Boolean).join(" \xB7 "), topic, owner, email: c.email, phone: c.phone });
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name, "de") || a.lead.name.localeCompare(b.lead.name, "de"));
 }

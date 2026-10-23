@@ -18,7 +18,7 @@ export const Reason = z.enum(LOST_REASONS);
 const FIELD = { fit: z.coerce.number().int().min(1).max(3), followUp: date.nullable(), contactedAt: date.nullable(), status: Status, lostReason: z.union([Reason, z.literal("")]).nullable() };
 // optOutAt is not writable here: it is set by optOut or by picking the opt-out reason, and cleared only by clearOptOut.
 // kind makes a Kontakt when the record is made (normalizeLead refuses a change); topic is a Kontakt's Thema.
-export const LeadInput = z.object({ ...Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt" && k !== "wonAt").map((k) => [k, FIELD[k] ?? text.nullable()])), kind: z.enum(KINDS), topic: z.string().max(TOPIC_MAX).nullable() }).partial().strict();
+export const LeadInput = z.object({ ...Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt" && k !== "wonAt").map((k) => [k, FIELD[k] ?? text.nullable()])), kind: z.enum(KINDS), topic: z.string().max(TOPIC_MAX).nullable(), owner: z.string().max(200).nullable() }).partial().strict();
 // The Kundenakte, part by part; normalizeAccount checks values. Strict, so no field for a password can be added.
 const str = (max) => z.string().max(max).nullish();
 const System = z.object({ what: str(200), by: str(100) }).strict();

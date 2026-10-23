@@ -48,6 +48,7 @@ export const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
  * A Kontakt: a partner, an association or a person we talk to beside the restaurants. A record in the leads like a
  * Betrieb, with its notes, logged contacts, todos, next step and the people at it (account.contacts), but none of a
  * restaurant's parts: no status, first contact, opt-out, fit, type, system or hook, and a topic (Thema) instead.
+ * Its `owner` is who of the team looks after it ("Betreut von"; a Kunde's is in its care, customer.owner).
  * Its kind is set when it is made and never changes; a record without one is a Betrieb.
  */
 export const KINDS = ["betrieb", "kontakt"];
@@ -57,7 +58,7 @@ export const TOPIC_MAX = 60;
 const NOT_ON_CONTACT = { status: null, lostReason: null, optOutAt: null, contactedAt: null, wonAt: null, fit: null, type: "", currentTool: "", hook: "" };
 /**
  * The one place the lead rules live: every write (web, MCP, import) runs the merged lead through here.
- * `today` dates a first contact that a status change implies. A Betrieb has no `kind` or `topic` stored, so the
+ * `today` dates a first contact that a status change implies. A Betrieb has no `kind`, `topic` or `owner` stored, so the
  * records from before stay as they were.
  */
 export function normalizeLead(input, base = LEAD_FIELDS, today) {
@@ -76,9 +77,10 @@ export function normalizeLead(input, base = LEAD_FIELDS, today) {
       if (k in input && input[k] != null && input[k] !== none) throw new ValidationError(k, `${FIELD_LABEL[k] || k} hat nur ein Betrieb, kein Kontakt`);
       out[k] = none;
     }
-    return { ...out, kind: "kontakt", topic: oneLine("topic" in input ? input.topic : base.topic, TOPIC_MAX) };
+    return { ...out, kind: "kontakt", topic: oneLine("topic" in input ? input.topic : base.topic, TOPIC_MAX), owner: oneLine("owner" in input ? input.owner : base.owner, 200) };
   }
   if (oneLine(input.topic)) throw new ValidationError("topic", "Ein Thema hat nur ein Kontakt");
+  if (oneLine(input.owner)) throw new ValidationError("owner", "Betreut von: bei einem Kunden in der Betreuung, sonst nur bei einem Kontakt");
   if (!STATUSES.has(out.status)) throw new ValidationError("status", "Unbekannter Status");
   out.fit = Math.min(3, Math.max(1, parseInt(out.fit, 10) || 2));
   if (!BUSINESS_TYPES.includes(out.type)) out.type = "Sonstiges";

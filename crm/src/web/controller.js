@@ -1178,7 +1178,10 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     // A call entered later: its day, today unless picked; today itself is no day picked.
     if (t.id === "callDay" && st.ui.call) return sheet("call", { day: t.value && t.value !== clock.today() ? t.value : "" });
     // What a Kunde agreed on: each field saves when it is left.
-    if (t.id === "kOwnerOf") return run(() => uc.changeCustomer(lead, { owner: t.value }), t.value ? "Betreut von " + actorName(t.value) : "Niemand betreut");
+    if (t.id === "kOwnerOf" || t.id === "cOwnerOf") {
+      const done = t.value ? "Betreut von " + actorName(t.value) : "Niemand betreut";
+      return run(() => t.id === "kOwnerOf" ? uc.changeCustomer(lead, { owner: t.value }) : uc.updateField(lead, "owner", t.value), done);
+    }
     if (t.dataset.filter) {
       ui({ [t.dataset.filter]: t.value });
       return render();
