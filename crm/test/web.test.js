@@ -825,8 +825,8 @@ test("the app's buttons and the browser's Back and Forward move through the addr
   }
 });
 
-test("five tabs, at the bottom on a phone and on the left from tablet width, and the one search field in the top bar", () => {
-  assert.deepEqual([...tabBar(initialState(), "2026-10-15", false).matchAll(/data-tab="(\w+)"/g)].map(([, k]) => k), ["heute", "betriebe", "kunden", "vorlagen", "mehr"]);
+test("six tabs, at the bottom on a phone and on the left from tablet width, and the one search field in the top bar", () => {
+  assert.deepEqual([...tabBar(initialState(), "2026-10-15", false).matchAll(/data-tab="(\w+)"/g)].map(([, k]) => k), ["heute", "betriebe", "kunden", "kontakte", "vorlagen", "mehr"]);
   assert.doesNotMatch(tabBar(initialState(), "2026-10-15", false), /disabled/);
   assert.equal(tabBar(initialState(), "2026-10-15", true).match(/ disabled>/g).length, TABS.length);
   const page = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
@@ -867,27 +867,27 @@ test("the tabs show on every screen, shut while a form holds input; a lead page'
     for (const c of ["activities", "templates", "settings"]) store.data(c, []);
     const { h, click, tabsEl } = fakeBrowser("#/betriebe", store, {});
     const tabs = () => [(tabsEl.innerHTML.match(/data-tab=/g) || []).length, (tabsEl.innerHTML.match(/ disabled>/g) || []).length, tabsEl.innerHTML.match(/data-tab="(\w+)" aria-current/)?.[1]];
-    assert.deepEqual(tabs(), [5, 0, "betriebe"]);
+    assert.deepEqual(tabs(), [TABS.length, 0, "betriebe"]);
     await click({ open: "L1" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1", 5, 0, "betriebe"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1", TABS.length, 0, "betriebe"]);
     // A message being written holds input as a form does.
     await click({ compose: "E-Mail" });
-    assert.deepEqual(tabs(), [5, 5, "betriebe"]);
+    assert.deepEqual(tabs(), [TABS.length, TABS.length, "betriebe"]);
     await click({ act: "composeCancel" });
-    assert.deepEqual(tabs(), [5, 0, "betriebe"]);
+    assert.deepEqual(tabs(), [TABS.length, 0, "betriebe"]);
     await click({ act: "edit" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1/bearbeiten", 5, 5, "betriebe"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betrieb/L1/bearbeiten", TABS.length, TABS.length, "betriebe"]);
     h.history.go(-1);
     h.land();
     // The tab the lead page was opened from opens its screen, not the top of the lead page.
     await click({ tab: "betriebe" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/betriebe", 5, 0, "betriebe"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/betriebe", TABS.length, 0, "betriebe"]);
     await click({ act: "quick" });
-    assert.deepEqual(tabs(), [5, 5, "betriebe"]);
+    assert.deepEqual(tabs(), [TABS.length, TABS.length, "betriebe"]);
     await click({ act: "quickCancel" });
     await click({ tab: "vorlagen" });
     await click({ act: "tplNew" });
-    assert.deepEqual([h.location.hash, ...tabs()], ["#/vorlage/neu", 5, 5, "vorlagen"]);
+    assert.deepEqual([h.location.hash, ...tabs()], ["#/vorlage/neu", TABS.length, TABS.length, "vorlagen"]);
   } finally {
     for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
   }

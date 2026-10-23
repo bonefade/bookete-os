@@ -3,7 +3,7 @@ import { ValidationError } from '../domain/errors.js';
 import { actsOf, currentLead, icpOf, isReady, roundList } from './selectors.js';
 import { todosOf } from '../domain/todos.js';
 import { notesOf } from '../domain/notes.js';
-import { isDue, takesDate } from '../domain/lead.js';
+import { isDue, takesDate, isContact } from '../domain/lead.js';
 import { addDays } from '../domain/dates.js';
 import { copyText, channelLink, mailSubject, saveFile } from './platform.js';
 import { createBackup } from '../domain/backup.js';
@@ -12,9 +12,9 @@ import { lastChannel } from '../domain/activity.js';
 import { relDate, actorName } from './format.js';
 import { PHASE_LABEL, customerOf } from '../domain/customer.js';
 import { HOSTING_CARE, KIND_LABEL, ordersOf } from '../domain/orders.js';
-import { TABS, tabBar, todayView, leadsView, kundenView, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, stepsEditOpen, VISIT_NOTE } from './views.js';
+import { TABS, tabBar, todayView, leadsView, kundenView, kontakteView, TALK_NOTE, searchResultsHtml, searchView, templatesView, templateEditView, moreView, detailView, leadEditView, accountEditView, callInput, unshownSheets, stepsEditOpen, VISIT_NOTE } from './views.js';
 
-export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "stepsEditToggle", "stepEditCancel", "orderNew", "orderCancel", "noteEditCancel", "logMenu", "visitOpen", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
+export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit", "quick", "quickCancel", "composeCancel", "composeFu", "reply", "copyOpen", "lostCancel", "contactCancel", "cancelPickClose", "checkInOpen", "checkInCancel", "statusMenu", "todosDoneToggle", "todoEditCancel", "stepsEditToggle", "stepEditCancel", "orderNew", "orderCancel", "noteEditCancel", "logMenu", "visitOpen", "talkOpen", "nextEdit", "infoToggle", "changesToggle", "callOpen", "terminOpen", "terminCancel", "callCancel", "meetingCancel", "callStart", "queueStart", "freshStart", "roundNext", "later", "scriptToggle", "tplNew", "icpEdit", "icpCancel", "searchClose", "toSearch", "importPick", "logoutAll"]);
 /**
  * Every screen has an address (`#/betriebe`, `#/betrieb/<id>`, …), so the browser's Back, a reload and a shared
  * link all land on it. Hash addresses need no server route. The address decides tab, view and record; what a
@@ -23,9 +23,11 @@ export const UI_ONLY_ACTIONS = new Set(["qeCancel", "back", "edit", "accountEdit
  */
 export function routeOf({ tab, view, leadId, templateId }) {
   const id = (x) => encodeURIComponent(x);
-  if (view === "detail") return `#/betrieb/${id(leadId)}`;
-  if (view === "editLead") return `#/betrieb/${id(leadId)}/bearbeiten`;
-  if (view === "editAccount") return `#/betrieb/${id(leadId)}/kunde`;
+  // A record opened from Kontakte is at #/kontakt/…, so Back and a reload land in Kontakte.
+  const at = tab === "kontakte" ? `#/kontakt/${id(leadId)}` : `#/betrieb/${id(leadId)}`;
+  if (view === "detail") return at;
+  if (view === "editLead") return `${at}/bearbeiten`;
+  if (view === "editAccount") return `${at}/${tab === "kontakte" ? "personen" : "kunde"}`;
   if (view === "editTemplate") return templateId ? `#/vorlage/${id(templateId)}` : "#/vorlage/neu";
   return `#/${tab}`;
 }
@@ -38,13 +40,14 @@ export function parseRoute(hash) {
   }
   const [a, b, c] = parts;
   if (a === "betrieb" && b) return { view: { bearbeiten: "editLead", kunde: "editAccount" }[c] || "detail", leadId: b };
+  if (a === "kontakt" && b) return { view: { bearbeiten: "editLead", personen: "editAccount" }[c] || "detail", leadId: b, tab: "kontakte" };
   // A template belongs to Vorlagen, so one opened from a link or a reload goes back there.
   if (a === "vorlage" && b) return { view: "editTemplate", templateId: b === "neu" ? null : b, tab: "vorlagen" };
   return { view: null, tab: TABS.some(([k]) => k === a) ? a : "heute" };
 }
 const LEAD_VIEWS = new Set(["detail", "editLead", "editAccount"]);
 /** The quick-add form's fields and the draft key each one types into; the draft outlives any redraw of the list. */
-const QUICK_ADD_FIELDS = { qaName: "name", qaCity: "city", qaIg: "instagram", qaHook: "hook" };
+const QUICK_ADD_FIELDS = { qaName: "name", qaCity: "city", qaIg: "instagram", qaHook: "hook", qaTopic: "topic" };
 /** The call and meeting sheets' fields and the key of the sheet's state each one fills. */
 const AGREED_FIELDS = { agDate: "date", agTime: "time", agReason: "reason", agNote: "note" };
 /** The open sheet the agreed fields belong to. */
@@ -142,7 +145,7 @@ export function createNavigation(history, location, applyRoute) {
   return { go, leave, landed, pushSearch };
 }
 /** Where the in-app Zurück leads when there is no earlier screen of ours to go back to: the screen above. */
-export const backRoute = (ui) => ui.view === "editLead" || ui.view === "editAccount" ? routeOf({ view: "detail", leadId: ui.leadId }) : routeOf({ tab: ui.tab });
+export const backRoute = (ui) => ui.view === "editLead" || ui.view === "editAccount" ? routeOf({ tab: ui.tab, view: "detail", leadId: ui.leadId }) : routeOf({ tab: ui.tab });
 /**
  * The Kundenakte form as the parts of an account: rows by index, without those marked to remove and without a new
  * row left empty.
@@ -242,7 +245,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if (recordMissing(st)) return go(routeOf({ tab: st.ui.tab }), { replace: true }), false;
     lockForInput(st, today);
     drawSearch(st);
-    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, betriebe: leadsView, kunden: kundenView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
+    root.innerHTML = view === "detail" ? detailView(st, today) : view === "editLead" ? leadEditView(st) : view === "editTemplate" ? templateEditView(st) : view === "editAccount" ? accountEditView(st) : { heute: todayView, betriebe: leadsView, kunden: kundenView, kontakte: kontakteView, vorlagen: templatesView, mehr: moreView }[st.ui.tab](st, today);
     // The tabs show on every screen; while a form holds input they are shut, as the search field is, so nothing typed is lost.
 
     if (view === "detail") loadHistory(st);
@@ -333,8 +336,9 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       return;
     }
     const route = parseRoute(location.hash);
-    // A lead page opened by a link or a reload was opened from no tab: it belongs to Betriebe, as a template to Vorlagen.
-    if (shown === null && LEAD_VIEWS.has(route.view)) route.tab = "betriebe";
+    // A lead page opened by a link or a reload was opened from no tab: it belongs to Betriebe (a Kontakt's address
+    // names Kontakte), as a template to Vorlagen.
+    if (shown === null && LEAD_VIEWS.has(route.view)) route.tab ||= "betriebe";
     shown = location.hash;
     saveScroll();
     const next = enterRoute(S().ui, route);
@@ -398,7 +402,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     if ((cmdK || slash) && openSearch()) ev.preventDefault();
   });
   const back = () => leave(backRoute(S().ui));
-  const openLead = (id) => go(routeOf({ view: "detail", leadId: id }));
+  const openLead = (id) => go(routeOf({ tab: S().ui.tab, view: "detail", leadId: id }));
   /** A lead picked in the search; it ends a round, as leaving the round for a tab does. */
   const openResult = (id) => {
     ui({ round: null });
@@ -425,7 +429,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
     const next = roundList(st, clock.today(), st.ui.round.list).find((l) => !seen.includes(l.id));
     if (!next) return toast("Liste erledigt"), back();
     ui({ round: { ...st.ui.round, seen } });
-    go(routeOf({ view: "detail", leadId: next.id }), { replace: true });
+    go(routeOf({ tab: S().ui.tab, view: "detail", leadId: next.id }), { replace: true });
   }
   /**
    * "Später" in a round: whatever puts the business on today's list moves to `date`, so it leaves it. In Heute, each
@@ -574,8 +578,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
   });
   const actions = {
     back,
-    edit: () => go(routeOf({ view: "editLead", leadId: S().ui.leadId })),
-    accountEdit: () => go(routeOf({ view: "editAccount", leadId: S().ui.leadId })),
+    edit: () => go(routeOf({ tab: S().ui.tab, view: "editLead", leadId: S().ui.leadId })),
+    accountEdit: () => go(routeOf({ tab: S().ui.tab, view: "editAccount", leadId: S().ui.leadId })),
     async accountSave() {
       const f = root.querySelector("#aform");
       const lead = { id: S().ui.leadId };
@@ -583,7 +587,9 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       if (saved !== undefined) back();
     },
     quick: () => {
-      ui({ quick: S().ui.quick ? false : Object.fromEntries(Object.values(QUICK_ADD_FIELDS).map((key) => [key, ""])) });
+      // Kontakte asks for a name and a Thema, Leads for what a lead is found by.
+      const keys = S().ui.tab === "kontakte" ? ["name", "topic"] : Object.values(QUICK_ADD_FIELDS).filter((key) => key !== "topic");
+      ui({ quick: S().ui.quick ? false : Object.fromEntries(keys.map((key) => [key, ""])) });
       render();
       // Into Name once, as it opens: a later redraw (a sync, the list filter typed into) leaves the focus where it is.
       if (S().ui.quick) setTimeout(() => root.querySelector("#qaName")?.focus(), 30);
@@ -592,10 +598,13 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       ui({ quick: false });
       render();
     },
+    /** In Kontakte the form makes a Kontakt and opens it, to fill in; in Leads it adds a lead to the list. */
     async quickSave() {
-      const id = await run(() => uc.addLead(S().ui.quick), "Hinzugef\xFCgt");
+      const contact = S().ui.tab === "kontakte";
+      const id = await run(() => uc.addLead(contact ? { ...S().ui.quick, kind: "kontakt" } : S().ui.quick), "Hinzugef\xFCgt");
       if (id) {
-        ui({ quick: false, status: "offen" });
+        ui({ quick: false, ...(!contact && { status: "offen" }) });
+        if (contact) return openLead(id);
         render();
       }
     },
@@ -657,6 +666,12 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       render();
       reveal("#cpText");
     },
+    /** A talk with a Kontakt, from "Eintragen": on the phone or met, with what was said. */
+    talkOpen: () => {
+      ui({ contactPick: { channel: "Telefon", text: "" }, compose: null, logMenu: false });
+      render();
+      reveal("#cpText");
+    },
     /** The call sheet, opened by the call itself (the tel link goes on to dial), from "Eintragen" or the Kontaktiert question. */
     callOpen: () => {
       ui({ call: S().ui.call || {}, termin: null, compose: null, contactPick: null, statusMenu: false, logMenu: false });
@@ -696,8 +711,8 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const lead = currentLead(st);
       const { channel, text } = st.ui.contactPick;
       const r = await run(
-        () => uc.logActivity(lead, actsOf(st, lead.id), { direction: "out", channel, date: clock.today(), text: text.trim() || VISIT_NOTE }),
-        (res) => res.plan.status !== "kontaktiert" ? "Besuch eingetragen" : res.plan.followUp ? "Kontaktiert \xB7 nachfassen " + relDate(res.plan.followUp, clock.today()) : "Kontaktiert"
+        () => uc.logActivity(lead, actsOf(st, lead.id), { direction: "out", channel, date: clock.today(), text: text.trim() || (isContact(lead) ? TALK_NOTE[channel] : VISIT_NOTE) }),
+        (res) => isContact(lead) ? "Gespr\xE4ch eingetragen" : res.plan.status !== "kontaktiert" ? "Besuch eingetragen" : res.plan.followUp ? "Kontaktiert \xB7 nachfassen " + relDate(res.plan.followUp, clock.today()) : "Kontaktiert"
       );
       if (r) {
         ui({ contactPick: null });
@@ -853,7 +868,7 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
       const { leadId } = S().ui;
       const id = await run(() => saveLeadForm(uc, leadId, root.querySelector("#form").elements), "Gespeichert");
       // An edit goes back to its lead page; a new lead's form becomes the new lead's page.
-      if (id) leadId ? back() : go(routeOf({ view: "detail", leadId: id }), { replace: true });
+      if (id) leadId ? back() : go(routeOf({ tab: S().ui.tab, view: "detail", leadId: id }), { replace: true });
     },
     async deleteLead() {
       const lead = currentLead(S());
@@ -1069,12 +1084,13 @@ export function mountApp({ root, tabsEl, searchEl, searchBox, toastEl, store: st
   root.addEventListener("input", (ev) => {
     const t = ev.target;
     const c = S().ui.compose;
-    if (t.id === "q") {
+    // The list filters of Leads (q) and Kontakte (cq).
+    if (t.id === "q" || t.id === "cq") {
       const pos = t.selectionStart;
       // Kept as typed: the field is drawn back from it, so a trimmed copy would take a space just typed.
-      ui({ q: t.value });
+      ui({ [t.id]: t.value });
       render();
-      const n = root.querySelector("#q");
+      const n = root.querySelector("#" + t.id);
       n.focus();
       n.setSelectionRange(pos, pos);
     }

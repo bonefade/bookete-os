@@ -1,5 +1,5 @@
 import { CHANNELS, DIRECTIONS, SEQUENCE_POLICY, OUTCOME_LABEL, SPOKEN_REASONS, OPT_OUT_REASON } from './constants.js';
-import { optOutPatch } from './lead.js';
+import { optOutPatch, isContact } from './lead.js';
 import { careNextStep, hasCancelled } from './customer.js';
 import { ValidationError } from './errors.js';
 import { addDays, isDate, dayLabel } from './dates.js';
@@ -89,6 +89,9 @@ export function assertMayContact(lead, direction) {
  */
 export function planAfterActivity(lead, acts, activity, today, policy = SEQUENCE_POLICY) {
   const all = [...acts, activity];
+  // A Kontakt has no first contact, status or sequence, and its next step is what a person planned: a message from
+  // them shows in Heute's new answers until our next contact (awaitsAnswer), without taking that plan's place.
+  if (isContact(lead)) return {};
   const patch = {};
   // A contact logged later but dated earlier moves the first contact back. An opted-out lead's contact dates it too.
   const first = firstContactOf(all.filter(spokeWith), lead.contactedAt);

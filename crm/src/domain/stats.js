@@ -1,5 +1,6 @@
 import { byTimeline, spokeWith } from './activity.js';
 import { weekStart } from './dates.js';
+import { isContact } from './lead.js';
 
 export function groupByLead(activities) {
   const m = new Map();
@@ -33,7 +34,9 @@ export function templateUsage(activities) {
 export function weekNumbers(leads, activities, today) {
   const from = weekStart(today);
   const thisWeek = (d) => !!d && d >= from && d <= today;
-  const calls = activities.filter((a) => a.direction === "out" && a.channel === "Telefon" && thisWeek(a.date));
+  // Sales calls: a talk with a Kontakt is none.
+  const contacts = new Set(leads.filter(isContact).map((l) => l.id));
+  const calls = activities.filter((a) => a.direction === "out" && a.channel === "Telefon" && thisWeek(a.date) && !contacts.has(a.leadId));
   const reasons = {};
   for (const a of calls) if (a.reason) reasons[a.reason] = (reasons[a.reason] || 0) + 1;
   return {

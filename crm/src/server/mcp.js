@@ -5,44 +5,45 @@ import { normalizeCustomer } from "../domain/customer.js";
 import { ORDER_KINDS, RHYTHMS, HOSTING_CARE, ordersOf } from "../domain/orders.js";
 import { LeadInput, Status, Reason, AccountInput, OrderChange, CallInput, MeetingInput } from "./commands.js";
 import { STAGES, CHANNELS, LOST_REASONS, OPT_OUT_REASON, RESERVATION_TOOLS } from "../domain/constants.js";
-import { isDue, takesFollowUp, addressOpen } from "../domain/lead.js";
+import { isDue, takesFollowUp, addressOpen, isContact, KINDS } from "../domain/lead.js";
 import { nextActionHint, byTimeline } from "../domain/activity.js";
 import { fillTemplate } from "../domain/template.js";
 import { ValidationError, ConflictError } from "../domain/errors.js";
 import { searchLeads } from "../domain/search.js";
 
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
-const INSTRUCTIONS = `bookete CRM: restaurants (leads) in Austria that bookete approaches about table reservations.
+const INSTRUCTIONS = `bookete CRM: restaurants (leads) in Austria that bookete approaches about table reservations, and Kontakte.
 Statuses: ${STAGES.map(([k, label]) => `${k} (${label})`).join(", ")}. Every write is recorded under the signed-in user.
 currentTool is the reservation system they use: one of ${RESERVATION_TOOLS.join(" | ")} (any case), or the name of any other system, such as one new to us.
 Rules the server enforces: disqualifiziert needs a reason (${LOST_REASONS.join(" | ")}) and has no follow-up; the reason "${OPT_OUT_REASON}" records an opt-out. Opted-out businesses (optOutAt) must not be contacted. Kontaktiert means someone spoke with them: a message from them, a visit (channel Vor Ort), or a call that got through. contactedAt is the day that first happened: null on neu, set on kontaktiert, qualifiziert and kunde, either on disqualifiziert. Setting it on a neu lead moves the lead to kontaktiert. Logging such a contact moves neu, or disqualifiziert without an opt-out, to kontaktiert. A mail, a DM or a call not answered is an attempt: it is logged, but moves no status and sets no follow-up on a neu or disqualifiziert lead. A neu lead has no follow-up date: set_follow_up refuses one, and update_lead drops it; plan it with a next step instead. A lead nobody has spoken with can go back to neu (change_status), which clears contactedAt, its follow-up and next step; one with a conversation logged, or with a contactedAt recorded for a conversation outside the CRM, cannot.
 A customer's Kundenakte (lead.account: their systems, domain, DNS, website and hosting, e-mail, and who runs each; where logins are kept; other contacts such as agencies; the business's own person, email and phone are the lead's fields, not a contact here) is read with get_lead and written with update_account, which takes the Kundenakte as read and refuses the write if it changed since. It never holds passwords, only where logins are kept. A customer's care (lead.customer: the phase Onboarding, Live or Gek\xFCndigt, who looks after it, its own onboarding steps in their order (started from the standard steps of its package, which its Auftr\xE4ge give, below; each with a title, the day it is due and, once done or skipped, when and by whom; people add, remove and reorder them), the check-ins with how they went, and the next check-in day) is read with get_lead; agents cannot change it, except that an Auftrag written with update_order that adds or removes the website adds or removes its onboarding steps. So are a business's todos (lead.todos: text, due day, the day done), which agents cannot change either. What a Kunde agreed on (lead.orders, its Auftr\xE4ge: each with an id, a kind (${ORDER_KINDS.map(([k]) => k).join(" | ")}), a title, an amount in net EUR as a number ("" while open), a rhythm (${RHYTHMS.map(([k]) => k).join(" | ")}), signedAt the day of the contract, start the first day of its runtime, months its runtime ("" for open-ended), renews (true when it renews by itself), contract the https link to the contract, and one free line in note) is read with get_lead (none means nothing agreed yet; hosting is ${HOSTING_CARE.amount} EUR a year with a .com or normal local domain, no premium domains) and written with update_order, one Auftrag at a time. The kinds decide the customer's package: a website comes with bookete, so a website Auftrag makes beides, anything else bookete (a package picked before counts until the first Auftrag is written); a change that moves the package adds the standard onboarding steps of the group it adds, due from that day at the earliest, and removes the open ones of the group it drops. lead.notes is a list of notes, newest first, each with its day, who wrote it and its text; notes given as text to update_lead or create_lead are added as one new note, never replacing those there are.
 A phone call is logged with log_call, which records its outcome and moves the lead on by it; a call never moves a kunde out of kunde. How an appointment went is recorded with meeting_outcome.
 Mail to and from a lead's address, and replies in a thread the CRM sent, are logged from the users' Gmail by the CRM itself within minutes: do not log them with log_activity.
-Agents cannot send email: create_gmail_draft puts a draft into the user's Gmail for a person to review and send. The CRM adds the lead's unsubscribe link at the end, except for a Kunde; do not write one yourself.`;
+A Kontakt (kind "kontakt"; a lead without kind is a restaurant, a Betrieb) is a partner, an association or a person we talk to beside the restaurants, around bookete or Tischrunde: Blue Bomb for the partner programme, Skal for Styria. It is made with create_lead and kind "kontakt", which never changes, and has name (the organisation or the person), topic (its Thema, one line of at most 60 characters, such as "Skal Steiermark" or "Partnerprogramm"; reuse one the other Kontakte have), city, person, email, phone, website, instagram, notes, todos, nextStep and followUp (any day, it shows in Heute when due), and the other people at it as contacts in its Kundenakte (update_account, contacts only: systems are refused). It has no status, contactedAt, opt-out, fit, type, currentTool or hook: those are refused, as are change_status, log_call and meeting_outcome. A conversation with a Kontakt (a call, a meeting) is logged with log_activity (channel Telefon or Vor Ort, direction out, what was said as text); logging changes nothing else on it: a message from them shows in Heute as a new answer until our next contact, and its next step stays what a person planned. Mail to its address is refused, as for a lead, where another business with an opt-out holds the address. A person who already lives on a record (a Betrieb's person, a contact in a Kundenakte) is not added again elsewhere.
+Agents cannot send email: create_gmail_draft puts a draft into the user's Gmail for a person to review and send. The CRM adds the lead's unsubscribe link at the end, except for a Kunde or a Kontakt; do not write one yourself.`;
 
 const id = z.string().describe("Lead id");
 // Enough to choose a lead, and short, so a page of them stays small; get_lead reads one in full.
 // hasEmail: mail to the lead would go out (sendEmail's and create_gmail_draft's rules, addressOpen); `closed`, the
 // addresses the businesses with an opt-out hold.
 const summary = (l, acts, today, closed) => ({
-  id: l.id, name: l.name, city: l.city, status: l.status, fit: l.fit, followUp: l.followUp, due: isDue(l, today),
+  id: l.id, name: l.name, ...(isContact(l) && { kind: l.kind, topic: l.topic }), city: l.city, status: l.status, fit: l.fit, followUp: l.followUp, due: isDue(l, today),
   next: (takesFollowUp(l) && nextActionHint(l, acts)) || undefined,
   hasEmail: addressOpen(l, closed), hasPhone: !!l.phone, optOut: !!l.optOutAt,
 });
 
 /** Tools: name → description, input schema, handler. Writes go through the same use cases as the web app. */
 const TOOLS = {
-  search_leads: ["Search leads by name, place, person, notes or history, best match first. Empty query lists all, by name. Filter by status, or only those due for follow-up. Answers `total` and up to `limit` leads from `offset`, each a short summary; if more match, `nextOffset` is the offset of the next page. hasEmail is false where no mail may go (an opt-out, or another business with an opt-out holds the address). Read one lead in full, with its history, with get_lead.",
-    z.object({ query: z.string().default(""), status: Status.optional(), dueOnly: z.boolean().default(false), offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(50).default(30) }),
-    async ({ query, status, dueOnly, offset, limit }, { store, clock }) => {
+  search_leads: ["Search leads by name, place, person, notes or history, best match first. Empty query lists all, by name. Filter by status, by kind (betrieb: the restaurants; kontakt: the Kontakte, whose summary has kind and topic), or only those due for follow-up. Answers `total` and up to `limit` leads from `offset`, each a short summary; if more match, `nextOffset` is the offset of the next page. hasEmail is false where no mail may go (an opt-out, or another business with an opt-out holds the address). Read one lead in full, with its history, with get_lead.",
+    z.object({ query: z.string().default(""), status: Status.optional(), kind: z.enum(KINDS).optional(), dueOnly: z.boolean().default(false), offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(50).default(30) }),
+    async ({ query, status, kind, dueOnly, offset, limit }, { store, clock }) => {
       const [stored, activities, closed] = await Promise.all([store.list("leads"), store.list("activities"), store.closedAddresses()]);
       // The store returns no set order; pages only line up if every call ranks the same leads the same way.
       const leads = stored.sort((a, b) => a.name.localeCompare(b.name, "de") || a.id.localeCompare(b.id));
       const today = clock.today();
       const hits = query.trim() ? searchLeads({ data: { leads, activities } }, query).map((r) => r.lead) : leads;
       const actsOf = (lid) => activities.filter((a) => a.leadId === lid);
-      const found = hits.filter((l) => (!status || l.status === status) && (!dueOnly || isDue(l, today)));
+      const found = hits.filter((l) => (!status || l.status === status) && (!kind || kind === (isContact(l) ? "kontakt" : "betrieb")) && (!dueOnly || isDue(l, today)));
       const end = offset + limit;
       return { total: found.length, leads: found.slice(offset, end).map((l) => summary(l, actsOf(l.id), today, closed)), nextOffset: end < found.length ? end : undefined };
     }],
@@ -59,7 +60,7 @@ const TOOLS = {
       const orders = ordersOf(lead);
       return { lead: { ...fields, notes: notesOf(lead), ...(lead.account && { account: accountOf(lead) }), ...(lead.customer && { customer: normalizeCustomer(lead.customer) }), ...(orders.length && { orders }) }, next: nextActionHint(lead, acts), due: isDue(lead, clock.today()), history: acts };
     }],
-  create_lead: ["Add a new lead. Only name is required.",
+  create_lead: ["Add a new lead, or with kind \"kontakt\" a Kontakt. Only name is required.",
     LeadInput.required({ name: true }),
     async (input, { uc }) => ({ id: await uc.addLead(input) })],
   update_lead: ["Change fields of a lead. Only the given fields change, plus what the rules derive from them. notes as text adds it as one new note, never replacing the notes there are: send only the new note. contactedAt (YYYY-MM-DD, not after today) records the day someone first spoke with them outside the CRM and moves a neu lead to kontaktiert; it is cleared only by going back to neu.",

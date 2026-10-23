@@ -59,8 +59,10 @@ label>input,label>select,label>textarea{margin-top:4px}
 
 /* tabs: at the bottom on a phone, a rail on the left from tablet width (at the end) */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
-.tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:680px}
+.tabs .in{display:grid;grid-template-columns:repeat(6,1fr);width:100%;max-width:680px}
 .tab{border:none;border-radius:0;background:none;color:var(--muted);flex-direction:column;gap:0;padding:8px 4px 6px;min-height:var(--tabbar);font-size:.8rem;position:relative}
+/* Six tabs: on a narrow phone the labels get a little smaller, so "Kontakte" and "Vorlagen" fit. */
+@media (max-width:389px){.tab{font-size:.7rem;padding:8px 1px 6px}}
 .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tab[aria-current="page"]{color:var(--pine);font-weight:600}
 /* A shut tab takes no click, on its icon and label either, whichever element a browser hands the click to. */

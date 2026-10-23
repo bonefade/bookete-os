@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { LEAD_FIELDS } from "../domain/lead.js";
+import { LEAD_FIELDS, KINDS, TOPIC_MAX } from "../domain/lead.js";
 import { IMPORT_CHUNK } from "../domain/backup.js";
 import { STAGES, LOST_REASONS, SPOKEN_REASONS, CALL_OUTCOMES } from "../domain/constants.js";
 import { SYSTEMS, ACCOUNT_LIMIT } from "../domain/account.js";
@@ -17,7 +17,8 @@ export const Reason = z.enum(LOST_REASONS);
 // lostReason takes "" from the form's empty option; normalizeLead then asks for a reason where one is needed.
 const FIELD = { fit: z.coerce.number().int().min(1).max(3), followUp: date.nullable(), contactedAt: date.nullable(), status: Status, lostReason: z.union([Reason, z.literal("")]).nullable() };
 // optOutAt is not writable here: it is set by optOut or by picking the opt-out reason, and cleared only by clearOptOut.
-export const LeadInput = z.object(Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt" && k !== "wonAt").map((k) => [k, FIELD[k] ?? text.nullable()]))).partial().strict();
+// kind makes a Kontakt when the record is made (normalizeLead refuses a change); topic is a Kontakt's Thema.
+export const LeadInput = z.object({ ...Object.fromEntries(Object.keys(LEAD_FIELDS).filter((k) => k !== "optOutAt" && k !== "wonAt").map((k) => [k, FIELD[k] ?? text.nullable()])), kind: z.enum(KINDS), topic: z.string().max(TOPIC_MAX).nullable() }).partial().strict();
 // The Kundenakte, part by part; normalizeAccount checks values. Strict, so no field for a password can be added.
 const str = (max) => z.string().max(max).nullish();
 const System = z.object({ what: str(200), by: str(100) }).strict();

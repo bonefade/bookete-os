@@ -1,8 +1,9 @@
 import { REGIONS, OTHER_REGION, regionOf } from '../domain/region.js';
-import { RESERVATION_TOOLS, SEQUENCE_POLICY } from '../domain/constants.js';
+import { RESERVATION_TOOLS, SEQUENCE_POLICY, STAGE_LABEL } from '../domain/constants.js';
 import { meetingDue, lastCallOn } from '../domain/activity.js';
 import { addDays } from '../domain/dates.js';
-import { isPipeline, isDue, takesFollowUp, lacksNextStep, addressKey, addressOpen } from '../domain/lead.js';
+import { isPipeline, isContact, isDue, takesFollowUp, lacksNextStep, addressKey, addressOpen } from '../domain/lead.js';
+import { accountOf } from '../domain/account.js';
 import { timelinesByLead } from '../domain/stats.js';
 import { customerOf, attentionOf } from '../domain/customer.js';
 import { dueTodo } from '../domain/todos.js';
@@ -33,7 +34,8 @@ export function mailOpen(state, l) {
 /** The shared filters, by their key in the UI state; "alle" lets every lead through. */
 const FILTERS = {
   region: (l, v) => regionOf(l) === v,
-  tool: (l, v) => (l.currentTool || "unbekannt") === v,
+  // A Kontakt has no reservation system: it never passes a pick of one.
+  tool: (l, v) => !isContact(l) && (l.currentTool || "unbekannt") === v,
   contact: (l, v, state) => v === "telefon" ? !!l.phone : mailOpen(state, l)
 };
 /** The leads the shared filters let through; `ignore` leaves one of them out, so its own choices can be counted. */
@@ -45,19 +47,19 @@ function countBy(leads, keyOf) {
   for (const l of leads) m[keyOf(l)] = (m[keyOf(l)] || 0) + 1;
   return m;
 }
-export function toolCounts(state) {
-  const m = countBy(scoped(state, state.data.leads, "tool"), (l) => l.currentTool || "unbekannt");
+export function toolCounts(state, leads = state.data.leads) {
+  const m = countBy(scoped(state, leads, "tool").filter((l) => !isContact(l)), (l) => l.currentTool || "unbekannt");
   return knownTools(state).filter((t) => m[t] || t === state.ui.tool).map((t) => [t, m[t] || 0]).sort((a, b) => b[1] - a[1]);
 }
 /** The systems to suggest: the usual ones, then every other one a lead has, by name. */
 export const knownTools = (state) => [...new Set([...RESERVATION_TOOLS, ...state.data.leads.map((l) => l.currentTool).filter(Boolean).sort((a, b) => a.localeCompare(b, "de"))])];
-export function regionCounts(state) {
-  const m = countBy(scoped(state, state.data.leads, "region"), regionOf);
+export function regionCounts(state, leads = state.data.leads) {
+  const m = countBy(scoped(state, leads, "region"), regionOf);
   return [...REGIONS, OTHER_REGION].filter((r) => m[r] || r === state.ui.region).map((r) => [r, m[r] || 0]);
 }
-export function contactCounts(state) {
-  const leads = scoped(state, state.data.leads, "contact");
-  return [["telefon", "mit Telefon"], ["email", "mit E-Mail"]].map(([k, label]) => [k, label, leads.filter((l) => FILTERS.contact(l, k, state)).length]);
+export function contactCounts(state, leads = state.data.leads) {
+  const shown = scoped(state, leads, "contact");
+  return [["telefon", "mit Telefon"], ["email", "mit E-Mail"]].map(([k, label]) => [k, label, shown.filter((l) => FILTERS.contact(l, k, state)).length]);
 }
 /**
  * Who to call, in order: open businesses with a phone number that are due (by date, then fit), then new ones not
@@ -117,3 +119,21 @@ export const othersCustomer = (state, l) => {
 export const queueList = (state, today) => Object.values(todayQueue(state, today)).flat();
 /** The leads a round works through, freshly computed, so one dealt with drops out by itself. */
 export const roundList = (state, today, list) => list === "calls" ? callList(state, today) : list === "fresh" ? freshLeads(state) : queueList(state, today);
+/**
+ * Everyone the CRM knows, each listed where they live, never copied: a Kontakt and the people at it, a Betrieb's
+ * Ansprechperson, the other people in a Betrieb's Kundenakte (agency, IT). A row names the record it opens; `topic`
+ * is its Kontakt's Thema. A Betrieb with an address but no person named holds nobody to list.
+ */
+export function peopleList(state) {
+  const rows = [];
+  for (const l of state.data.leads) {
+    const contact = isContact(l);
+    const topic = contact ? l.topic : "";
+    if (contact) rows.push({ lead: l, name: l.name, line: [l.topic, l.person].filter(Boolean).join(" \xB7 "), topic, email: l.email, phone: l.phone });
+    else if (l.person) rows.push({ lead: l, name: l.person, line: `${l.name} \xB7 ${STAGE_LABEL[l.status] || ""}`, topic, email: l.email, phone: l.phone });
+    for (const c of accountOf(l).contacts) rows.push({ lead: l, name: c.name, line: [c.role, c.company, contact ? l.name : `bei ${l.name}`].filter(Boolean).join(" \xB7 "), topic, email: c.email, phone: c.phone });
+  }
+  return rows.sort((a, b) => a.name.localeCompare(b.name, "de") || a.lead.name.localeCompare(b.lead.name, "de"));
+}
+/** The Themen the Kontakte have, by name: offered when one is typed, and to filter by. */
+export const knownTopics = (state) => [...new Set(state.data.leads.filter(isContact).map((l) => l.topic).filter(Boolean))].sort((a, b) => a.localeCompare(b, "de"));

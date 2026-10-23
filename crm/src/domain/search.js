@@ -1,6 +1,6 @@
 import { STAGE_LABEL, FIELD_LABEL } from './constants.js';
 import { timelinesByLead } from './stats.js';
-import { isPipeline } from './lead.js';
+import { isPipeline, isContact } from './lead.js';
 import { regionOf } from './region.js';
 import { notesOf } from './notes.js';
 
@@ -24,6 +24,8 @@ export const SEARCH_FIELDS = [
   ["name", FIELD_LABEL.name, 60],
   ["city", FIELD_LABEL.city, 30],
   ["person", FIELD_LABEL.person, 30],
+  ["topic", FIELD_LABEL.topic, 30],
+  ["contacts", "Kontakte", 25],
   ["email", FIELD_LABEL.email, 25],
   ["phone", FIELD_LABEL.phone, 25],
   ["instagram", FIELD_LABEL.instagram, 25],
@@ -33,15 +35,16 @@ export const SEARCH_FIELDS = [
   ["notes", FIELD_LABEL.notes, 10]
 ];
 let idxLeads = null, idxActs = null, idxVal = [];
+const peopleText = (l) => (Array.isArray(l.account?.contacts) ? l.account.contacts : []).map((c) => [c.name, c.company, c.role, c.email, c.phone].filter(Boolean).join(" \xB7 ")).join("\n");
 export function searchIndex(state) {
   const { leads, activities } = state.data;
   if (idxLeads === leads && idxActs === activities) return idxVal;
   const byLead = timelinesByLead(activities);
   idxVal = leads.map((l) => {
-    // The notes are searched as one text, every note's.
-    const valueOf = (key) => key === "notes" ? notesOf(l).map((n) => n.text).join("\n") : l[key];
+    // The notes are searched as one text, every note's; so are the other people at a record (the Kundenakte's contacts).
+    const valueOf = (key) => key === "notes" ? notesOf(l).map((n) => n.text).join("\n") : key === "contacts" ? peopleText(l) : l[key];
     const fields = SEARCH_FIELDS.filter(([k]) => valueOf(k)).map(([key, label, w]) => ({ key, label, w, ...fold(valueOf(key)) }));
-    const tags = [regionOf(l), STAGE_LABEL[l.status], l.lostReason, l.currentTool !== "unbekannt" ? l.currentTool : "", l.type].filter(Boolean).join(" \xB7 ");
+    const tags = [regionOf(l), isContact(l) ? "Kontakt" : STAGE_LABEL[l.status], l.lostReason, l.currentTool !== "unbekannt" ? l.currentTool : "", l.type].filter(Boolean).join(" \xB7 ");
     fields.push({ key: "tags", label: "Merkmale", w: 20, ...fold(tags) });
     // Newest first: of equal hits in the history, the newest is shown. The web app writes its heading (hitLabel).
     for (const a of [...byLead.get(l.id) || []].reverse())

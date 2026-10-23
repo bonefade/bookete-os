@@ -1,7 +1,7 @@
 import { BACKUP_FORMAT } from "../domain/backup.js";
 import { COLLECTIONS, SCHEMA_VERSION } from "../domain/constants.js";
 import { newActivityRecord, assertMayContact, assertHappened, planAfterActivity, firstContactOf, callActivity, planAfterCall, meetingPatch, planMeeting, mailActivityId, byTimeline, sameMail, hasSpoken } from "../domain/activity.js";
-import { normalizeLead, toolName, LEAD_FIELDS, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, addressOptOutText } from "../domain/lead.js";
+import { normalizeLead, toolName, LEAD_FIELDS, isContact, transition, lostReasonPatch, followUpPatch, optOutPatch, clearOptOutPatch, getsUnsubscribeLink, heldToOptOuts, addressOptOutText } from "../domain/lead.js";
 import { startCustomer, customerOf, customerPlan, customerAfter, normalizeCustomer, carePlansNextStep, isCareStep, careFromToday, rearrangesSteps, careForPackage } from "../domain/customer.js";
 import { normalizeTemplate } from "../domain/template.js";
 import { normalizeAccount, accountOf, mergeAccount, accountPatch, ownContactIn } from "../domain/account.js";
@@ -199,11 +199,11 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
   }
   /**
    * Any lead's opt-out closes its address to mail: none is sent, drafted or logged as sent. Calls, other channels and
-   * incoming entries stay allowed. Only for a lead that gets the Abmeldelink: a Kunde's service mail still goes out,
-   * unless the Kunde itself opted out (assertMayContact). Fails closed: a failed query lets nothing through.
+   * incoming entries stay allowed. Not for a Kunde (heldToOptOuts): its service mail still goes out, unless the Kunde
+   * itself opted out (assertMayContact). Fails closed: a failed query lets nothing through.
    */
   async function assertAddressOpen(l) {
-    if (!l.email || !getsUnsubscribeLink(l)) return;
+    if (!l.email || !heldToOptOuts(l)) return;
     const holder = await store.optOutByAddress(l.email);
     if (holder) throw new ValidationError("email", addressOptOutText(holder.lead, holder.trashed));
   }
@@ -211,7 +211,8 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
   return {
     async addLead(input) {
       const now = clock.now();
-      const empty = { id: ids.newId(), schemaVersion: SCHEMA_VERSION, ...LEAD_FIELDS, createdAt: now, updatedAt: now };
+      // A Kontakt is one from the start (normalizeLead keeps the kind a record has).
+      const empty = { id: ids.newId(), schemaVersion: SCHEMA_VERSION, ...LEAD_FIELDS, ...(input.kind === "kontakt" && { kind: "kontakt" }), createdAt: now, updatedAt: now };
       await commit(leadOps(empty, await knownTool(input), { isNew: true }));
       return empty.id;
     },
@@ -267,6 +268,8 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
      */
     saveAccount: (id, parts, before) => retrying(async () => {
       const l = await lead(id);
+      // A Kontakt's Kundenakte holds its people only: we keep no systems of theirs.
+      if (isContact(l) && Object.values(parts.systems || {}).some((v) => typeof v === "string" ? v.trim() : v && Object.values(v).some((x) => String(x ?? "").trim()))) throw new ValidationError("systems", "Ein Kontakt hat keine Systeme, nur Personen");
       const stored = accountOf(l);
       if (JSON.stringify(normalizeAccount(before, ids.newId)) !== JSON.stringify(stored)) {
         throw new ValidationError("account", "Die Kundenakte wurde inzwischen ge\xE4ndert. Bitte neu \xF6ffnen.");
@@ -338,7 +341,10 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
       return planMeeting(l, meeting, clock.today());
     }),
     /** A phone call and how it ended: logged, and the lead moved on by the outcome, in one write. */
-    logCall: async (id, call) => logContact(id, callActivity(call, clock.today()), (l, acts, activity) => planAfterCall(l, acts, activity, call)),
+    logCall: async (id, call) => logContact(id, callActivity(call, clock.today()), (l, acts, activity) => {
+      if (isContact(l)) throw new ValidationError("outcome", "Ein Kontakt hat keine Anrufergebnisse: das Gespr\xE4ch eintragen");
+      return planAfterCall(l, acts, activity, call);
+    }),
     /**
      * Takes back a call logged by mistake: the call is erased (no restore of the lead brings it back, no Änderungen
      * entry keeps it) and the lead's CALL_FIELDS return to what they were before it. Only the lead's newest activity,
@@ -444,8 +450,9 @@ export function createUseCases({ store, clock, ids, actor, email = "", team = []
         leads: (r) => {
           // The browser upgrades an old backup whole, with its activities (chunkBackup); one chunk alone could not.
           if (!(r.schemaVersion >= SCHEMA_VERSION)) throw new ValidationError("backup", "Format vor 1.4.0 \u2013 bitte die App neu laden und erneut importieren");
-          // Normalized against its own status: a record brought back is no status change, so it keeps its wonAt.
-          return { ...normalizeLead({ ...r, currentTool: toolName(r.currentTool, tools) }, { ...LEAD_FIELDS, status: r.status }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), ...((r.orders || r.deal) && { orders: r.orders ? normalizeOrders(r.orders, ids.newId) : [orderFromDeal(r.deal)] }), ...(r.noteEntries && { noteEntries: normalizeEntries(r.noteEntries) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
+          // Normalized against its own status and kind: a record brought back is no status change, so it keeps its wonAt.
+          const kind = r.kind === "kontakt" ? { kind: "kontakt" } : {};
+          return { ...normalizeLead({ ...r, ...(!kind.kind && { currentTool: toolName(r.currentTool, tools) }) }, { ...LEAD_FIELDS, status: r.status, ...kind }, clock.today()), ...(r.account && { account: normalizeAccount(r.account, ids.newId) }), ...(r.customer && { customer: teamOwned(normalizeCustomer(r.customer)) }), ...(r.todos && { todos: normalizeTodos(r.todos, ids.newId) }), ...((r.orders || r.deal) && { orders: r.orders ? normalizeOrders(r.orders, ids.newId) : [orderFromDeal(r.deal)] }), ...(r.noteEntries && { noteEntries: normalizeEntries(r.noteEntries) }), schemaVersion: SCHEMA_VERSION, createdAt: r.createdAt || now, updatedAt: r.updatedAt || now };
         },
         activities: (r) => newActivityRecord(r, { id: r.id, now: r.createdAt || now, today: clock.today() }),
         templates: (r) => ({ ...normalizeTemplate(r), createdAt: r.createdAt || now, updatedAt: r.updatedAt || now }),

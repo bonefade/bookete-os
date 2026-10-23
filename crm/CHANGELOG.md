@@ -2,6 +2,14 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.31.0 (2026-10-23)
+
+- **Kontakte:** a new tab for the people and partners beside the restaurants: Blue Bomb for the partner programme, Martin Satke for Skal, anyone around bookete or Tischrunde. "+ Neu" makes a Kontakt with a name and a Thema (e.g. "Partnerprogramm", "Skal Steiermark"). It has notes, todos, a next step with a day that shows in Heute, and the people working there under "Personen". It has no status, no opt-out and no sales sequence, and it stays out of Leads, the call list and the week's numbers.
+- **Gespräch:** on a Kontakt, "Eintragen → Gespräch" logs a call or a meeting with what was said. Mail with them is logged from Gmail as for any lead; when they write, it shows in Heute under the new answers, and the next step you planned stays.
+- **Everyone in one list:** the Kontakte tab also lists each restaurant's Ansprechperson and the agencies and IT people from the Kundenakten, each opening the record they belong to. Filter by Art, Thema or by typing.
+- **Search** finds a Kontakt by its Thema, and any business by the people in its Kundenakte (e.g. an agency's name finds its customers).
+- **Six tabs:** on narrow phones the tab labels are a little smaller. Reload an open CRM tab after this update.
+
 ## 1.30.0 (2026-10-22)
 
 - **Aufträge instead of one Vereinbarung:** a customer can have several deals: bookete, Website, Hosting, Individuell or Sonstiges. Each has a net amount in euros, how often it is paid (einmalig, monatlich, jährlich), the contract's day, when it starts and how many months it runs, whether it renews by itself, the link to the contract (fynk) and one line. Above the list you see the totals, e.g. "einmalig 1 300 € · jährlich 99 €". "+ Auftrag → Hosting" fills in our hosting package: 99 € a year with a .com or normal local domain, 12 months, renewing.
