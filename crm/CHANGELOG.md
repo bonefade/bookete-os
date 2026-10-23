@@ -2,6 +2,11 @@
 
 Each production deploy bumps `version` in `crm/package.json` and adds an entry here, newest first. Written for the people using the CRM.
 
+## 1.33.0 (2026-10-23)
+
+- **Kontakte by owner:** a "Betreut" filter (Alle, Ich, Niemand) beside Art and Thema. The people at a customer follow the customer's "Betreut von".
+- **Heute "Meine"** now also leaves out the Kontakte someone else looks after; "Alle" shows them. The switch shows as soon as a customer or a Kontakt has an owner.
+
 ## 1.32.0 (2026-10-23)
 
 - **Kontakte as a table:** every row has the same columns, each starting at the left: Name, Art, Thema · Firma, Telefon, E-Mail and Betreut von, with headings on a laptop. On a phone the name, Art and owner come first, the rest below.

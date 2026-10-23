@@ -11,7 +11,7 @@ import { LEAD_FIELDS, normalizeLead, getsUnsubscribeLink, upgradeLead, addressOp
 import { weekNumbers } from "../src/domain/stats.js";
 import { searchLeads } from "../src/domain/search.js";
 import { initialState } from "../src/web/store.js";
-import { kontakteView, leadsView, filterBar, detailView, leadEditView, accountEditView, searchResultsHtml, TABS } from "../src/web/views.js";
+import { kontakteView, todayView, leadsView, filterBar, detailView, leadEditView, accountEditView, searchResultsHtml, TABS } from "../src/web/views.js";
 import { peopleList, callList, todayQueue, toolCounts } from "../src/web/selectors.js";
 import { routeOf, parseRoute, backRoute } from "../src/web/controller.js";
 import { describeChange } from "../src/web/format.js";
@@ -107,7 +107,6 @@ test("a Kontakt's owner reads by name in its Änderungen, and a Kontakt from bef
 
 test("a Kontakt's page picks who looks after it from the team", () => {
   const state = stateWith(LEADS(), { view: "detail", leadId: "K1" });
-  state.me = { email: "jo@bookete.com", team: ["jo@bookete.com", "mo@bookete.com"] };
   assert.match(detailView(state, TODAY), /<label class="owner">Betreut von<select id="cOwnerOf"><option value="">\u2013<\/option><option value="jo@bookete.com" selected>jo \(ich\)<\/option><option value="mo@bookete.com">mo<\/option><\/select><\/label>/);
 });
 
@@ -200,6 +199,7 @@ function stateWith(leads, ui = {}) {
   state.data = { leads, activities: [], templates: [], settings: [] };
   state.status = { leads: true, activities: true, templates: true, settings: true, failed: "" };
   state.caps = { db: true, gmail: false };
+  state.me = { email: "jo@bookete.com", team: ["jo@bookete.com", "mo@bookete.com"] };
   state.ui = { ...state.ui, ...ui };
   return state;
 }
@@ -228,6 +228,23 @@ test("Kontakte lists everyone where they live, in one table: the Kontakte and th
   // A Betrieb with an address but no person named lists nobody.
   assert.equal(peopleList(stateWith(LEADS())).some((r) => r.lead.id === "L2"), false);
   assert.ok(TABS.some(([k]) => k === "kontakte"));
+});
+
+test("Kontakte filters by who looks after the record, and Heute's \"Meine\" leaves out the Kontakte of someone else", () => {
+  const names = (ui) => [...kontakteView(stateWith(LEADS(), ui), TODAY).matchAll(/<span class="k-name">([^<]*)</g)].map((m) => m[1]);
+  // Blue Bomb and its people are jo's, Krone's people follow the Kunde's owner mo, Martin Satke is nobody's.
+  assert.deepEqual(names({ cOwner: "ich" }), ["Blue Bomb", "Florian"]);
+  assert.deepEqual(names({ cOwner: "niemand" }), ["Martin Satke"]);
+  assert.match(kontakteView(stateWith(LEADS()), TODAY), /<option value="alle" selected>Betreut: Alle \(5\)<\/option><option value="ich">Betreut: Ich \(2\)<\/option><option value="niemand">Betreut: Niemand \(1\)<\/option>/);
+  // Martin Satke is due today: Heute shows him when he is nobody's or mine, and only under "Alle" when he is mo's.
+  const skal = (owner, ui = {}) => stateWith(LEADS().map((l) => l.id === "K2" ? { ...l, owner } : l), ui);
+  assert.deepEqual(todayQueue(skal(""), TODAY).today.map((l) => l.id), ["K2"]);
+  assert.deepEqual(todayQueue(skal("jo@bookete.com"), TODAY).today.map((l) => l.id), ["K2"]);
+  assert.deepEqual(todayQueue(skal("mo@bookete.com"), TODAY).today.map((l) => l.id), []);
+  assert.deepEqual(todayQueue(skal("mo@bookete.com", { hAll: true }), TODAY).today.map((l) => l.id), ["K2"]);
+  // With no Kunde, a Kontakt with an owner is enough for Heute to offer "Meine / Alle".
+  const onlyKontakte = stateWith(LEADS().filter((l) => l.kind === "kontakt"));
+  assert.match(todayView(onlyKontakte, TODAY), /data-hall="0" aria-pressed="true">Meine/);
 });
 
 test("a Kontakt stays out of Leads, its filter counts and the call list, and shows in Heute when due", () => {

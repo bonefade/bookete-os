@@ -1,5 +1,5 @@
 import { STAGES, STAGE_LABEL, OPT_OUT_REASON, LOST_REASONS, SPOKEN_REASONS, BUSINESS_TYPES, CHANNELS, TEMPLATE_PURPOSES, PURPOSE_LABEL, SEQUENCE_POLICY, CALL_OUTCOMES, OUTCOME_LABEL, TRASH_SHOWN, FIELD_LABEL } from '../domain/constants.js';
-import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, knownTools, peopleList, knownTopics, dueByTodo, regionCounts, toolCounts, contactCounts, callList, freshLeads, awaitsAnswer, todayQueue, queueList, roundList } from './selectors.js';
+import { actsOf, currentLead, icpOf, isReady, mailOpen, scoped, knownTools, peopleList, knownTopics, ownerOf, dueByTodo, regionCounts, toolCounts, contactCounts, callList, freshLeads, awaitsAnswer, todayQueue, queueList, roundList } from './selectors.js';
 import { addDays, dayLabel, daysBetween, toDateString } from '../domain/dates.js';
 import { channelLink } from './platform.js';
 import { countTouches, hasSpoken, sequenceExhausted, nextActionHint, meetingDue, lastChannel, planAfterActivity, planAfterCall, callActivity, planMeeting, byTimeline } from '../domain/activity.js';
@@ -90,7 +90,7 @@ export function todayView(state, today) {
   const q = todayQueue(state, today);
   const open = q.replies.length + q.attention.length + q.overdue.length + q.today.length;
   // Meine or Alle: whether the customers someone else looks after show too. Only where there are customers.
-  const scope = state.data.leads.some((l) => l.status === "kunde") ? `<div class="chips">${[["0", "Meine"], ["1", "Alle"]].map(([k, label]) => `<button class="chip" data-hall="${k}" aria-pressed="${String(!!state.ui.hAll) === (k === "1" ? "true" : "false")}">${label}</button>`).join("")}</div>` : "";
+  const scope = state.data.leads.some(ownerOf) ? `<div class="chips">${[["0", "Meine"], ["1", "Alle"]].map(([k, label]) => `<button class="chip" data-hall="${k}" aria-pressed="${String(!!state.ui.hAll) === (k === "1" ? "true" : "false")}">${label}</button>`).join("")}</div>` : "";
   const date = (new Date(today + "T12:00:00")).toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long" });
   const sec = (title, sub, arr) => arr.length ? `<div class="sec"><h3>${title} <small>${sub}</small></h3><ul class="ltable">${arr.map((l) => queueRow(state, l, today)).join("")}</ul></div>` : "";
   const calls = callList(state, today).length;
@@ -158,15 +158,18 @@ export function kundenView(state, today) {
  * the Kontakte or the Betriebe, Thema a Kontakt's topic. "+ Neu" makes a Kontakt.
  */
 export function kontakteView(state, today) {
-  const { cKind, cTopic, cq, quick } = state.ui;
+  const { cKind, cTopic, cOwner, cq, quick } = state.ui;
+  const me = state.me?.email;
   const all = peopleList(state);
   const q = fold(cq.trim()).s;
   const ofKind = (r, k = cKind) => k === "alle" || (k === "kontakt") === isContact(r.lead);
   const ofTopic = (r, t = cTopic) => t === "alle" || r.topic === t;
+  const ownedBy = (r, o = cOwner) => o === "alle" || (o === "ich" ? r.owner === me : !r.owner);
   const typed = (r) => !q || fold([r.name, r.line, r.email, r.phone].join(" ")).s.includes(q);
-  const list = all.filter((r) => ofKind(r) && ofTopic(r) && typed(r));
-  const kinds = [["alle", "Alle"], ["kontakt", "Kontakte"], ["betrieb", "Bei Betrieben"]].map(([k, label]) => [k, label, all.filter((r) => ofTopic(r) && ofKind(r, k)).length]);
-  const topics = [["alle", "Alle Themen"], ...knownTopics(state).map((t) => [t, t])].map(([k, label]) => [k, label, all.filter((r) => ofKind(r) && ofTopic(r, k)).length]);
+  const list = all.filter((r) => ofKind(r) && ofTopic(r) && ownedBy(r) && typed(r));
+  const kinds = [["alle", "Alle"], ["kontakt", "Kontakte"], ["betrieb", "Bei Betrieben"]].map(([k, label]) => [k, label, all.filter((r) => ofTopic(r) && ownedBy(r) && ofKind(r, k)).length]);
+  const topics = [["alle", "Alle Themen"], ...knownTopics(state).map((t) => [t, t])].map(([k, label]) => [k, label, all.filter((r) => ofKind(r) && ownedBy(r) && ofTopic(r, k)).length]);
+  const owners = [["alle", "Alle"], ["ich", "Ich"], ["niemand", "Niemand"]].map(([k, label]) => [k, `Betreut: ${label}`, all.filter((r) => ofKind(r) && ofTopic(r) && ownedBy(r, k)).length]);
   // A table: the same columns in every row, each cell starting where its heading does.
   const head = `<li class="khead" aria-hidden="true"><span>${FIELD_LABEL.name}</span><span>Art</span><span>${FIELD_LABEL.topic} \xB7 Firma</span><span>${FIELD_LABEL.phone}</span><span>${FIELD_LABEL.email}</span><span>${FIELD_LABEL.owner}</span></li>`;
   const row = (r) => `<li><button class="krow" data-open="${esc(r.lead.id)}"><span class="k-name">${esc(r.name)}</span><span class="k-kind">${esc(isContact(r.lead) ? "Kontakt" : "Betrieb")}</span><span class="k-line">${esc(r.line)}</span><span class="k-phone">${esc(r.phone)}</span><span class="k-mail">${esc(r.email)}</span><span class="k-owner">${esc(r.owner ? actorName(r.owner) : "\u2013")}</span></button></li>`;
@@ -177,7 +180,7 @@ export function kontakteView(state, today) {
   return `<div class="wrap wide">
   <div class="head"><div><h1>Kontakte</h1><p>${state.data.leads.filter(isContact).length} Kontakte \xB7 ${all.length} Eintr\xE4ge</p></div><button class="primary" data-act="quick"${state.caps.db ? "" : " disabled"}>+ Neu</button></div>
   ${quickForm}
-  <div class="toolbar">${filterSelect("cKind", "Art", kinds, cKind)}${filterSelect("cTopic", FIELD_LABEL.topic, topics, cTopic)}<input type="search" id="cq" placeholder="Liste filtern \u2026" value="${esc(cq)}" aria-label="Liste filtern"></div>
+  <div class="toolbar">${filterSelect("cKind", "Art", kinds, cKind)}${filterSelect("cTopic", FIELD_LABEL.topic, topics, cTopic)}${filterSelect("cOwner", FIELD_LABEL.owner, owners, cOwner)}<input type="search" id="cq" placeholder="Liste filtern \u2026" value="${esc(cq)}" aria-label="Liste filtern"></div>
   ${loadingOr(state, list.length ? `<ul class="ltable">${head}${list.map(row).join("")}</ul>` : `<div class="empty">${all.length ? "Niemand in dieser Ansicht." : "Noch keine Kontakte. Partner, Verb\xE4nde und Leute rund um bookete legen Sie mit \u201E+ Neu\u201C an."}</div>`)}
 </div>`;
 }

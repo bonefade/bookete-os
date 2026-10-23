@@ -89,7 +89,7 @@ export const awaitsAnswer = (state, l) => takesFollowUp(l) && !l.optOutAt && act
  * it belongs to. "Meine" (the default) leaves out the customers someone else on the team looks after.
  */
 export function todayQueue(state, today) {
-  const leads = scoped(state).filter((l) => state.ui.hAll || !othersCustomer(state, l));
+  const leads = scoped(state).filter((l) => state.ui.hAll || !othersRecord(state, l));
   const lastDate = (l) => actsOf(state, l.id).at(-1).date;
   const replies = leads.filter((l) => awaitsAnswer(state, l)).sort((a, b) => lastDate(b).localeCompare(lastDate(a)));
   const answered = new Set(replies.map((l) => l.id));
@@ -111,9 +111,11 @@ export function dueByTodo(l, today) {
   const todo = dueTodo(l, today);
   return todo && !(isDue(l, today) && l.followUp < todo.due) ? todo : null;
 }
-/** A customer someone else on the team looks after: Heute leaves it out unless it shows everyone's ("Alle"). */
-export const othersCustomer = (state, l) => {
-  const owner = l.status === "kunde" ? customerOf(l)?.owner : "";
+/** Who of the team looks after a record: a Kontakt's own owner, a Kunde's in its care; "" for anyone else. */
+export const ownerOf = (l) => (isContact(l) ? l.owner : l.status === "kunde" ? customerOf(l)?.owner : "") || "";
+/** A Kunde or Kontakt someone else on the team looks after: Heute leaves it out unless it shows everyone's ("Alle"). */
+export const othersRecord = (state, l) => {
+  const owner = ownerOf(l);
   return !!owner && owner !== state.me?.email;
 };
 export const queueList = (state, today) => Object.values(todayQueue(state, today)).flat();
@@ -129,7 +131,7 @@ export function peopleList(state) {
   for (const l of state.data.leads) {
     const contact = isContact(l);
     const topic = contact ? l.topic : "";
-    const owner = contact ? l.owner : l.status === "kunde" ? customerOf(l)?.owner : "";
+    const owner = ownerOf(l);
     if (contact) rows.push({ lead: l, name: l.name, line: [l.topic, l.person].filter(Boolean).join(" \xB7 "), topic, owner, email: l.email, phone: l.phone });
     else if (l.person) rows.push({ lead: l, name: l.person, line: `${l.name} \xB7 ${STAGE_LABEL[l.status] || ""}`, topic, owner, email: l.email, phone: l.phone });
     for (const c of accountOf(l).contacts) rows.push({ lead: l, name: c.name, line: [c.role, c.company, contact ? l.name : `bei ${l.name}`].filter(Boolean).join(" \xB7 "), topic, owner, email: c.email, phone: c.phone });
